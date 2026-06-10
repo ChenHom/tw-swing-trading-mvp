@@ -331,6 +331,39 @@ def cmd_account_init(args):
     print(f"Account '{args.account}' initialized with {args.initial_cash} TWD.")
     conn.close()
 
+def cmd_account_adjust_cash(args):
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    cursor = conn.cursor()
+    
+    account_id = args.account
+    amount = args.amount
+    
+    try:
+        # Delete all existing INITIAL_DEPOSIT records for this account
+        cursor.execute(
+            "DELETE FROM cash_ledger WHERE account_id = ? AND event_type = 'INITIAL_DEPOSIT'",
+            (account_id,)
+        )
+        
+        # Insert new single INITIAL_DEPOSIT
+        from src.portfolio.ledger import PortfolioLedger
+        from src.portfolio.projection import PortfolioProjection
+        
+        ledger = PortfolioLedger(conn)
+        projection = PortfolioProjection(conn)
+        
+        run_id = f"adjust-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        ledger.deposit(account_id, run_id, amount, "TWD", date.today())
+        projection.rebuild_from_ledger(account_id)
+        
+        print(f"成功將帳戶 '{account_id}' 的初始金調整為：{amount:,} TWD (所有先前的初始入金已清除，可用現金已重新對帳更新)")
+    except Exception as e:
+        print(f"調整剩餘金額失敗: {e}")
+        sys.exit(1)
+    finally:
+        conn.close()
+
 def cmd_backtest_run(args):
     settings = get_settings()
     init_db(settings.trading.database_path)
@@ -735,25 +768,240 @@ def cmd_signal_list(args):
 
 def cmd_trade_plan(args):
     settings = get_settings()
-    filepath = Path(args.bundle)
-    if not filepath.exists():
-        print(f"Signal bundle file not found: {args.bundle}")
-        sys.exit(1)
-        
-    with open(filepath, "r", encoding="utf-8") as f:
-        bundle_dict = json.load(f)
-    
-    # Reconstruct bundle object
-    bundle = DailySignalBundle(**bundle_dict)
-    
+    conn = get_db_connection(settings.trading.database_path)
+    projection = PortfolioProjection(conn)
     manifest = load_active_manifest(settings)
-    if not manifest:
-        print("Warning: No active manifest loaded. Standard limits will apply.")
+    
+    # Read bundle
+    filepath = Path(args.bundle)
+    if filepath.exists():
+        with open(filepath, "r", encoding="utf-8") as f:
+            bundle_dict = json.load(f)
+        bundle = DailySignalBundle(**bundle_dict)
+    else:
+        # Try to load bundle from database by bundle_id or signal_date
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT bundle_id, run_id, approval_id, strategy_id, strategy_version, params_hash, signal_date, target_execution_date, market_data_cutoff
+            FROM signal_bundles WHERE bundle_id = ? OR signal_date = ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (args.bundle, args.bundle)
+        )
+        row = cursor.fetchone()
+        if not row:
+            print(f"找不到檔案且資料庫中也無此 Bundle ID 或日期：{args.bundle}")
+            conn.close()
+            sys.exit(1)
+            
+        bundle_id = row["bundle_id"]
+        cursor.execute(
+            "SELECT signal_id, symbol, action, reference_price, reason_code FROM signal_items WHERE bundle_id = ?",
+            (bundle_id,)
+        )
+        items = []
+        for item_row in cursor.fetchall():
+            items.append(
+                SignalItem(
+                    signal_id=item_row["signal_id"],
+                    symbol=item_row["symbol"],
+                    action=item_row["action"],
+                    reference_price=float(item_row["reference_price"] / 10000.0),
+                    reason_code=item_row["reason_code"]
+                )
+            )
+            
+        strategy_info = StrategyInfo(
+            strategy_id=row["strategy_id"],
+            strategy_version=row["strategy_version"],
+            params_canonicalization="strategy-params-v1",
+            params_hash=row["params_hash"]
+        )
+        bundle = DailySignalBundle(
+            schema_version="1.0",
+            bundle_id=bundle_id,
+            run_id=row["run_id"],
+            approval_id=row["approval_id"],
+            strategy=strategy_info,
+            signal_date=date.fromisoformat(row["signal_date"]),
+            target_execution_date=date.fromisoformat(row["target_execution_date"]),
+            market_data_cutoff=date.fromisoformat(row["market_data_cutoff"]),
+            signals=items
+        )
         
-    # Print planning preview
-    print(f"Planning preview for bundle {bundle.bundle_id}:")
+    # We need to construct PortfolioState
+    # Let's get current portfolio state for account
+    account_id = args.account
+    available_cash = projection.get_cash_balance(account_id)
+    
+    # Get positions
+    positions = {}
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT symbol, SUM(quantity) as qty FROM position_lots WHERE account_id = ? GROUP BY symbol",
+        (account_id,)
+    )
+    for row in cursor.fetchall():
+        qty = row["qty"]
+        if qty > 0:
+            positions[row["symbol"]] = qty
+            
+    # Daily buy value spent
+    cursor.execute(
+        "SELECT SUM(quantity * price) as val FROM fills WHERE account_id = ? AND side = 'BUY' AND date(filled_at) = ?",
+        (account_id, bundle.target_execution_date.isoformat())
+    )
+    val_row = cursor.fetchone()
+    daily_buy_value_spent = int(val_row["val"] / 10000.0) if val_row["val"] else 0
+    
+    portfolio_state = PortfolioState(
+        available_cash=available_cash,
+        positions=positions,
+        daily_buy_value_spent=daily_buy_value_spent
+    )
+    
+    if not manifest:
+        print("警告：未載入任何啟用授權清單。將使用預設限制。")
+        limits = LimitsInfo(
+            currency="TWD",
+            max_order_value=35000,
+            max_daily_buy_value=150000,
+            max_open_positions=5
+        )
+    else:
+        limits = manifest.limits
+        
+    print(f"帳戶：{account_id} | 可用現金：{available_cash:,} 元 | 當日已買入金額：{daily_buy_value_spent:,} 元")
+    print(f"委託計畫預覽 (訊號包: {bundle.bundle_id})：\n")
+    
+    headers = ["代號", "名稱", "動作", "參考價格", "規劃數量", "單位", "預估金額", "規劃狀態"]
+    table_rows = []
+    
+    stock_names = {
+        "2330": "台積電", "2317": "鴻海", "2454": "聯發科", "2308": "台達電", "2382": "廣達",
+        "2881": "富邦金", "2882": "國泰金", "2301": "光寶科", "2324": "仁寶", "3231": "緯創",
+        "2357": "華碩", "2891": "中信金", "2886": "兆豐金", "2603": "長榮", "2609": "陽明"
+    }
+    
     for sig in bundle.signals:
-        print(f"  Signal: {sig.symbol} {sig.action} @ {sig.reference_price}")
+        symbol = sig.symbol
+        name = stock_names.get(symbol, "未知")
+        action = "買入" if sig.action == "BUY" else "賣出"
+        
+        try:
+            planned_orders = OrderPlanner.plan_order(
+                signal=sig,
+                portfolio=portfolio_state,
+                strategy_budget=manifest.limits.max_order_value if manifest else 35000,
+                manifest_limits=limits
+            )
+            
+            if not planned_orders:
+                table_rows.append([
+                    symbol, name, action, f"{sig.reference_price:.2f}",
+                    "0", "股", "0", "無交易 (無持倉)"
+                ])
+                continue
+                
+            for order in planned_orders:
+                qty = order["quantity"]
+                unit = "張" if (qty >= 1000 and qty % 1000 == 0) else "股"
+                display_qty = f"{qty // 1000}" if unit == "張" else f"{qty}"
+                est_val = int(qty * sig.reference_price)
+                
+                table_rows.append([
+                    symbol, name, action, f"{sig.reference_price:.2f}",
+                    display_qty, unit, f"{est_val:,}", "成功 (待執行)"
+                ])
+        except ValueError as e:
+            table_rows.append([
+                symbol, name, action, f"{sig.reference_price:.2f}",
+                "阻擋", "-", "-", f"風控阻擋: {e}"
+            ])
+            
+    # Print table helper
+    def display_len(s: str) -> int:
+        length = 0
+        for char in s:
+            if ord(char) > 127:
+                length += 2
+            else:
+                length += 1
+        return length
+
+    def pad_str(s: str, width: int) -> str:
+        cur_len = display_len(s)
+        if cur_len >= width:
+            return s
+        return s + " " * (width - cur_len)
+        
+    widths = [display_len(h) for h in headers]
+    for row in table_rows:
+        for i, val in enumerate(row):
+            widths[i] = max(widths[i], display_len(str(val)))
+            
+    header_str = " | ".join(pad_str(h, widths[i]) for i, h in enumerate(headers))
+    print(header_str)
+    print("-+-".join("-" * w for w in widths))
+    for row in table_rows:
+        row_str = " | ".join(pad_str(str(val), widths[i]) for i, val in enumerate(row))
+        print(row_str)
+    conn.close()
+
+def cmd_trade_record_fill(args):
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    projection = PortfolioProjection(conn)
+    
+    symbol = args.symbol
+    side = args.side.upper()
+    qty = args.quantity
+    price = args.price
+    account_id = args.account
+    
+    price_scaled = int(round(price * 10000))
+    
+    fill_payload = {
+        "fill_id": f"fill-manual-{uuid_like()}",
+        "account_id": account_id,
+        "run_id": f"manual-{date.today().strftime('%Y%m%d')}",
+        "order_id": f"ord-manual-{uuid_like()}",
+        "execution_key": f"manual-fill-{symbol}-{uuid_like()}",
+        "symbol": symbol,
+        "side": side,
+        "quantity": qty,
+        "price": price_scaled,
+        "filled_at": datetime.now().isoformat()
+    }
+    
+    try:
+        projection.apply_fill_transaction(fill_payload)
+        
+        trade_value = int(round(qty * price_scaled / 10000.0))
+        broker_fee = max(20, int(round(trade_value * 0.001425)))
+        tax = int(round(trade_value * 0.003)) if side == "SELL" else 0
+        
+        print("成功錄入成交資料：")
+        print(f"  - 帳戶：{account_id}")
+        print(f"  - 標的：{symbol}")
+        print(f"  - 動作：{side}")
+        print(f"  - 數量：{qty} 股")
+        print(f"  - 成交單價：{price:.2f} 元 (資料庫整數值: {price_scaled})")
+        print(f"  - 成交總額：{trade_value:,} TWD (單價 x 數量)")
+        print(f"  - 估計手續費：{broker_fee:,} TWD")
+        if tax > 0:
+            print(f"  - 估計交易稅：{tax:,} TWD")
+            total_net = trade_value - broker_fee - tax
+            print(f"  - 估計淨收金額：{total_net:,} TWD")
+        else:
+            total_cost = trade_value + broker_fee
+            print(f"  - 估計總付出成本：{total_cost:,} TWD")
+    except Exception as e:
+        print(f"錄入成交資料失敗: {e}")
+        sys.exit(1)
+    finally:
+        conn.close()
         
 def cmd_portfolio_reconcile(args):
     settings = get_settings()
@@ -814,15 +1062,15 @@ def cmd_report_pnl(args):
                 "value": pos_val
             })
             
-    print(f"\n--- PnL Report for Account {args.account} on {report_date} ---")
-    print(f"Available Cash: {cash:,} TWD")
-    print(f"Position Value: {total_pos_value:,} TWD")
-    print(f"Total Equity  : {cash + total_pos_value:,} TWD")
-    print("\nPositions:")
+    print(f"\n--- 帳戶 {args.account} 於 {report_date} 的損益報告 ---")
+    print(f"可用現金：{cash:,} TWD")
+    print(f"部位價值：{total_pos_value:,} TWD")
+    print(f"總資產淨值：{cash + total_pos_value:,} TWD")
+    print("\n持有部位：")
     if not positions:
-        print("  No open positions.")
+        print("  無持有部位。")
     for pos in positions:
-        print(f"  {pos['symbol']}: {pos['quantity']} shares @ avg {pos['entry_price']:.2f} (current: {pos['current_price']:.2f}) - Value: {pos['value']:,} TWD")
+        print(f"  {pos['symbol']}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD")
         
     conn.close()
 
@@ -931,6 +1179,10 @@ def main():
     parser_acc_init.add_argument("--account", type=str, required=True, help="帳戶名稱")
     parser_acc_init.add_argument("--initial-cash", type=int, required=True, help="初始台幣現金金額")
     
+    parser_acc_adjust = account_subs.add_parser("adjust-cash", help="調整/設定帳戶的初始剩餘金額")
+    parser_acc_adjust.add_argument("--account", type=str, required=True, help="帳戶名稱")
+    parser_acc_adjust.add_argument("--amount", type=int, required=True, help="設定的新初始台幣現金金額")
+    
     # 5. backtest group
     parser_backtest = subparsers.add_parser("backtest", help="歷史回測執行")
     backtest_subs = parser_backtest.add_subparsers(dest="subcommand", required=True)
@@ -971,7 +1223,15 @@ def main():
     trade_subs = parser_trade.add_subparsers(dest="subcommand", required=True)
     
     parser_trade_plan = trade_subs.add_parser("plan", help="產生委託計畫預覽")
-    parser_trade_plan.add_argument("--bundle", type=str, required=True, help="訊號包 JSON 檔案路徑")
+    parser_trade_plan.add_argument("--bundle", type=str, required=True, help="訊號包 JSON 檔案路徑，或資料庫中的日期/Bundle ID")
+    parser_trade_plan.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
+    
+    parser_trade_record = trade_subs.add_parser("record-fill", help="手動錄入成交交易資料")
+    parser_trade_record.add_argument("--symbol", type=str, required=True, help="股票代號")
+    parser_trade_record.add_argument("--side", type=str, required=True, choices=["BUY", "SELL"], help="交易動作 (BUY/SELL)")
+    parser_trade_record.add_argument("--quantity", type=int, required=True, help="交易股數")
+    parser_trade_record.add_argument("--price", type=float, required=True, help="每股成交價格")
+    parser_trade_record.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
     
     parser_trade_close = trade_subs.add_parser("close-all", help="強制平倉所有持有部位（緊急避險退出）")
     parser_trade_close.add_argument("--broker", type=str, default="fake", help="券商介面名稱")
@@ -1008,6 +1268,7 @@ def main():
         ("approval", "activate"): cmd_approval_activate,
         ("approval", "status"): cmd_approval_status,
         ("account", "init"): cmd_account_init,
+        ("account", "adjust-cash"): cmd_account_adjust_cash,
         ("backtest", "run"): cmd_backtest_run,
         ("simulation", "run-daily"): cmd_simulation_run_daily,
         ("simulation", "execute-pending"): cmd_simulation_execute_pending,
@@ -1015,6 +1276,7 @@ def main():
         ("signal", "generate"): cmd_signal_generate,
         ("signal", "list"): cmd_signal_list,
         ("trade", "plan"): cmd_trade_plan,
+        ("trade", "record-fill"): cmd_trade_record_fill,
         ("trade", "close-all"): cmd_trade_close_all,
         ("portfolio", "reconcile"): cmd_portfolio_reconcile,
         ("portfolio", "rebuild-projections"): cmd_portfolio_rebuild_projections,

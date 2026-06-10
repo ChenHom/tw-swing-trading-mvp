@@ -2,7 +2,7 @@ import pytest
 from datetime import date
 from unittest.mock import MagicMock
 from src.portfolio.db import init_db, get_db_connection
-from src.cli import cmd_signal_list, cmd_simulation_reset, cmd_trade_plan, cmd_trade_record_fill
+from src.cli import cmd_signal_list, cmd_simulation_reset, cmd_trade_plan, cmd_trade_record_fill, cmd_account_adjust_cash, cmd_report_pnl
 
 class MockArgs:
     def __init__(self, date_str=None):
@@ -265,3 +265,97 @@ def test_cmd_trade_record_fill(temp_db_path, monkeypatch, capsys):
     assert pos_row["price"] == 1500000
     
     conn.close()
+
+def test_cmd_account_adjust_cash(temp_db_path, monkeypatch, capsys):
+    # Mock settings
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    
+    # 1. Initialize account with 300,000 cash first
+    conn = get_db_connection(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO cash_ledger (
+            ledger_id, account_id, run_id, event_type, amount, currency,
+            source_type, source_id, occurred_at, idempotency_key, created_at
+        ) VALUES (?, ?, ?, 'INITIAL_DEPOSIT', ?, ?, 'SYSTEM', 'DEPOSIT', ?, ?, datetime('now'))
+        """,
+        ("led-1", "acc-adjust-test", "run-1", 300000, "TWD", "2026-06-10T00:00:00+08:00", "dep-1")
+    )
+    cursor.execute(
+        "INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES (?, ?, ?, datetime('now'))",
+        ("acc-adjust-test", 300000, "TWD")
+    )
+    conn.commit()
+    
+    # Verify DB state
+    cursor.execute("SELECT SUM(amount) FROM cash_ledger WHERE account_id = 'acc-adjust-test'")
+    assert cursor.fetchone()[0] == 300000
+    
+    # 2. Call adjust-cash to reset it to 500,000 cash
+    class MockAdjustCashArgs:
+        def __init__(self):
+            self.account = "acc-adjust-test"
+            self.amount = 500000
+            
+    cmd_account_adjust_cash(MockAdjustCashArgs())
+    
+    captured = capsys.readouterr()
+    assert "成功將帳戶 'acc-adjust-test' 的初始金調整為：500,000 TWD" in captured.out
+    
+    # 3. Verify cash_ledger only has one INITIAL_DEPOSIT for 500,000 cash
+    cursor.execute("SELECT count(*), SUM(amount) FROM cash_ledger WHERE account_id = 'acc-adjust-test' AND event_type = 'INITIAL_DEPOSIT'")
+    cnt_row = cursor.fetchone()
+    assert cnt_row[0] == 1
+    assert cnt_row[1] == 500000
+    
+    # Verify cash_balances is updated to 500000
+    cursor.execute("SELECT balance FROM cash_balances WHERE account_id = 'acc-adjust-test'")
+    assert cursor.fetchone()[0] == 500000
+    
+    conn.close()
+
+def test_cmd_report_pnl(temp_db_path, monkeypatch, capsys):
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    
+    # Initialize database and account
+    conn = get_db_connection(temp_db_path)
+    cursor = conn.cursor()
+    # Insert cash
+    cursor.execute("INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('acc-pnl-test', 100000, 'TWD', datetime('now'))")
+    # Insert a position lot
+    cursor.execute(
+        """
+        INSERT INTO position_lots (
+            lot_id, account_id, symbol, quantity, price, acquired_at, fill_id, created_at
+        ) VALUES ('lot-1', 'acc-pnl-test', '2330', 100, 10000000, '2026-06-10T09:00:00', 'fill-1', datetime('now'))
+        """
+    )
+    # Insert a daily bar for 2330 close at 1050.0 (10500000 scaled)
+    cursor.execute(
+        """
+        INSERT INTO market_bars (
+            symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount, source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum, created_at, updated_at
+        ) VALUES ('2330', 'TSE', 'STOCK', '2026-06-10', 10000000, 10600000, 9900000, 10500000, 100, 10000, 'test', 'Asia/Taipei', 1, 'now', 'chk', datetime('now'), datetime('now'))
+        """
+    )
+    conn.commit()
+    conn.close()
+    
+    class MockPnLArgs:
+        def __init__(self):
+            self.account = "acc-pnl-test"
+            self.date = "2026-06-10"
+            
+    cmd_report_pnl(MockPnLArgs())
+    
+    captured = capsys.readouterr()
+    assert "損益報告" in captured.out
+    assert "可用現金：100,000 TWD" in captured.out
+    assert "部位價值：105,000 TWD" in captured.out
+    assert "總資產淨值：205,000 TWD" in captured.out
+    assert "2330: 100 股 @ 均價 1000.00 (現價: 1050.00) - 價值: 105,000 TWD" in captured.out
