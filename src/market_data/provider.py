@@ -112,12 +112,23 @@ class ShioajiMarketDataProvider:
         from datetime import timezone
         taipei_tz = pytz.timezone("Asia/Taipei")
         
+        import os
+        is_sim = os.getenv("IS_SIMULATION", "False").lower() in ("true", "1", "t", "y", "yes")
+        
         bars = []
         for i in range(len(kbars.ts)):
             # Shioaji ts is nanoseconds since epoch
             ts_s = kbars.ts[i] / 1_000_000_000
-            # Convert to Asia/Taipei localized datetime
-            dt = datetime.fromtimestamp(ts_s, tz=timezone.utc).astimezone(taipei_tz)
+            
+            if is_sim:
+                # In simulation mode, the timestamp naive values represent local Taipei time components
+                dt_utc = datetime.fromtimestamp(ts_s, tz=timezone.utc)
+                dt = taipei_tz.localize(datetime(
+                    dt_utc.year, dt_utc.month, dt_utc.day,
+                    dt_utc.hour, dt_utc.minute, dt_utc.second
+                ))
+            else:
+                dt = datetime.fromtimestamp(ts_s, tz=timezone.utc).astimezone(taipei_tz)
             
             bars.append(
                 MinuteBar(

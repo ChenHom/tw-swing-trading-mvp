@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, patch
 import pytz
 from src.market_data.provider import ShioajiMarketDataProvider
 
-def test_shioaji_market_data_provider_success():
+def test_shioaji_market_data_provider_success(monkeypatch):
+    monkeypatch.setenv("IS_SIMULATION", "False")
     # 1. Create a mock KBar object
     mock_kbars = MagicMock()
     # Shioaji timestamps are in Unix nanoseconds
@@ -59,7 +60,38 @@ def test_shioaji_market_data_provider_success():
         
         # Timezone check (must be localized to Asia/Taipei)
         assert bars[0].time.tzinfo is not None
-        # In python, tzinfo timezone can be represented as pytz or zoneinfo. Let's check string representation or zone
+        assert "Taipei" in str(bars[0].time.tzinfo)
+        assert bars[0].time.hour == 9
+        assert bars[0].time.minute == 0
+
+
+def test_shioaji_market_data_provider_simulation_success(monkeypatch):
+    monkeypatch.setenv("IS_SIMULATION", "True")
+    mock_kbars = MagicMock()
+    # In simulation, 09:00:00 local is returned as 09:00:00 UTC timestamp components
+    utc_dt = datetime(2026, 6, 10, 9, 0, 0, tzinfo=timezone.utc)
+    ts_ns = int(utc_dt.timestamp() * 1_000_000_000)
+    
+    mock_kbars.ts = [ts_ns]
+    mock_kbars.Open = [100.0]
+    mock_kbars.High = [101.5]
+    mock_kbars.Low = [99.5]
+    mock_kbars.Close = [101.0]
+    mock_kbars.Volume = [10]
+    mock_kbars.Amount = [1000.0]
+    
+    with patch("shioaji.Shioaji") as mock_sj_class:
+        mock_api = MagicMock()
+        mock_sj_class.return_value = mock_api
+        mock_contract = MagicMock()
+        mock_api.Contracts.Stocks = {"2330": mock_contract}
+        mock_api.kbars.return_value = mock_kbars
+        
+        provider = ShioajiMarketDataProvider(api_key="test-api-key", secret_key="test-secret")
+        bars = provider.fetch_kbars("2330", date(2026, 6, 10), date(2026, 6, 10))
+        
+        assert len(bars) == 1
+        assert bars[0].time.tzinfo is not None
         assert "Taipei" in str(bars[0].time.tzinfo)
         assert bars[0].time.hour == 9
         assert bars[0].time.minute == 0
