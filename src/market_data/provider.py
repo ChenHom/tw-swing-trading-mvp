@@ -76,9 +76,9 @@ class ShioajiMarketDataProvider:
         if self._api is None:
             import shioaji as sj
             import os
-            self._api = sj.Shioaji()
             is_sim = os.getenv("IS_SIMULATION", "False").lower() in ("true", "1", "t", "y", "yes")
-            self._api.login(api_key=self.api_key, secret_key=self.secret_key, simulation=is_sim)
+            self._api = sj.Shioaji(simulation=is_sim)
+            self._api.login(api_key=self.api_key, secret_key=self.secret_key)
         return self._api
 
     def fetch_kbars(
