@@ -37,26 +37,20 @@
 - [x] Milestone 2: 20~60 日確定性回測 (已完成)
 - [x] Milestone 3: 3~6 個月初步觀察 (已完成)
 - [x] Milestone 4: 每日模擬運行 (已完成)
+- [x] 長期持有部位支援 (手動錄入新增 `--long-term` 參數並於策略出場邏輯中排除) (已完成)
 
 ---
 
 ## Next Development Priority (下一步開發優先順序)
 
-實作核准後，將首先進入 **Milestone 0: Foundation** 開發：
+MVP 核心功能與手動錄入長期持有功能已全部實作完成。後續開發方向包含：
 
-1. **基礎設定與環境變數**:
-   - 建立 `.env.example`、`.gitignore`、`requirements.txt`。
-   - 實作 YAML 設定檔 (strategies, backtest, trading, universe) 讀取邏輯。
-2. **TradingCalendar**:
-   - 整合 `exchange_calendars` 的 `XTAI` 並載入 `calendar_overrides.yaml` 覆寫。
-3. **SQLite 數據表初始化**:
-   - 實作資料表初始化語法 (`market_bars`, `fills`, `cash_ledger`, `position_lots` 等)。
-4. **Market Data Pipeline**:
-   - 實作 `DailyBarAggregator` 與 `MarketBarValidator`，建立 `FixtureMarketDataProvider`。
-5. **參數 Canonicalizer**:
-   - 實作 Pydantic `TrendPullbackParams` 並穩定計算 `params_hash`。
-6. **Decision Codes**:
-   - 引入固定錯誤/決策代碼 (例如 `INSUFFICIENT_HISTORY`, `INSUFFICIENT_CASH` 等)。
+1. **多策略並行支援**:
+   - 擴充資料庫與 CLI，在同一個帳戶下支援多個策略（如 trend_pullback、mean_reversion）並行運行與歸因。
+2. **更精細的成本與滑價模型**:
+   - 引入盤中撮合模擬或根據交易量比重（Volume Participation）估算動態滑價成本。
+3. **對帳報表與權益曲線視覺化**:
+   - 整合前端 UI 或產生靜態圖表以直觀呈現 PnL 變化與對帳明細。
 
 ---
 
