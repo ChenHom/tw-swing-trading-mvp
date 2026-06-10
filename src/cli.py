@@ -420,6 +420,48 @@ def cmd_simulation_run_daily(args):
         sys.exit(1)
     conn.close()
 
+def cmd_simulation_reset(args):
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    cursor = conn.cursor()
+    
+    run_date = args.date
+    print(f"Resetting daily simulation status and generated signal data for date {run_date}...")
+    
+    try:
+        # Delete signal items first to avoid orphan rows (even if not strictly constrained)
+        cursor.execute(
+            "DELETE FROM signal_items WHERE bundle_id IN (SELECT bundle_id FROM signal_bundles WHERE signal_date = ?)",
+            (run_date,)
+        )
+        items_deleted = cursor.rowcount
+        
+        # Delete signal bundles
+        cursor.execute(
+            "DELETE FROM signal_bundles WHERE signal_date = ?",
+            (run_date,)
+        )
+        bundles_deleted = cursor.rowcount
+        
+        # Delete daily runs
+        cursor.execute(
+            "DELETE FROM daily_runs WHERE run_date = ?",
+            (run_date,)
+        )
+        runs_deleted = cursor.rowcount
+        
+        conn.commit()
+        print(f"Successfully reset database records for {run_date}:")
+        print(f"  - Deleted {items_deleted} signal items")
+        print(f"  - Deleted {bundles_deleted} signal bundles")
+        print(f"  - Deleted {runs_deleted} daily run statuses")
+    except Exception as e:
+        conn.rollback()
+        print(f"Error resetting simulation status: {e}")
+        sys.exit(1)
+    finally:
+        conn.close()
+
 def cmd_simulation_execute_pending(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
@@ -870,6 +912,9 @@ def main():
     parser_sim_exec.add_argument("--execution-date", type=str, help="Execution date YYYY-MM-DD")
     parser_sim_exec.add_argument("--account", type=str, default="simulation-main", help="Target account name")
     
+    parser_sim_reset = sim_subs.add_parser("reset", help="Reset simulation status and generated signal data for a date")
+    parser_sim_reset.add_argument("--date", type=str, required=True, help="Specific date YYYY-MM-DD to reset")
+    
     # 7. signal group
     parser_sig = subparsers.add_parser("signal", help="Signal generator commands")
     sig_subs = parser_sig.add_subparsers(dest="subcommand", required=True)
@@ -926,6 +971,7 @@ def main():
         ("backtest", "run"): cmd_backtest_run,
         ("simulation", "run-daily"): cmd_simulation_run_daily,
         ("simulation", "execute-pending"): cmd_simulation_execute_pending,
+        ("simulation", "reset"): cmd_simulation_reset,
         ("signal", "generate"): cmd_signal_generate,
         ("signal", "list"): cmd_signal_list,
         ("trade", "plan"): cmd_trade_plan,
