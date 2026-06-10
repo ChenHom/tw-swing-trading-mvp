@@ -83,15 +83,12 @@ class TradeExecutionEngine:
         )
         
         # 3. Plan Orders
-        planned_orders = []
-        for signal in bundle.signals:
-            orders = OrderPlanner.plan_order(
-                signal=signal,
-                portfolio=portfolio_state,
-                strategy_budget=self.strategy_budget,
-                manifest_limits=self.manifest.limits
-            )
-            planned_orders.extend(orders)
+        planned_orders, _ = OrderPlanner.plan_all(
+            signals=bundle.signals,
+            portfolio=portfolio_state,
+            strategy_budget=self.strategy_budget,
+            manifest_limits=self.manifest.limits
+        )
             
         # 4. Execute with FakeBroker
         broker = FakeBroker(self.market_repo)

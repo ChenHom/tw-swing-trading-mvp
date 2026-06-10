@@ -250,10 +250,10 @@ class PortfolioProjection:
             cursor.execute(
                 """
                 SELECT lot_id, quantity, price, fill_id FROM position_lots
-                WHERE account_id = ? AND symbol = ?
+                WHERE account_id = ? AND symbol = ? AND is_long_term = ?
                 ORDER BY acquired_at ASC
                 """,
-                (account_id, symbol)
+                (account_id, symbol, is_long_term)
             )
             lots = cursor.fetchall()
             

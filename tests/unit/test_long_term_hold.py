@@ -125,4 +125,50 @@ def test_db_long_term_fill_record(tmp_path):
     lot_row_rebuilt = cursor.fetchone()
     assert lot_row_rebuilt["is_long_term"] == 1
     
+    # Try to sell 5 shares as a strategy exit (is_long_term = 0).
+    # This should fail because we only hold long-term lots (is_long_term = 1),
+    # so there are no matching managed lots to match.
+    sell_payload = {
+        "fill_id": "fill-manual-sell-1",
+        "account_id": "simulation-main",
+        "run_id": "manual-run-2",
+        "order_id": "ord-manual-2",
+        "execution_key": "manual-fill-2330-sell-1",
+        "symbol": "2330",
+        "side": "SELL",
+        "quantity": 5,
+        "price": 1100000, # 110.0
+        "filled_at": datetime.now().isoformat(),
+        "is_long_term": 0
+    }
+    
+    with pytest.raises(ValueError, match="SELL_WITHOUT_POSITION"):
+        projection.apply_fill_transaction(sell_payload)
+        
+    # Now record a BUY with is_long_term = 0 (strategy position)
+    buy_managed_payload = {
+        "fill_id": "fill-manual-buy-2",
+        "account_id": "simulation-main",
+        "run_id": "manual-run-3",
+        "order_id": "ord-manual-3",
+        "execution_key": "manual-fill-2330-buy-2",
+        "symbol": "2330",
+        "side": "BUY",
+        "quantity": 5,
+        "price": 1000000,
+        "filled_at": datetime.now().isoformat(),
+        "is_long_term": 0
+    }
+    projection.apply_fill_transaction(buy_managed_payload)
+    
+    # Now SELL 5 shares of managed position. This should succeed!
+    projection.apply_fill_transaction(sell_payload)
+    
+    # Verify that the long-term lot of 10 shares remains untouched
+    cursor.execute("SELECT quantity, is_long_term FROM position_lots WHERE symbol = '2330'")
+    lots = cursor.fetchall()
+    assert len(lots) == 1
+    assert lots[0]["quantity"] == 10
+    assert lots[0]["is_long_term"] == 1
+    
     conn.close()

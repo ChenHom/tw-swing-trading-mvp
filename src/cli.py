@@ -156,6 +156,20 @@ def cmd_market_backfill(args):
     print(f"Successfully sync'd {success_count} / {len(sessions)} days.")
     conn.close()
 
+def get_valuation_universe(conn, strategy_symbols: list[str]) -> list[str]:
+    cursor = conn.cursor()
+    # 1. Open positions
+    cursor.execute("SELECT DISTINCT symbol FROM position_lots WHERE quantity > 0")
+    open_symbols = [row["symbol"] for row in cursor.fetchall()]
+    
+    # 2. Strategy signals (buy/sell targets in fills)
+    cursor.execute("SELECT DISTINCT symbol FROM fills")
+    fill_symbols = [row["symbol"] for row in cursor.fetchall()]
+    
+    # Union them
+    val_set = set(strategy_symbols).union(open_symbols).union(fill_symbols)
+    return sorted(list(val_set))
+
 def cmd_market_sync(args):
     settings = get_settings()
     init_db(settings.trading.database_path)
@@ -170,7 +184,8 @@ def cmd_market_sync(args):
     )
     
     sync_date = date.fromisoformat(args.date) if args.date else date.today()
-    symbols = [s.code for s in settings.universe.symbols]
+    strategy_symbols = [s.code for s in settings.universe.symbols]
+    symbols = get_valuation_universe(conn, strategy_symbols)
     
     print(f"Syncing market data for {sync_date}...")
     if runner.sync_market_data(sync_date, symbols):
@@ -519,6 +534,20 @@ def cmd_simulation_reset(args):
     print(f"Resetting daily simulation status and generated signal data for date {run_date}...")
     
     try:
+        # Check if execution fills exist on this date
+        cursor.execute(
+            """
+            SELECT COUNT(*) as cnt FROM fills
+            WHERE date(filled_at) = ?
+            """,
+            (run_date,)
+        )
+        fill_count = cursor.fetchone()["cnt"]
+        if fill_count > 0:
+            print(f"Error: RESET_BLOCKED_EXECUTION_FACTS_EXIST. Cannot reset simulation state for {run_date} because {fill_count} execution fills already exist on this date.")
+            conn.close()
+            sys.exit(1)
+
         # Delete signal items first to avoid orphan rows (even if not strictly constrained)
         cursor.execute(
             "DELETE FROM signal_items WHERE bundle_id IN (SELECT bundle_id FROM signal_bundles WHERE signal_date = ?)",
@@ -920,27 +949,31 @@ def cmd_trade_plan(args):
     headers = ["代號", "名稱", "動作", "參考價格", "規劃數量", "單位", "預估金額", "規劃狀態"]
     table_rows = []
     
+    planned_orders, signal_results = OrderPlanner.plan_all(
+        signals=bundle.signals,
+        portfolio=portfolio_state,
+        strategy_budget=manifest.limits.max_order_value if manifest else 35000,
+        manifest_limits=limits
+    )
+    
     for sig in bundle.signals:
         symbol = sig.symbol
         name = STOCK_NAMES.get(symbol, "未知")
         action = "買入" if sig.action == "BUY" else "賣出"
         
-        try:
-            planned_orders = OrderPlanner.plan_order(
-                signal=sig,
-                portfolio=portfolio_state,
-                strategy_budget=manifest.limits.max_order_value if manifest else 35000,
-                manifest_limits=limits
-            )
-            
-            if not planned_orders:
-                table_rows.append([
-                    symbol, name, action, f"{sig.reference_price:.2f}",
-                    "0", "股", "0", "無交易 (無持倉)"
-                ])
-                continue
-                
-            for order in planned_orders:
+        result = signal_results.get(sig.signal_id, [])
+        if isinstance(result, str):
+            table_rows.append([
+                symbol, name, action, f"{sig.reference_price:.2f}",
+                "阻擋", "-", "-", f"風控阻擋: {result}"
+            ])
+        elif not result:
+            table_rows.append([
+                symbol, name, action, f"{sig.reference_price:.2f}",
+                "0", "股", "0", "無交易 (無持倉)"
+            ])
+        else:
+            for order in result:
                 qty = order["quantity"]
                 unit = "張" if (qty >= 1000 and qty % 1000 == 0) else "股"
                 display_qty = f"{qty // 1000}" if unit == "張" else f"{qty}"
@@ -950,11 +983,6 @@ def cmd_trade_plan(args):
                     symbol, name, action, f"{sig.reference_price:.2f}",
                     display_qty, unit, f"{est_val:,}", "成功 (待執行)"
                 ])
-        except ValueError as e:
-            table_rows.append([
-                symbol, name, action, f"{sig.reference_price:.2f}",
-                "阻擋", "-", "-", f"風控阻擋: {e}"
-            ])
             
     # Print table helper
     def display_len(s: str) -> int:
@@ -1017,29 +1045,7 @@ def cmd_trade_record_fill(args):
     try:
         projection.apply_fill_transaction(fill_payload)
         
-        # Auto-add to universe.yaml if not present
-        existing_codes = [s.code for s in settings.universe.symbols]
-        if symbol not in existing_codes:
-            try:
-                import yaml
-                universe_path = settings.config_dir / "universe.yaml"
-                if universe_path.exists():
-                    with open(universe_path, "r", encoding="utf-8") as f:
-                        content = yaml.safe_load(f) or {}
-                    if "symbols" not in content:
-                        content["symbols"] = []
-                    # Check again to avoid duplicate in file
-                    if not any(s.get("code") == symbol for s in content.get("symbols", [])):
-                        content["symbols"].append({
-                            "code": symbol,
-                            "exchange": "TSE",
-                            "instrument_type": "STOCK"
-                        })
-                        with open(universe_path, "w", encoding="utf-8") as f:
-                            yaml.dump(content, f, sort_keys=False, allow_unicode=True)
-                        print(f"  - 提示：已自動將新標的 {symbol} 新增至交易宇宙設定檔 (universe.yaml)。")
-            except Exception as e:
-                print(f"  - 警告：無法自動將新標的 {symbol} 新增至 universe.yaml: {e}")
+        # No auto-addition to universe.yaml anymore to prevent configuration pollution and keep backtest reproducibility
         
         trade_value = int(round(qty * price_scaled / 10000.0))
         broker_fee = max(20, int(round(trade_value * 0.001425)))

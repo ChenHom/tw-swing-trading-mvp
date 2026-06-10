@@ -137,7 +137,8 @@ class DailySimulationRunner:
             if run_record["market_sync_status"] != "COMPLETED":
                 self._update_run_status(run_date, account_id, strategy_id, status="STARTED")
                 
-                success = self.sync_market_data(run_date, universe_symbols)
+                valuation_symbols = self._get_valuation_universe(universe_symbols)
+                success = self.sync_market_data(run_date, valuation_symbols)
                 if not success:
                     self._upsert_run(
                         run_date=run_date,
@@ -528,3 +529,17 @@ class DailySimulationRunner:
                 )
             )
         self.db_conn.commit()
+
+    def _get_valuation_universe(self, strategy_symbols: list[str]) -> list[str]:
+        cursor = self.db_conn.cursor()
+        # 1. Open positions
+        cursor.execute("SELECT DISTINCT symbol FROM position_lots WHERE quantity > 0")
+        open_symbols = [row["symbol"] for row in cursor.fetchall()]
+        
+        # 2. Strategy signals (buy/sell targets in fills)
+        cursor.execute("SELECT DISTINCT symbol FROM fills")
+        fill_symbols = [row["symbol"] for row in cursor.fetchall()]
+        
+        # Union them
+        val_set = set(strategy_symbols).union(open_symbols).union(fill_symbols)
+        return sorted(list(val_set))

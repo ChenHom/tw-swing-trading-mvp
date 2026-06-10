@@ -256,7 +256,10 @@ def test_cmd_trade_record_fill(temp_db_path, tmp_path, monkeypatch, capsys):
     assert "2317" in captured.out
     assert "100 股" in captured.out
     assert "150.00" in captured.out
-    assert "已自動將新標的 2317 新增至交易宇宙設定檔" in captured.out
+    # Verify universe.yaml was NOT modified
+    with open(universe_file, "r", encoding="utf-8") as f:
+        yaml_content = f.read()
+    assert "2317" not in yaml_content
     
     # Verify DB contains the recorded fill
     conn = get_db_connection(temp_db_path)
@@ -277,12 +280,12 @@ def test_cmd_trade_record_fill(temp_db_path, tmp_path, monkeypatch, capsys):
     assert pos_row["quantity"] == 100
     assert pos_row["price"] == 1500000
     
-    # Verify universe.yaml content updated
+    # Verify universe.yaml content was NOT updated
     import yaml
     with open(universe_file, "r", encoding="utf-8") as f:
         content = yaml.safe_load(f)
     codes = [s["code"] for s in content.get("symbols", [])]
-    assert "2317" in codes
+    assert "2317" not in codes
     
     conn.close()
 

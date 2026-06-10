@@ -81,6 +81,8 @@ class SignalItem(BaseModel):
     action: str
     reference_price: float
     reason_code: str
+    ranking_score: Optional[float] = None
+
 
 class DailySignalBundle(BaseModel):
     schema_version: str = "1.0"
