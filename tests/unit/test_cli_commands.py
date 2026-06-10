@@ -25,7 +25,7 @@ def test_cmd_signal_list_empty(temp_db_path, monkeypatch, capsys):
     cmd_signal_list(args)
     
     captured = capsys.readouterr()
-    assert "No signals found in the database." in captured.out
+    assert "資料庫中無任何訊號紀錄。" in captured.out
 
 def test_cmd_signal_list_with_data(temp_db_path, monkeypatch, capsys):
     # Mock settings
@@ -78,12 +78,15 @@ def test_cmd_signal_list_with_data(temp_db_path, monkeypatch, capsys):
     cmd_signal_list(args)
     
     captured = capsys.readouterr()
-    assert "Signal Date" in captured.out
+    assert "訊號日期" in captured.out
+    assert "名稱" in captured.out
+    assert "台積電" in captured.out
+    assert "鴻海" in captured.out
     assert "2330" in captured.out
     assert "2317" in captured.out
     assert "102.50" in captured.out
     assert "150.00" in captured.out
-    assert "Total: 2 signals." in captured.out
+    assert "共計: 2 筆訊號。" in captured.out
     
     # 2. Test filter by date
     args_date = MockArgs(date_str="2026-06-10")
@@ -91,8 +94,10 @@ def test_cmd_signal_list_with_data(temp_db_path, monkeypatch, capsys):
     
     captured_date = capsys.readouterr()
     assert "2330" in captured_date.out
+    assert "台積電" in captured_date.out
     assert "2317" not in captured_date.out
-    assert "Total: 1 signals." in captured_date.out
+    assert "鴻海" not in captured_date.out
+    assert "共計: 1 筆訊號。" in captured_date.out
 
 def test_cmd_simulation_reset(temp_db_path, monkeypatch, capsys):
     # Mock settings

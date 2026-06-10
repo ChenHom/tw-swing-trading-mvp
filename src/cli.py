@@ -633,6 +633,25 @@ def cmd_signal_list(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
     
+    # 股名對照表
+    stock_names = {
+        "2330": "台積電",
+        "2317": "鴻海",
+        "2454": "聯發科",
+        "2308": "台達電",
+        "2382": "廣達",
+        "2881": "富邦金",
+        "2882": "國泰金",
+        "2301": "光寶科",
+        "2324": "仁寶",
+        "3231": "緯創",
+        "2357": "華碩",
+        "2891": "中信金",
+        "2886": "兆豐金",
+        "2603": "長榮",
+        "2609": "陽明"
+    }
+    
     query = """
         SELECT 
             b.signal_date, 
@@ -656,14 +675,17 @@ def cmd_signal_list(args):
     cursor.execute(query, params)
     rows = cursor.fetchall()
     
-    headers = ["Signal Date", "Exec Date", "Symbol", "Action", "Ref Price", "Reason", "Strategy"]
+    headers = ["訊號日期", "執行日期", "代號", "名稱", "動作", "參考價格", "原因", "策略"]
     table_rows = []
     for r in rows:
         ref_price = r["reference_price"] / 10000.0
+        symbol = r["symbol"]
+        name = stock_names.get(symbol, "未知")
         table_rows.append([
             r["signal_date"],
             r["target_execution_date"],
-            r["symbol"],
+            symbol,
+            name,
             r["action"],
             f"{ref_price:.2f}",
             r["reason_code"],
@@ -672,26 +694,44 @@ def cmd_signal_list(args):
         
     if not table_rows:
         if args.date:
-            print(f"No signals found for date {args.date}.")
+            print(f"查無日期 {args.date} 的訊號紀錄。")
         else:
-            print("No signals found in the database.")
+            print("資料庫中無任何訊號紀錄。")
         conn.close()
         return
         
-    # Print table helper
-    widths = [len(h) for h in headers]
+    # 計算顯示長度的輔助函式（中文字元計為 2 個寬度）
+    def display_len(s: str) -> int:
+        length = 0
+        for char in s:
+            if ord(char) > 127:
+                length += 2
+            else:
+                length += 1
+        return length
+
+    # 填充顯示寬度的輔助函式（支援中文字元對齊）
+    def pad_str(s: str, width: int) -> str:
+        cur_len = display_len(s)
+        if cur_len >= width:
+            return s
+        return s + " " * (width - cur_len)
+        
+    # 計算各欄顯示的最大寬度
+    widths = [display_len(h) for h in headers]
     for row in table_rows:
         for i, val in enumerate(row):
-            widths[i] = max(widths[i], len(str(val)))
+            widths[i] = max(widths[i], display_len(str(val)))
             
-    header_str = " | ".join(f"{h:<{widths[i]}}" for i, h in enumerate(headers))
+    header_str = " | ".join(pad_str(h, widths[i]) for i, h in enumerate(headers))
     print(header_str)
     print("-+-".join("-" * w for w in widths))
     for row in table_rows:
-        row_str = " | ".join(f"{str(val):<{widths[i]}}" for i, val in enumerate(row))
+        row_str = " | ".join(pad_str(str(val), widths[i]) for i, val in enumerate(row))
         print(row_str)
-    print(f"\nTotal: {len(table_rows)} signals.")
+    print(f"\n共計: {len(table_rows)} 筆訊號。")
     conn.close()
+
 
 def cmd_trade_plan(args):
     settings = get_settings()
