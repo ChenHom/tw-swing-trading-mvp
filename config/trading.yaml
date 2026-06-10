@@ -1,0 +1,7 @@
+database_path: "data/app.db"
+approval:
+  expiry_warning_sessions: 3
+  allowlist_path: "config/issuer-allowlist.json"
+  revoked_path: "config/revoked-approvals.json"
+  active_pointer_path: "artifacts/approvals/active-approval.json"
+  approvals_dir: "artifacts/approvals/"

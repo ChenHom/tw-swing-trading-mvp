@@ -1,0 +1,9 @@
+strategy_id: trend_pullback
+strategy_version: 1.0.0
+
+parameters:
+  ma_short: 20
+  ma_long: 60
+  stop_loss_bps: 500
+  take_profit_bps: 1200
+  order_budget_twd: 20000
