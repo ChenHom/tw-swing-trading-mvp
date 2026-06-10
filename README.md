@@ -193,7 +193,7 @@ python3 -m app portfolio reconcile
 
 ## 5. 測試與驗證
 
-本專案使用 `pytest` 進行完整的單元與整合測試，包含 Shioaji 行情模組測試、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、YAML 自動寫入等共計 **55 個測試案例**。
+本專案使用 `pytest` 進行完整的單元與整合測試，包含 Shioaji 行情模組測試、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、YAML 自動寫入等共計 **57 個測試案例**。
 
 執行所有測試：
 ```bash
