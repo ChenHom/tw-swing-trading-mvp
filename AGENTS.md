@@ -32,11 +32,11 @@
 
 - [x] 完成 `tw-swing-trading-mvp-implementation-plan.md` 需求定義。
 - [x] 在 Artifacts 中生成 [implementation_plan.md](file:///home/hom/.gemini/antigravity-cli/brain/51d942a2-225b-433a-913f-6889f769c880/implementation_plan.md) 實作方案，待用戶核准。
-- [ ] Milestone 0: Foundation (準備開始)
-- [ ] Milestone 1: Simulation Closed Loop (未開始)
-- [ ] Milestone 2: 20~60 日確定性回測 (未開始)
-- [ ] Milestone 3: 3~6 個月初步觀察 (未開始)
-- [ ] Milestone 4: 每日模擬運行 (未開始)
+- [x] Milestone 0: Foundation (已完成)
+- [x] Milestone 1: Simulation Closed Loop (已完成)
+- [x] Milestone 2: 20~60 日確定性回測 (已完成)
+- [x] Milestone 3: 3~6 個月初步觀察 (已完成)
+- [ ] Milestone 4: 每日模擬運行 (未開工)
 
 ---
 
