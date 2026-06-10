@@ -662,7 +662,7 @@ def cmd_signal_generate(args):
     positions = {}
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT symbol, SUM(quantity) as qty, AVG(price) as avg_price FROM position_lots WHERE account_id = ? GROUP BY symbol",
+        "SELECT symbol, SUM(quantity) as qty, AVG(price) as avg_price, MAX(is_long_term) as is_long_term FROM position_lots WHERE account_id = ? GROUP BY symbol",
         (account_id,)
     )
     for row in cursor.fetchall():
@@ -671,7 +671,8 @@ def cmd_signal_generate(args):
             positions[row["symbol"]] = PositionSnapshot(
                 symbol=row["symbol"],
                 quantity=qty,
-                entry_price=int(row["avg_price"])
+                entry_price=int(row["avg_price"]),
+                is_long_term=bool(row["is_long_term"])
             )
     portfolio_snapshot = PortfolioSnapshot(available_cash=available_cash, positions=positions)
     
@@ -997,6 +998,8 @@ def cmd_trade_record_fill(args):
     
     price_scaled = int(round(price * 10000))
     
+    is_long_term = 1 if getattr(args, "long_term", False) else 0
+    
     fill_payload = {
         "fill_id": f"fill-manual-{uuid_like()}",
         "account_id": account_id,
@@ -1007,7 +1010,8 @@ def cmd_trade_record_fill(args):
         "side": side,
         "quantity": qty,
         "price": price_scaled,
-        "filled_at": datetime.now().isoformat()
+        "filled_at": datetime.now().isoformat(),
+        "is_long_term": is_long_term
     }
     
     try:
@@ -1295,6 +1299,7 @@ def main():
     parser_trade_record.add_argument("--quantity", type=int, required=True, help="交易股數")
     parser_trade_record.add_argument("--price", type=float, required=True, help="每股成交價格")
     parser_trade_record.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
+    parser_trade_record.add_argument("--long-term", action="store_true", help="設定此成交為長期持有部位，免受策略自動出場訊號影響")
     
     parser_trade_close = trade_subs.add_parser("close-all", help="強制平倉所有持有部位（緊急避險退出）")
     parser_trade_close.add_argument("--broker", type=str, default="fake", help="券商介面名稱")

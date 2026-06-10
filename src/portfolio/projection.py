@@ -16,7 +16,7 @@ class PortfolioProjection:
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            SELECT lot_id, symbol, quantity, price, acquired_at, fill_id
+            SELECT lot_id, symbol, quantity, price, acquired_at, fill_id, is_long_term
             FROM position_lots
             WHERE account_id = ? AND symbol = ?
             ORDER BY acquired_at ASC
@@ -50,7 +50,7 @@ class PortfolioProjection:
             # Fetch all fills for this account chronologically first
             cursor.execute(
                 """
-                SELECT fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at
+                SELECT fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term
                 FROM fills
                 WHERE account_id = ?
                 ORDER BY filled_at ASC
@@ -99,7 +99,8 @@ class PortfolioProjection:
                     "side": f["side"],
                     "quantity": f["quantity"],
                     "price": f["price"],
-                    "filled_at": f["filled_at"]
+                    "filled_at": f["filled_at"],
+                    "is_long_term": f["is_long_term"]
                 }
                 self._apply_fill_ops(cursor, fill_dict)
 
@@ -180,14 +181,15 @@ class PortfolioProjection:
         tax = int(round(trade_value * 0.003)) if side == "SELL" else 0
 
         # 1. Insert fill
+        is_long_term = fill.get("is_long_term", 0)
         cursor.execute(
             """
             INSERT INTO fills (
                 fill_id, account_id, run_id, order_id, execution_key,
-                symbol, side, quantity, price, filled_at, reverses_fill_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'))
+                symbol, side, quantity, price, filled_at, reverses_fill_id, created_at, is_long_term
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), ?)
             """,
-            (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at)
+            (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term)
         )
 
         # 2. Append cash ledger events
@@ -237,10 +239,10 @@ class PortfolioProjection:
             cursor.execute(
                 """
                 INSERT INTO position_lots (
-                    lot_id, account_id, symbol, quantity, price, acquired_at, fill_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    lot_id, account_id, symbol, quantity, price, acquired_at, fill_id, created_at, is_long_term
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
                 """,
-                (lot_id, account_id, symbol, quantity, price, filled_at, fill_id)
+                (lot_id, account_id, symbol, quantity, price, filled_at, fill_id, is_long_term)
             )
             new_balance = current_balance - (trade_value + broker_fee)
             

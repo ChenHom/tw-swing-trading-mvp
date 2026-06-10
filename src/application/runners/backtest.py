@@ -101,7 +101,7 @@ class BacktestRunner:
             positions = {}
             cursor = self.db_conn.cursor()
             cursor.execute(
-                "SELECT symbol, SUM(quantity) as qty, AVG(price) as avg_price FROM position_lots WHERE account_id = ? GROUP BY symbol",
+                "SELECT symbol, SUM(quantity) as qty, AVG(price) as avg_price, MAX(is_long_term) as is_long_term FROM position_lots WHERE account_id = ? GROUP BY symbol",
                 (account_id,)
             )
             for row in cursor.fetchall():
@@ -110,7 +110,8 @@ class BacktestRunner:
                     positions[row["symbol"]] = PositionSnapshot(
                         symbol=row["symbol"],
                         quantity=qty,
-                        entry_price=int(row["avg_price"])
+                        entry_price=int(row["avg_price"]),
+                        is_long_term=bool(row["is_long_term"])
                     )
             portfolio_snapshot = PortfolioSnapshot(
                 available_cash=available_cash,

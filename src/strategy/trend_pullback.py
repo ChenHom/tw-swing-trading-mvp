@@ -55,6 +55,8 @@ class TrendPullbackStrategy:
             else:
                 # Exit Logic
                 pos = portfolio.positions[symbol]
+                if pos.is_long_term:
+                    continue
                 entry_price = pos.entry_price
                 
                 # Check Stop Loss (SL)

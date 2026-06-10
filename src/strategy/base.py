@@ -8,6 +8,8 @@ class PositionSnapshot(BaseModel):
     symbol: str
     quantity: int
     entry_price: int  # price x 10000
+    is_long_term: bool = False
+
 
 class PortfolioSnapshot(BaseModel):
     available_cash: int

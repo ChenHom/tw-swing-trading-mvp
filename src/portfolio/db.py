@@ -74,7 +74,8 @@ def init_db(db_path: str) -> None:
         price INTEGER NOT NULL,
         filled_at TEXT NOT NULL,
         reverses_fill_id TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        is_long_term INTEGER NOT NULL DEFAULT 0
     );
     """)
     
@@ -106,7 +107,8 @@ def init_db(db_path: str) -> None:
         price INTEGER NOT NULL,
         acquired_at TEXT NOT NULL,
         fill_id TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        is_long_term INTEGER NOT NULL DEFAULT 0
     );
     """)
     
@@ -215,5 +217,17 @@ def init_db(db_path: str) -> None:
     );
     """)
     
+    # Migration: Add is_long_term column to fills if it doesn't exist
+    cursor.execute("PRAGMA table_info(fills);")
+    fill_columns = [row["name"] for row in cursor.fetchall()]
+    if "is_long_term" not in fill_columns:
+        cursor.execute("ALTER TABLE fills ADD COLUMN is_long_term INTEGER NOT NULL DEFAULT 0;")
+
+    # Migration: Add is_long_term column to position_lots if it doesn't exist
+    cursor.execute("PRAGMA table_info(position_lots);")
+    lot_columns = [row["name"] for row in cursor.fetchall()]
+    if "is_long_term" not in lot_columns:
+        cursor.execute("ALTER TABLE position_lots ADD COLUMN is_long_term INTEGER NOT NULL DEFAULT 0;")
+
     conn.commit()
     conn.close()

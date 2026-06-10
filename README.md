@@ -136,10 +136,12 @@ python3 -m app trade plan --bundle 2026-06-10
 ```
 
 ### 第五步：手動錄入成交紀錄 (手動建立已購買/已賣出的交易資料)
-若您需要手動輸入一筆交易事實，系統會自動在資料庫中寫入成交與現金流水，並重新對帳。**若輸入了新的股票代號，系統會自動將其加入 `config/universe.yaml` 以利後續行情同步更新現價**：
+若您需要手動輸入一筆交易事實，系統會自動在資料庫中寫入成交與現金流水，並重新對帳。**若輸入了新的股票代號，系統會自動將其加入 `config/universe.yaml` 以利後續行情同步更新現價**。
+
+此外，您可使用 `--long-term` 參數將此成交標記為**長期持有部位**，長期持有部位將會被排除在策略的自動出場邏輯之外，免受自動出場訊號影響：
 ```bash
-# 手動錄入買入 71 股的 2327 (每股 516.92 元)
-python3 -m app trade record-fill --symbol 2327 --side BUY --quantity 71 --price 516.92
+# 手動錄入買入 71 股的 2327 (每股 516.92 元) 並標記為長期持有
+python3 -m app trade record-fill --symbol 2327 --side BUY --quantity 71 --price 516.92 --long-term
 ```
 **輸出範例**：
 ```text
