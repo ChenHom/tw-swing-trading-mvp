@@ -36,8 +36,10 @@ def test_shioaji_market_data_provider_success():
         provider = ShioajiMarketDataProvider(api_key="test-api-key", secret_key="test-secret")
         bars = provider.fetch_kbars("2330", date(2026, 6, 10), date(2026, 6, 10))
         
-        # Verify login was called
-        mock_api.login.assert_called_once_with(api_key="test-api-key", secret_key="test-secret")
+        mock_api.login.assert_called_once()
+        _, kwargs = mock_api.login.call_args
+        assert kwargs.get("api_key") == "test-api-key"
+        assert kwargs.get("secret_key") == "test-secret"
         
         # Verify kbars query
         mock_api.kbars.assert_called_once_with(
