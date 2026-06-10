@@ -61,6 +61,27 @@ MVP 核心功能與手動錄入長期持有功能已全部實作完成。後續�
 
 ---
 
+## Known Architectural Limits & Risks (已知架構限制與風險)
+
+後續開發前，必須注意當前 MVP 實作存在的以下設計限制與風險，這也是下一步優先修正的範疇：
+
+1. **資金配置與超額分配 (PortfolioOrderAllocator)**:
+   - 當前 `OrderPlanner` 是針對單個訊號單獨規劃，未做帳戶層級的整體現金配置與排序限制。當存在多個 BUY 訊號時，會造成可用現金被重複/超額分配的風險。
+2. **長期持有 (Long-term) 與策略持倉之 FIFO 污染**:
+   - 目前長期持有僅由 `is_long_term` 標記。在執行 SELL 訊號時，資料庫的 FIFO 撮合仍會優先匹配最早買入的批次（可能是長期持有部位），造成策略部位與長期部位的配對污染。需要引入更細緻的 `management_mode` (或 `strategy_id`) 進行 FIFO 隔離。
+3. **模擬重置 (Simulation Reset) 的事實刪除邊界**:
+   - `simulation reset` 命令目前允許清空指定日期的模擬狀態。但對於已成交的事實數據（`fills`, `cash_ledger`）不應允許任意刪除或修改。重置指令必須受到限制（或改為 `retry` 僅重試未成功階段），以維護不可變權威事實的嚴謹性。
+4. **交易宇宙 (Universe) 責任混淆**:
+   - `record-fill` 錄入新股票時會自動寫入 `universe.yaml`。這將「策略候選股池 (StrategyUniverse)」與「需要更新現價的持股估值池 (ValuationUniverse)」混淆，且動態修改版控下的設定檔會破壞回測重現性。
+5. **排程運行的隱式帳戶解析風險**:
+   - CLI 支援省略 `--account` 進行動態解析，這方便了手動查詢，但對於自動排程 (cron) 存在極大風險。自動化任務必須強制指定明確的 `account_id` 與 `strategy_id`。
+6. **手動成交的事實完整性**:
+   - 目前 `record-fill` 僅能使用估計費率，且未記錄來源資訊（如 `source = MANUAL_IMPORT`、`broker`、真實手續費與稅額等），亦缺乏沖銷修正（reversal / corrected fill）的模型支援。
+7. **其他限制**:
+   - 零股與整張股票採用相同的成交滑價模型；未追蹤除權息等公司行動；缺乏並行運行鎖（Mutex Lock）與詳細的排程異常告警閉環。
+
+---
+
 ## Architecture Rules (架構設計守則)
 
 - **Port-Adapter 隔離**：將外部依賴 (如 Shioaji SDK、SQLite) 與核心業務邏輯 (策略計算、風控查驗、成交模擬) 分離，核心邏輯採用 Protocols/Interface 進行隔離。
