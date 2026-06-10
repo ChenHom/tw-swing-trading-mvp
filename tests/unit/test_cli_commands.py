@@ -405,3 +405,77 @@ def test_resolve_account_id(temp_db_path, capsys):
     
     conn.close()
 
+
+def test_resolve_account_id_non_interactive(temp_db_path, monkeypatch, capsys):
+    """Non-interactive environment must require explicit --account."""
+    import sys
+    conn = get_db_connection(temp_db_path)
+    conn.execute("INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('acc-only', 100, 'TWD', datetime('now'))")
+    conn.commit()
+
+    # Simulate non-interactive (no tty) but NOT pytest → should exit
+    monkeypatch.setattr("sys.stdin", open("/dev/null"))  # isatty() → False
+    pytest_mod = sys.modules.pop("pytest", None)
+    try:
+        with pytest.raises(SystemExit):
+            resolve_account_id(conn, None)
+        captured = capsys.readouterr()
+        assert "非互動式環境" in captured.out
+    finally:
+        if pytest_mod is not None:
+            sys.modules["pytest"] = pytest_mod
+    conn.close()
+
+
+def test_record_fill_sets_source_manual_import(temp_db_path, monkeypatch, capsys):
+    """record-fill should persist source = 'MANUAL_IMPORT' in the fills table."""
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    class MockRecordFillArgs:
+        symbol = "2330"
+        side = "BUY"
+        quantity = 10
+        price = 100.0
+        account = "acc-src-test"
+        long_term = False
+
+    cmd_trade_record_fill(MockRecordFillArgs())
+
+    conn = get_db_connection(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT source FROM fills WHERE account_id = 'acc-src-test'")
+    row = cursor.fetchone()
+    assert row is not None
+    assert row["source"] == "MANUAL_IMPORT"
+    conn.close()
+
+
+def test_simulation_run_daily_locked(temp_db_path, monkeypatch, capsys):
+    """Second concurrent simulation run-daily should exit with SIMULATION_ALREADY_RUNNING."""
+    import fcntl
+    from pathlib import Path
+    from src.cli import cmd_simulation_run_daily
+
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    lock_path = Path(temp_db_path).parent / "simulation_daily.lock"
+    lock_file = open(lock_path, "w")
+    fcntl.flock(lock_file, fcntl.LOCK_EX)
+
+    try:
+        class MockRunDailyArgs:
+            date = "2026-06-10"
+            account = "acc-lock-test"
+
+        with pytest.raises(SystemExit):
+            cmd_simulation_run_daily(MockRunDailyArgs())
+
+        captured = capsys.readouterr()
+        assert "SIMULATION_ALREADY_RUNNING" in captured.out
+    finally:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()

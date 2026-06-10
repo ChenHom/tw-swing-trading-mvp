@@ -50,7 +50,7 @@ class PortfolioProjection:
             # Fetch all fills for this account chronologically first
             cursor.execute(
                 """
-                SELECT fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term
+                SELECT fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term, source
                 FROM fills
                 WHERE account_id = ?
                 ORDER BY filled_at ASC
@@ -100,7 +100,8 @@ class PortfolioProjection:
                     "quantity": f["quantity"],
                     "price": f["price"],
                     "filled_at": f["filled_at"],
-                    "is_long_term": f["is_long_term"]
+                    "is_long_term": f["is_long_term"],
+                    "source": f["source"]
                 }
                 self._apply_fill_ops(cursor, fill_dict)
 
@@ -182,14 +183,15 @@ class PortfolioProjection:
 
         # 1. Insert fill
         is_long_term = fill.get("is_long_term", 0)
+        source = fill.get("source", "STRATEGY")
         cursor.execute(
             """
             INSERT INTO fills (
                 fill_id, account_id, run_id, order_id, execution_key,
-                symbol, side, quantity, price, filled_at, reverses_fill_id, created_at, is_long_term
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), ?)
+                symbol, side, quantity, price, filled_at, reverses_fill_id, created_at, is_long_term, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), ?, ?)
             """,
-            (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term)
+            (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term, source)
         )
 
         # 2. Append cash ledger events

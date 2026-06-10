@@ -160,6 +160,7 @@ class DailySimulationRunner:
             
             # Preflight manifest verification
             preflight = self.get_preflight_status(run_date)
+            print(f"[run_daily] Active manifest preflight check: {preflight}")
             # If preflight status is blocker (EXPIRED, REVOKED, MISSING, INVALID)
             # we block BUY orders, but we can still run engine which handles this order planning.
             # However, if MISSING or INVALID, we can log a warning.

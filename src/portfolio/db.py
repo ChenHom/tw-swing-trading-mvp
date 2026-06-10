@@ -75,7 +75,8 @@ def init_db(db_path: str) -> None:
         filled_at TEXT NOT NULL,
         reverses_fill_id TEXT,
         created_at TEXT NOT NULL,
-        is_long_term INTEGER NOT NULL DEFAULT 0
+        is_long_term INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'STRATEGY'
     );
     """)
     
@@ -222,6 +223,8 @@ def init_db(db_path: str) -> None:
     fill_columns = [row["name"] for row in cursor.fetchall()]
     if "is_long_term" not in fill_columns:
         cursor.execute("ALTER TABLE fills ADD COLUMN is_long_term INTEGER NOT NULL DEFAULT 0;")
+    if "source" not in fill_columns:
+        cursor.execute("ALTER TABLE fills ADD COLUMN source TEXT NOT NULL DEFAULT 'STRATEGY';")
 
     # Migration: Add is_long_term column to position_lots if it doesn't exist
     cursor.execute("PRAGMA table_info(position_lots);")

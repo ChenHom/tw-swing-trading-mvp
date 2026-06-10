@@ -1,6 +1,7 @@
 import argparse
 import sys
 import os
+import fcntl
 import json
 import hashlib
 import sqlite3
@@ -35,6 +36,9 @@ def get_settings() -> AppSettings:
 def resolve_account_id(conn, specified_account: str | None) -> str:
     if specified_account:
         return specified_account
+    if not sys.stdin.isatty() and "pytest" not in sys.modules:
+        print("錯誤：在非互動式環境中（如排程、cron 或 CI），必須明確使用 --account 參數指定目標帳戶，禁止隱式自動解析。")
+        sys.exit(1)
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cash_balances'")
@@ -484,46 +488,72 @@ def cmd_backtest_run(args):
 def cmd_simulation_run_daily(args):
     settings = get_settings()
     init_db(settings.trading.database_path)
-    conn = get_db_connection(settings.trading.database_path)
     
-    manifest = load_active_manifest(settings)
-    if not manifest:
-        print("Warning: No active manifest found. Simulation will run using a dummy manifest.")
-        
-    repo = SqliteMarketBarRepository(conn)
-    projection = PortfolioProjection(conn)
-    calendar = ExchangeCalendarsTradingCalendar()
-    provider = ShioajiMarketDataProvider(settings.shioaji_api_key, settings.shioaji_secret_key)
-    
-    runner = DailySimulationRunner(
-        db_conn=conn, calendar=calendar, market_provider=provider,
-        market_repo=repo, projection=projection,
-        allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals,
-        manifest=manifest, slippage_bps=settings.backtest.slippage_bps,
-        expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions
-    )
-    
-    run_date = date.fromisoformat(args.date) if args.date else date.today()
-    symbols = [s.code for s in settings.universe.symbols]
-    
-    strategy_config = settings.load_strategy_config("trend_pullback")
-    params = TrendPullbackParams(**strategy_config.parameters.model_dump())
-    
-    account_id = resolve_account_id(conn, args.account)
-    
-    print(f"Running daily simulation workflow for {run_date}...")
-    status = runner.run_daily(
-        run_date=run_date,
-        account_id=account_id,
-        strategy_id="trend_pullback",
-        strategy_params=params,
-        universe_symbols=symbols
-    )
-    
-    print(f"Simulation runner finished with status: {status}")
-    if status == "FAILED":
+    # Process-level file lock to prevent concurrent daily simulation runs
+    lock_path = Path(settings.trading.database_path).parent / "simulation_daily.lock"
+    lock_file = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("錯誤：另一個 simulation run-daily 進程正在執行中，請等待其結束後再重試。(SIMULATION_ALREADY_RUNNING)")
+        lock_file.close()
         sys.exit(1)
-    conn.close()
+    
+    try:
+        conn = get_db_connection(settings.trading.database_path)
+        
+        manifest = load_active_manifest(settings)
+        if not manifest:
+            print("Warning: No active manifest found. Simulation will run using a dummy manifest.")
+            
+        repo = SqliteMarketBarRepository(conn)
+        projection = PortfolioProjection(conn)
+        calendar = ExchangeCalendarsTradingCalendar()
+        provider = ShioajiMarketDataProvider(settings.shioaji_api_key, settings.shioaji_secret_key)
+        
+        runner = DailySimulationRunner(
+            db_conn=conn, calendar=calendar, market_provider=provider,
+            market_repo=repo, projection=projection,
+            allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals,
+            manifest=manifest, slippage_bps=settings.backtest.slippage_bps,
+            expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions
+        )
+        
+        run_date = date.fromisoformat(args.date) if args.date else date.today()
+        symbols = [s.code for s in settings.universe.symbols]
+        
+        strategy_config = settings.load_strategy_config("trend_pullback")
+        params = TrendPullbackParams(**strategy_config.parameters.model_dump())
+        
+        account_id = resolve_account_id(conn, args.account)
+        
+        # Manifest preflight check
+        preflight_status = runner.get_preflight_status(run_date)
+        print("--- 策略授權 preflight 查驗 ---")
+        print(f"授權識別碼 (Approval ID): {manifest.approval_id if manifest else '無'}")
+        print(f"授權狀態 (Preflight Status): {preflight_status}")
+        if preflight_status in ["EXPIRED", "REVOKED", "MISSING", "INVALID"]:
+            print(f"警告：授權狀態異常 ({preflight_status})！新的買入委託 (BUY) 將被系統安全阻擋。")
+        elif preflight_status == "EXPIRING_SOON":
+            print(f"提示：授權即將過期 ({preflight_status})。請儘速更新策略授權清單。")
+        print("-------------------------------\n")
+        
+        print(f"Running daily simulation workflow for {run_date}...")
+        status = runner.run_daily(
+            run_date=run_date,
+            account_id=account_id,
+            strategy_id="trend_pullback",
+            strategy_params=params,
+            universe_symbols=symbols
+        )
+        
+        print(f"Simulation runner finished with status: {status}")
+        if status == "FAILED":
+            sys.exit(1)
+        conn.close()
+    finally:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()
 
 def cmd_simulation_reset(args):
     settings = get_settings()
@@ -1039,7 +1069,8 @@ def cmd_trade_record_fill(args):
         "quantity": qty,
         "price": price_scaled,
         "filled_at": datetime.now().isoformat(),
-        "is_long_term": is_long_term
+        "is_long_term": is_long_term,
+        "source": "MANUAL_IMPORT"
     }
     
     try:
@@ -1299,7 +1330,10 @@ def main():
     parser_trade_plan.add_argument("--bundle", type=str, required=True, help="訊號包 JSON 檔案路徑，或資料庫中的日期/Bundle ID")
     parser_trade_plan.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
     
-    parser_trade_record = trade_subs.add_parser("record-fill", help="手動錄入成交交易資料")
+    parser_trade_record = trade_subs.add_parser(
+        "record-fill",
+        help="手動錄入成交交易資料 (MANUAL_IMPORT)。此指令為 Manifest 授權的例外路徑，僅限事後補錄已在外部券商發生的真實成交事實，不受 Manifest 有效期或額度限制查驗。"
+    )
     parser_trade_record.add_argument("--symbol", type=str, required=True, help="股票代號")
     parser_trade_record.add_argument("--side", type=str, required=True, choices=["BUY", "SELL"], help="交易動作 (BUY/SELL)")
     parser_trade_record.add_argument("--quantity", type=int, required=True, help="交易股數")
