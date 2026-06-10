@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 class MinuteBar(BaseModel):
@@ -92,4 +92,12 @@ class DailySignalBundle(BaseModel):
     target_execution_date: date
     market_data_cutoff: date
     signals: list[SignalItem]
+
+class ExecutionContext(BaseModel):
+    run_id: str
+    run_type: Literal["BACKTEST", "DAILY_SIMULATION"]
+    as_of_date: date
+    execution_date: date
+    account_id: str
+
 
