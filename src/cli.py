@@ -4,7 +4,7 @@ import os
 import json
 import hashlib
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
