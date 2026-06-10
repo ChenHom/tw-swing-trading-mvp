@@ -838,122 +838,122 @@ def uuid_like() -> str:
 
 # Main CLI Setup
 def main():
-    parser = argparse.ArgumentParser(description="Taiwan Stock Swing Trading MVP CLI")
+    parser = argparse.ArgumentParser(description="台股波段量化交易系統 MVP 命令列介面 (CLI)")
     subparsers = parser.add_subparsers(dest="command", required=True)
     
     # 1. market group
-    parser_market = subparsers.add_parser("market", help="Market data management")
+    parser_market = subparsers.add_parser("market", help="市場行情數據管理")
     market_subs = parser_market.add_subparsers(dest="subcommand", required=True)
     
-    parser_backfill = market_subs.add_parser("backfill", help="Backfill historical market bars")
-    parser_backfill.add_argument("--calendar-days", type=int, default=100, help="Number of calendar days to look back")
+    parser_backfill = market_subs.add_parser("backfill", help="回補歷史日 K 線行情")
+    parser_backfill.add_argument("--calendar-days", type=int, default=100, help="往回追溯的日曆天數")
     
-    parser_sync = market_subs.add_parser("sync", help="Sync market bars for a specific date")
-    parser_sync.add_argument("--date", type=str, help="Specific date YYYY-MM-DD")
+    parser_sync = market_subs.add_parser("sync", help="同步特定日期的 K 線行情")
+    parser_sync.add_argument("--date", type=str, help="指定日期 YYYY-MM-DD")
     
-    parser_validate = market_subs.add_parser("validate", help="Validate market bars in database")
-    parser_validate.add_argument("--last-sessions", type=int, default=60, help="Number of trading sessions to validate")
+    parser_validate = market_subs.add_parser("validate", help="驗證資料庫中的日 K 線行情")
+    parser_validate.add_argument("--last-sessions", type=int, default=60, help="驗證最近幾筆交易日的行情數據")
     
     # 2. strategy group
-    parser_strategy = subparsers.add_parser("strategy", help="Strategy helper commands")
+    parser_strategy = subparsers.add_parser("strategy", help="策略輔助指令")
     strategy_subs = parser_strategy.add_subparsers(dest="subcommand", required=True)
     
-    parser_inspect = strategy_subs.add_parser("inspect", help="Inspect strategy configuration and print parameter hash")
-    parser_inspect.add_argument("config_path", type=str, help="Path to strategy config yaml")
+    parser_inspect = strategy_subs.add_parser("inspect", help="檢查策略設定並輸出參數 SHA-256 指紋")
+    parser_inspect.add_argument("config_path", type=str, help="策略 YAML 設定檔路徑")
     
     # 3. approval group
-    parser_approval = subparsers.add_parser("approval", help="Strategy approval manifest management")
+    parser_approval = subparsers.add_parser("approval", help="策略授權清單 (Manifest) 管理")
     approval_subs = parser_approval.add_subparsers(dest="subcommand", required=True)
     
-    parser_app_create = approval_subs.add_parser("create", help="Create signed StrategyApprovalManifest")
-    parser_app_create.add_argument("--strategy", type=str, required=True, help="Strategy config yaml file")
-    parser_app_create.add_argument("--expires-at", type=str, required=True, help="Expiration date ISO string")
-    parser_app_create.add_argument("--output", type=str, required=True, help="Output manifest JSON file")
-    parser_app_create.add_argument("--issuer", type=str, default="manual-research-review", help="Issuer ID")
-    parser_app_create.add_argument("--max-order-value", type=int, default=35000, help="Max TWD per order")
-    parser_app_create.add_argument("--max-daily-buy-value", type=int, default=150000, help="Max TWD daily buy value")
-    parser_app_create.add_argument("--max-open-positions", type=int, default=5, help="Max number of open positions")
-    parser_app_create.add_argument("--valid-from", type=str, help="Valid from datetime ISO string")
+    parser_app_create = approval_subs.add_parser("create", help="建立已簽署的策略授權清單 JSON 檔")
+    parser_app_create.add_argument("--strategy", type=str, required=True, help="策略 YAML 設定檔")
+    parser_app_create.add_argument("--expires-at", type=str, required=True, help="授權到期時間 (ISO 格式字串)")
+    parser_app_create.add_argument("--output", type=str, required=True, help="輸出的授權清單 JSON 檔案路徑")
+    parser_app_create.add_argument("--issuer", type=str, default="manual-research-review", help="發行者識別 ID")
+    parser_app_create.add_argument("--max-order-value", type=int, default=35000, help="單筆委託最大金額 (TWD)")
+    parser_app_create.add_argument("--max-daily-buy-value", type=int, default=150000, help="單日累計買入最大金額 (TWD)")
+    parser_app_create.add_argument("--max-open-positions", type=int, default=5, help="最大持倉部位限制數量")
+    parser_app_create.add_argument("--valid-from", type=str, help="授權起始時間 (ISO 格式字串)")
     
-    parser_app_val = approval_subs.add_parser("validate", help="Validate manifest integrity signature")
-    parser_app_val.add_argument("manifest_path", type=str, help="Path to manifest JSON")
+    parser_app_val = approval_subs.add_parser("validate", help="驗證授權清單的完整性與簽章")
+    parser_app_val.add_argument("manifest_path", type=str, help="授權清單 JSON 檔案路徑")
     
-    parser_app_act = approval_subs.add_parser("activate", help="Activate approval manifest")
-    parser_app_act.add_argument("manifest_path", type=str, help="Path to manifest JSON")
+    parser_app_act = approval_subs.add_parser("activate", help="啟用並將授權清單設為當前執行目標")
+    parser_app_act.add_argument("manifest_path", type=str, help="授權清單 JSON 檔案路徑")
     
-    approval_subs.add_parser("status", help="Show active manifest preflight status")
+    approval_subs.add_parser("status", help="顯示當前啟用授權清單的每日預檢狀態 (Preflight)")
     
     # 4. account group
-    parser_account = subparsers.add_parser("account", help="Account management")
+    parser_account = subparsers.add_parser("account", help="帳戶管理")
     account_subs = parser_account.add_subparsers(dest="subcommand", required=True)
     
-    parser_acc_init = account_subs.add_parser("init", help="Initialize a portfolio account")
-    parser_acc_init.add_argument("--account", type=str, required=True, help="Account name")
-    parser_acc_init.add_argument("--initial-cash", type=int, required=True, help="Initial TWD cash amount")
+    parser_acc_init = account_subs.add_parser("init", help="初始化投資組合帳戶")
+    parser_acc_init.add_argument("--account", type=str, required=True, help="帳戶名稱")
+    parser_acc_init.add_argument("--initial-cash", type=int, required=True, help="初始台幣現金金額")
     
     # 5. backtest group
-    parser_backtest = subparsers.add_parser("backtest", help="Backtest execution")
+    parser_backtest = subparsers.add_parser("backtest", help="歷史回測執行")
     backtest_subs = parser_backtest.add_subparsers(dest="subcommand", required=True)
     
-    parser_bt_run = backtest_subs.add_parser("run", help="Run backtest")
-    parser_bt_run.add_argument("--from", dest="start", type=str, required=True, help="Start date YYYY-MM-DD")
-    parser_bt_run.add_argument("--to", type=str, required=True, help="End date YYYY-MM-DD")
-    parser_bt_run.add_argument("--initial-cash", type=int, default=300000, help="Initial cash amount")
+    parser_bt_run = backtest_subs.add_parser("run", help="執行歷史回測")
+    parser_bt_run.add_argument("--from", dest="start", type=str, required=True, help="回測開始日期 YYYY-MM-DD")
+    parser_bt_run.add_argument("--to", type=str, required=True, help="回測結束日期 YYYY-MM-DD")
+    parser_bt_run.add_argument("--initial-cash", type=int, default=300000, help="初始現金金額")
     
     # 6. simulation group
-    parser_sim = subparsers.add_parser("simulation", help="Simulation runner commands")
+    parser_sim = subparsers.add_parser("simulation", help="模擬交易執行器指令")
     sim_subs = parser_sim.add_subparsers(dest="subcommand", required=True)
     
-    parser_sim_daily = sim_subs.add_parser("run-daily", help="Run daily simulation workflow")
-    parser_sim_daily.add_argument("--date", type=str, help="Run date YYYY-MM-DD")
-    parser_sim_daily.add_argument("--account", type=str, default="simulation-main", help="Target account name")
+    parser_sim_daily = sim_subs.add_parser("run-daily", help="執行每日模擬交易工作流")
+    parser_sim_daily.add_argument("--date", type=str, help="執行日期 YYYY-MM-DD")
+    parser_sim_daily.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
     
-    parser_sim_exec = sim_subs.add_parser("execute-pending", help="Execute pending signal bundle")
-    parser_sim_exec.add_argument("--execution-date", type=str, help="Execution date YYYY-MM-DD")
-    parser_sim_exec.add_argument("--account", type=str, default="simulation-main", help="Target account name")
+    parser_sim_exec = sim_subs.add_parser("execute-pending", help="執行待處理的交易訊號包")
+    parser_sim_exec.add_argument("--execution-date", type=str, help="執行委託的日期 YYYY-MM-DD")
+    parser_sim_exec.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
     
-    parser_sim_reset = sim_subs.add_parser("reset", help="Reset simulation status and generated signal data for a date")
-    parser_sim_reset.add_argument("--date", type=str, required=True, help="Specific date YYYY-MM-DD to reset")
+    parser_sim_reset = sim_subs.add_parser("reset", help="重置特定日期的模擬狀態與已產生的交易訊號")
+    parser_sim_reset.add_argument("--date", type=str, required=True, help="指定重置的日期 YYYY-MM-DD")
     
     # 7. signal group
-    parser_sig = subparsers.add_parser("signal", help="Signal generator commands")
+    parser_sig = subparsers.add_parser("signal", help="交易訊號產生器指令")
     sig_subs = parser_sig.add_subparsers(dest="subcommand", required=True)
     
-    parser_sig_gen = sig_subs.add_parser("generate", help="Generate closing signals manually")
-    parser_sig_gen.add_argument("--as-of-date", type=str, help="As of date YYYY-MM-DD")
-    parser_sig_gen.add_argument("--account", type=str, default="simulation-main", help="Target account name")
+    parser_sig_gen = sig_subs.add_parser("generate", help="手動產生收盤交易訊號")
+    parser_sig_gen.add_argument("--as-of-date", type=str, help="作為基準的收盤日期 YYYY-MM-DD")
+    parser_sig_gen.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
     
-    parser_sig_list = sig_subs.add_parser("list", help="List generated signals")
-    parser_sig_list.add_argument("--date", type=str, help="Filter by signal date YYYY-MM-DD")
+    parser_sig_list = sig_subs.add_parser("list", help="查詢並列出已產生的交易訊號")
+    parser_sig_list.add_argument("--date", type=str, help="過濾特定的訊號產生日期 YYYY-MM-DD")
     
     # 8. trade group
-    parser_trade = subparsers.add_parser("trade", help="Trade and order commands")
+    parser_trade = subparsers.add_parser("trade", help="交易與委託單指令")
     trade_subs = parser_trade.add_subparsers(dest="subcommand", required=True)
     
-    parser_trade_plan = trade_subs.add_parser("plan", help="Generate order planning preview")
-    parser_trade_plan.add_argument("--bundle", type=str, required=True, help="Path to signal bundle JSON")
+    parser_trade_plan = trade_subs.add_parser("plan", help="產生委託計畫預覽")
+    parser_trade_plan.add_argument("--bundle", type=str, required=True, help="訊號包 JSON 檔案路徑")
     
-    parser_trade_close = trade_subs.add_parser("close-all", help="Close all open positions (Emergency exit)")
-    parser_trade_close.add_argument("--broker", type=str, default="fake", help="Broker name")
-    parser_trade_close.add_argument("--reason", type=str, required=True, help="Reason for emergency close")
+    parser_trade_close = trade_subs.add_parser("close-all", help="強制平倉所有持有部位（緊急避險退出）")
+    parser_trade_close.add_argument("--broker", type=str, default="fake", help="券商介面名稱")
+    parser_trade_close.add_argument("--reason", type=str, required=True, help="緊急平倉的原因")
     
     # 9. portfolio group
-    parser_portfolio = subparsers.add_parser("portfolio", help="Portfolio reconciliation and rebuilding")
+    parser_portfolio = subparsers.add_parser("portfolio", help="投資組合對帳與投影重建")
     portfolio_subs = parser_portfolio.add_subparsers(dest="subcommand", required=True)
     
-    parser_port_rec = portfolio_subs.add_parser("reconcile", help="Reconcile projections with cash ledger facts")
-    parser_port_rec.add_argument("--account", type=str, required=True, help="Account name")
+    parser_port_rec = portfolio_subs.add_parser("reconcile", help="進行持倉投影與現金流水帳對帳")
+    parser_port_rec.add_argument("--account", type=str, required=True, help="帳戶名稱")
     
-    parser_port_reb = portfolio_subs.add_parser("rebuild-projections", help="Rebuild projections from transaction log facts")
-    parser_port_reb.add_argument("--account", type=str, required=True, help="Account name")
+    parser_port_reb = portfolio_subs.add_parser("rebuild-projections", help="從交易歷史事實重建持倉投影表")
+    parser_port_reb.add_argument("--account", type=str, required=True, help="帳戶名稱")
     
     # 10. report group
-    parser_report = subparsers.add_parser("report", help="PnL and equity curve reports")
+    parser_report = subparsers.add_parser("report", help="損益與資產淨值曲線報告")
     report_subs = parser_report.add_subparsers(dest="subcommand", required=True)
     
-    parser_rep_pnl = report_subs.add_parser("pnl", help="Show PnL summary for account")
-    parser_rep_pnl.add_argument("--account", type=str, required=True, help="Account name")
-    parser_rep_pnl.add_argument("--date", type=str, help="Specific date YYYY-MM-DD")
+    parser_rep_pnl = report_subs.add_parser("pnl", help="顯示帳戶的損益對帳單摘要")
+    parser_rep_pnl.add_argument("--account", type=str, required=True, help="帳戶名稱")
+    parser_rep_pnl.add_argument("--date", type=str, help="指定報告日期 YYYY-MM-DD")
     
     # Dispatching commands
     args = parser.parse_args()
