@@ -1012,6 +1012,30 @@ def cmd_trade_record_fill(args):
     try:
         projection.apply_fill_transaction(fill_payload)
         
+        # Auto-add to universe.yaml if not present
+        existing_codes = [s.code for s in settings.universe.symbols]
+        if symbol not in existing_codes:
+            try:
+                import yaml
+                universe_path = settings.config_dir / "universe.yaml"
+                if universe_path.exists():
+                    with open(universe_path, "r", encoding="utf-8") as f:
+                        content = yaml.safe_load(f) or {}
+                    if "symbols" not in content:
+                        content["symbols"] = []
+                    # Check again to avoid duplicate in file
+                    if not any(s.get("code") == symbol for s in content.get("symbols", [])):
+                        content["symbols"].append({
+                            "code": symbol,
+                            "exchange": "TSE",
+                            "instrument_type": "STOCK"
+                        })
+                        with open(universe_path, "w", encoding="utf-8") as f:
+                            yaml.dump(content, f, sort_keys=False, allow_unicode=True)
+                        print(f"  - 提示：已自動將新標的 {symbol} 新增至交易宇宙設定檔 (universe.yaml)。")
+            except Exception as e:
+                print(f"  - 警告：無法自動將新標的 {symbol} 新增至 universe.yaml: {e}")
+        
         trade_value = int(round(qty * price_scaled / 10000.0))
         broker_fee = max(20, int(round(trade_value * 0.001425)))
         tax = int(round(trade_value * 0.003)) if side == "SELL" else 0

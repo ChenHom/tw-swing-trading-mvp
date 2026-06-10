@@ -221,10 +221,22 @@ def test_cmd_trade_plan(temp_db_path, monkeypatch, capsys):
     assert "35,000" in captured.out
     assert "成功 (待執行)" in captured.out
 
-def test_cmd_trade_record_fill(temp_db_path, monkeypatch, capsys):
+def test_cmd_trade_record_fill(temp_db_path, tmp_path, monkeypatch, capsys):
     # Mock settings
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
+    mock_settings.config_dir = tmp_path
+    
+    # Create dummy universe.yaml in tmp_path
+    universe_file = tmp_path / "universe.yaml"
+    with open(universe_file, "w", encoding="utf-8") as f:
+        f.write("symbols:\n  - code: \"2330\"\n    exchange: \"TSE\"\n    instrument_type: \"STOCK\"\n")
+        
+    class MockSymbol:
+        def __init__(self, code):
+            self.code = code
+            
+    mock_settings.universe.symbols = [MockSymbol("2330")]
     monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
     
     # Mock args for record-fill
@@ -244,6 +256,7 @@ def test_cmd_trade_record_fill(temp_db_path, monkeypatch, capsys):
     assert "2317" in captured.out
     assert "100 股" in captured.out
     assert "150.00" in captured.out
+    assert "已自動將新標的 2317 新增至交易宇宙設定檔" in captured.out
     
     # Verify DB contains the recorded fill
     conn = get_db_connection(temp_db_path)
@@ -263,6 +276,13 @@ def test_cmd_trade_record_fill(temp_db_path, monkeypatch, capsys):
     assert pos_row["symbol"] == "2317"
     assert pos_row["quantity"] == 100
     assert pos_row["price"] == 1500000
+    
+    # Verify universe.yaml content updated
+    import yaml
+    with open(universe_file, "r", encoding="utf-8") as f:
+        content = yaml.safe_load(f)
+    codes = [s["code"] for s in content.get("symbols", [])]
+    assert "2317" in codes
     
     conn.close()
 
