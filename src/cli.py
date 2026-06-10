@@ -587,6 +587,70 @@ def cmd_signal_generate(args):
     print(f"Signals generated successfully (Bundle ID: {new_bundle.bundle_id}, Target Execution Date: {target_execution_date})")
     conn.close()
 
+def cmd_signal_list(args):
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    
+    query = """
+        SELECT 
+            b.signal_date, 
+            b.target_execution_date, 
+            i.symbol, 
+            i.action, 
+            i.reference_price, 
+            i.reason_code,
+            b.strategy_id
+        FROM signal_items i
+        JOIN signal_bundles b ON i.bundle_id = b.bundle_id
+    """
+    params = []
+    if args.date:
+        query += " WHERE b.signal_date = ?"
+        params.append(args.date)
+        
+    query += " ORDER BY b.signal_date DESC, i.symbol ASC"
+    
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    
+    headers = ["Signal Date", "Exec Date", "Symbol", "Action", "Ref Price", "Reason", "Strategy"]
+    table_rows = []
+    for r in rows:
+        ref_price = r["reference_price"] / 10000.0
+        table_rows.append([
+            r["signal_date"],
+            r["target_execution_date"],
+            r["symbol"],
+            r["action"],
+            f"{ref_price:.2f}",
+            r["reason_code"],
+            r["strategy_id"]
+        ])
+        
+    if not table_rows:
+        if args.date:
+            print(f"No signals found for date {args.date}.")
+        else:
+            print("No signals found in the database.")
+        conn.close()
+        return
+        
+    # Print table helper
+    widths = [len(h) for h in headers]
+    for row in table_rows:
+        for i, val in enumerate(row):
+            widths[i] = max(widths[i], len(str(val)))
+            
+    header_str = " | ".join(f"{h:<{widths[i]}}" for i, h in enumerate(headers))
+    print(header_str)
+    print("-+-".join("-" * w for w in widths))
+    for row in table_rows:
+        row_str = " | ".join(f"{str(val):<{widths[i]}}" for i, val in enumerate(row))
+        print(row_str)
+    print(f"\nTotal: {len(table_rows)} signals.")
+    conn.close()
+
 def cmd_trade_plan(args):
     settings = get_settings()
     filepath = Path(args.bundle)
@@ -814,6 +878,9 @@ def main():
     parser_sig_gen.add_argument("--as-of-date", type=str, help="As of date YYYY-MM-DD")
     parser_sig_gen.add_argument("--account", type=str, default="simulation-main", help="Target account name")
     
+    parser_sig_list = sig_subs.add_parser("list", help="List generated signals")
+    parser_sig_list.add_argument("--date", type=str, help="Filter by signal date YYYY-MM-DD")
+    
     # 8. trade group
     parser_trade = subparsers.add_parser("trade", help="Trade and order commands")
     trade_subs = parser_trade.add_subparsers(dest="subcommand", required=True)
@@ -860,6 +927,7 @@ def main():
         ("simulation", "run-daily"): cmd_simulation_run_daily,
         ("simulation", "execute-pending"): cmd_simulation_execute_pending,
         ("signal", "generate"): cmd_signal_generate,
+        ("signal", "list"): cmd_signal_list,
         ("trade", "plan"): cmd_trade_plan,
         ("trade", "close-all"): cmd_trade_close_all,
         ("portfolio", "reconcile"): cmd_portfolio_reconcile,
