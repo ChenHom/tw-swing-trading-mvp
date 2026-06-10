@@ -59,6 +59,32 @@ def resolve_account_id(conn, specified_account: str | None) -> str:
     else:
         return "simulation-main"
 
+STOCK_NAMES = {
+    "2330": "台積電",
+    "2317": "鴻海",
+    "2454": "聯發科",
+    "2308": "台達電",
+    "2382": "廣達",
+    "2881": "富邦金",
+    "2882": "國泰金",
+    "2301": "光寶科",
+    "2324": "仁寶",
+    "3231": "緯創",
+    "2357": "華碩",
+    "2891": "中信金",
+    "2886": "兆豐金",
+    "2603": "長榮",
+    "2609": "陽明",
+    "00400A": "主動國泰動能高息",
+    "00981A": "主動統一台股增長",
+    "00994A": "主動第一金台股優",
+    "2327": "國巨",
+    "2360": "致茂",
+    "3090": "日電貿",
+    "3691": "碩禾",
+    "6805": "富世達"
+}
+
 def sign_manifest(manifest_dict: dict) -> dict:
     manifest_dict["integrity"]["digest"] = ""
     manifest_obj = StrategyApprovalManifest(**manifest_dict)
@@ -700,25 +726,6 @@ def cmd_signal_list(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
     
-    # 股名對照表
-    stock_names = {
-        "2330": "台積電",
-        "2317": "鴻海",
-        "2454": "聯發科",
-        "2308": "台達電",
-        "2382": "廣達",
-        "2881": "富邦金",
-        "2882": "國泰金",
-        "2301": "光寶科",
-        "2324": "仁寶",
-        "3231": "緯創",
-        "2357": "華碩",
-        "2891": "中信金",
-        "2886": "兆豐金",
-        "2603": "長榮",
-        "2609": "陽明"
-    }
-    
     query = """
         SELECT 
             b.signal_date, 
@@ -747,7 +754,7 @@ def cmd_signal_list(args):
     for r in rows:
         ref_price = r["reference_price"] / 10000.0
         symbol = r["symbol"]
-        name = stock_names.get(symbol, "未知")
+        name = STOCK_NAMES.get(symbol, "未知")
         table_rows.append([
             r["signal_date"],
             r["target_execution_date"],
@@ -912,15 +919,9 @@ def cmd_trade_plan(args):
     headers = ["代號", "名稱", "動作", "參考價格", "規劃數量", "單位", "預估金額", "規劃狀態"]
     table_rows = []
     
-    stock_names = {
-        "2330": "台積電", "2317": "鴻海", "2454": "聯發科", "2308": "台達電", "2382": "廣達",
-        "2881": "富邦金", "2882": "國泰金", "2301": "光寶科", "2324": "仁寶", "3231": "緯創",
-        "2357": "華碩", "2891": "中信金", "2886": "兆豐金", "2603": "長榮", "2609": "陽明"
-    }
-    
     for sig in bundle.signals:
         symbol = sig.symbol
-        name = stock_names.get(symbol, "未知")
+        name = STOCK_NAMES.get(symbol, "未知")
         action = "買入" if sig.action == "BUY" else "賣出"
         
         try:
@@ -1131,7 +1132,8 @@ def cmd_report_pnl(args):
     if not positions:
         print("  無持有部位。")
     for pos in positions:
-        print(f"  {pos['symbol']}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD")
+        name = STOCK_NAMES.get(pos['symbol'], "未知")
+        print(f"  {pos['symbol']} {name}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD")
         
     conn.close()
 

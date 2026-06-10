@@ -378,7 +378,7 @@ def test_cmd_report_pnl(temp_db_path, monkeypatch, capsys):
     assert "可用現金：100,000 TWD" in captured.out
     assert "部位價值：105,000 TWD" in captured.out
     assert "總資產淨值：205,000 TWD" in captured.out
-    assert "2330: 100 股 @ 均價 1000.00 (現價: 1050.00) - 價值: 105,000 TWD" in captured.out
+    assert "2330 台積電: 100 股 @ 均價 1000.00 (現價: 1050.00) - 價值: 105,000 TWD" in captured.out
 
 def test_resolve_account_id(temp_db_path, capsys):
     conn = get_db_connection(temp_db_path)
