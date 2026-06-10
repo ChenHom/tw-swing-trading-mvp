@@ -60,6 +60,13 @@ parameters:
 
 ---
 
+### 帳戶參數選填說明 (Dynamic Account Resolution)
+本系統所有子指令的 `--account` 參數均改為**選填**：
+* 如果資料庫中僅存在一個投資帳戶，執行指令時無須填寫 `--account`，系統會自動選取。
+* 只有在資料庫中存在兩個或更多帳戶時，系統才會提示您使用 `--account` 指定目標帳戶。
+
+---
+
 ## 4. 標準每日模擬與訊號查詢工作流
 
 以下為一個完整的「每日排程運行與訊號查詢/重置」的標準操作範本：
@@ -67,7 +74,7 @@ parameters:
 ### 第一步：初始化模擬帳戶與啟用授權 (僅需執行一次)
 ```bash
 # 1. 初始化模擬帳戶 (設定 1,000,000 元台幣初始現金)
-python3 -m app account init --account simulation-main --initial-cash 1000000
+python3 -m app account init --initial-cash 1000000
 
 # 2. 建立策略授權清單 JSON 檔
 python3 -m app approval create \
@@ -84,8 +91,8 @@ python3 -m app approval activate artifacts/approvals/active-approval.json
 
 ### 第二步：執行每日模擬交易工作流 (通常排入每日下午收盤後的 cron)
 ```bash
-# 執行 2026-06-10 當日的模擬交易 (會自動同步行情 -> 產生訊號 -> 計畫委託 -> 模擬成交 -> 更新帳務與持倉)
-python3 -m app simulation run-daily --date 2026-06-10 --account simulation-main
+# 執行 2026-06-10 當日的模擬交易
+python3 -m app simulation run-daily --date 2026-06-10
 ```
 
 ### 第三步：查詢產生的交易訊號 (取代原始 SQLite 查詢)
@@ -112,8 +119,8 @@ python3 -m app signal list
 ### 第四步：產生委託計畫預覽 (依據帳戶可用餘額計算規劃買入的張數/股數)
 您可以使用以下指令來預估交易訊號在目前帳戶餘額限制下，實際會執行多少交易數量（支援張與股拆單分類，並包含風控限額查驗）：
 ```bash
-# 查詢 2026-06-10 訊號包的委託計畫預覽 (可直接輸入日期或訊號包 ID)
-python3 -m app trade plan --bundle 2026-06-10 --account simulation-main
+# 查詢 2026-06-10 訊號包的委託計畫預覽
+python3 -m app trade plan --bundle 2026-06-10
 ```
 **輸出範例**：
 ```text
@@ -129,36 +136,62 @@ python3 -m app trade plan --bundle 2026-06-10 --account simulation-main
 ```
 
 ### 第五步：手動錄入成交紀錄 (手動建立已購買/已賣出的交易資料)
-若您需要在模擬環境中手動輸入一筆成交事實（例如手動買入 10 股的 2330），可執行此指令。系統會自動將成交事實與現金流水寫入，並重新投影您的帳務：
+若您需要手動輸入一筆交易事實，系統會自動在資料庫中寫入成交與現金流水，並重新對帳。**若輸入了新的股票代號，系統會自動將其加入 `config/universe.yaml` 以利後續行情同步更新現價**：
 ```bash
-# 手動錄入買入 10 股的 2330 (每股 2255.0 元) 到指定帳戶
-python3 -m app trade record-fill --symbol 2330 --side BUY --quantity 10 --price 2255.0 --account simulation-main
+# 手動錄入買入 71 股的 2327 (每股 516.92 元)
+python3 -m app trade record-fill --symbol 2327 --side BUY --quantity 71 --price 516.92
+```
+**輸出範例**：
+```text
+成功錄入成交資料：
+  - 帳戶：simulation-main
+  - 標的：2327
+  - 動作：BUY
+  - 數量：71 股
+  - 提示：已自動將新標的 2327 新增至交易宇宙設定檔 (universe.yaml)。
+  - 成交單價：516.92 元 (資料庫整數值: 5169200)
+  - 成交總額：36,701 TWD (單價 x 數量)
+  - 估計手續費：52 TWD
+  - 估計總付出成本：36,753 TWD
 ```
 
-### 第六步：若執行出錯，重置當日狀態原地重跑 (取代原始 SQLite 刪除操作)
+### 第六步：若執行出錯，重置當日狀態原地重跑
 如果行情尚未就緒或參數有誤導致當日流程出錯，您可以一鍵安全地重置當日狀態，並重新執行：
 ```bash
-# 1. 重置 2026-06-10 的模擬狀態與產生的訊號 (此操作會安全清除關聯的 signal_items, signal_bundles 與 daily_runs)
+# 1. 重置 2026-06-10 的模擬狀態與產生的訊號
 python3 -m app simulation reset --date 2026-06-10
 
 # 2. 原地重新跑當日模擬
-python3 -m app simulation run-daily --date 2026-06-10 --account simulation-main
+python3 -m app simulation run-daily --date 2026-06-10
 ```
 
 ### 第七步：對帳與資產損益查詢
+損益報告會自動轉為正體中文，並顯示對應的股票名稱：
 ```bash
-# 1. 查詢 2026-06-10 收盤後的帳戶資產與損益對帳單
-python3 -m app report pnl --account simulation-main --date 2026-06-10
+# 1. 查詢收盤後的帳戶資產與損益對帳單
+python3 -m app report pnl
 
 # 2. 手動對帳 (比對 cash_ledger 與持倉投影一致性)
-python3 -m app portfolio reconcile --account simulation-main
+python3 -m app portfolio reconcile
+```
+**損益報告範例**：
+```text
+--- 帳戶 simulation-main 於 2026-06-10 的損益報告 ---
+可用現金：57,130 TWD
+部位價值：588,933 TWD
+總資產淨值：646,063 TWD
+
+持有部位：
+  00400A 主動國泰動能高息: 9000 股 @ 均價 13.67 (現價: 13.97) - 價值: 125,730 TWD
+  2327 國巨: 71 股 @ 均價 516.92 (現價: 819.00) - 價值: 58,149 TWD
+  2330 台積電: 66 股 @ 均價 1975.23 (現價: 2255.00) - 價值: 148,830 TWD
 ```
 
 ---
 
 ## 5. 測試與驗證
 
-本專案使用 `pytest` 進行完整的單元與整合測試，包含 Shioaji 行情模組測試、冪等重跑測試、新 CLI 指令（對帳、訊號清單、規劃、手動錄入）測試等共計 **52 個測試案例**。
+本專案使用 `pytest` 進行完整的單元與整合測試，包含 Shioaji 行情模組測試、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、YAML 自動寫入等共計 **55 個測試案例**。
 
 執行所有測試：
 ```bash
