@@ -2,7 +2,7 @@ import pytest
 from datetime import date
 from unittest.mock import MagicMock
 from src.portfolio.db import init_db, get_db_connection
-from src.cli import cmd_signal_list, cmd_simulation_reset, cmd_trade_plan, cmd_trade_record_fill, cmd_account_adjust_cash, cmd_report_pnl
+from src.cli import cmd_signal_list, cmd_simulation_reset, cmd_trade_plan, cmd_trade_record_fill, cmd_account_adjust_cash, cmd_report_pnl, resolve_account_id
 
 class MockArgs:
     def __init__(self, date_str=None):
@@ -359,3 +359,26 @@ def test_cmd_report_pnl(temp_db_path, monkeypatch, capsys):
     assert "部位價值：105,000 TWD" in captured.out
     assert "總資產淨值：205,000 TWD" in captured.out
     assert "2330: 100 股 @ 均價 1000.00 (現價: 1050.00) - 價值: 105,000 TWD" in captured.out
+
+def test_resolve_account_id(temp_db_path, capsys):
+    conn = get_db_connection(temp_db_path)
+    
+    # Case 1: Specified account explicitly
+    assert resolve_account_id(conn, "custom-acc") == "custom-acc"
+    
+    # Case 2: No specified account, DB has 1 account
+    conn.execute("INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('only-one-acc', 100, 'TWD', datetime('now'))")
+    conn.commit()
+    assert resolve_account_id(conn, None) == "only-one-acc"
+    
+    # Case 3: No specified account, DB has multiple accounts
+    conn.execute("INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('second-acc', 200, 'TWD', datetime('now'))")
+    conn.commit()
+    with pytest.raises(SystemExit):
+        resolve_account_id(conn, None)
+        
+    captured = capsys.readouterr()
+    assert "偵測到資料庫中有多個帳戶" in captured.out
+    
+    conn.close()
+

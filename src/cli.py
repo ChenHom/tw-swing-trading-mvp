@@ -32,6 +32,33 @@ from src.application.execution.engine import TradeExecutionEngine
 def get_settings() -> AppSettings:
     return AppSettings()
 
+def resolve_account_id(conn, specified_account: str | None) -> str:
+    if specified_account:
+        return specified_account
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cash_balances'")
+        if not cursor.fetchone():
+            return "simulation-main"
+            
+        cursor.execute("SELECT DISTINCT account_id FROM cash_balances")
+        balances_accs = [row["account_id"] for row in cursor.fetchall()]
+        
+        cursor.execute("SELECT DISTINCT account_id FROM cash_ledger")
+        ledger_accs = [row["account_id"] for row in cursor.fetchall()]
+        
+        all_accs = list(set(balances_accs + ledger_accs))
+    except Exception:
+        all_accs = []
+        
+    if len(all_accs) == 1:
+        return all_accs[0]
+    elif len(all_accs) > 1:
+        print(f"錯誤：偵測到資料庫中有多個帳戶 {all_accs}，請使用 --account 參數指定目標帳戶。")
+        sys.exit(1)
+    else:
+        return "simulation-main"
+
 def sign_manifest(manifest_dict: dict) -> dict:
     manifest_dict["integrity"]["digest"] = ""
     manifest_obj = StrategyApprovalManifest(**manifest_dict)
@@ -321,14 +348,16 @@ def cmd_account_init(args):
     settings = get_settings()
     init_db(settings.trading.database_path)
     conn = get_db_connection(settings.trading.database_path)
+    
+    account_id = resolve_account_id(conn, args.account)
     ledger = PortfolioLedger(conn)
     projection = PortfolioProjection(conn)
     
     run_id = f"init-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    ledger.deposit(args.account, run_id, args.initial_cash, "TWD", date.today())
-    projection.rebuild_from_ledger(args.account)
+    ledger.deposit(account_id, run_id, args.initial_cash, "TWD", date.today())
+    projection.rebuild_from_ledger(account_id)
     
-    print(f"Account '{args.account}' initialized with {args.initial_cash} TWD.")
+    print(f"Account '{account_id}' initialized with {args.initial_cash} TWD.")
     conn.close()
 
 def cmd_account_adjust_cash(args):
@@ -336,7 +365,7 @@ def cmd_account_adjust_cash(args):
     conn = get_db_connection(settings.trading.database_path)
     cursor = conn.cursor()
     
-    account_id = args.account
+    account_id = resolve_account_id(conn, args.account)
     amount = args.amount
     
     try:
@@ -439,10 +468,12 @@ def cmd_simulation_run_daily(args):
     strategy_config = settings.load_strategy_config("trend_pullback")
     params = TrendPullbackParams(**strategy_config.parameters.model_dump())
     
+    account_id = resolve_account_id(conn, args.account)
+    
     print(f"Running daily simulation workflow for {run_date}...")
     status = runner.run_daily(
         run_date=run_date,
-        account_id=args.account,
+        account_id=account_id,
         strategy_id="trend_pullback",
         strategy_params=params,
         universe_symbols=symbols
@@ -555,12 +586,14 @@ def cmd_simulation_execute_pending(args):
         signals=items
     )
     
+    account_id = resolve_account_id(conn, args.account)
+    
     context = ExecutionContext(
         run_id=f"exec-only-{datetime.now().strftime('%H%M%S')}",
         run_type="DAILY_SIMULATION",
         as_of_date=bundle.signal_date,
         execution_date=run_date,
-        account_id=args.account
+        account_id=account_id
     )
     engine = TradeExecutionEngine(
         db_conn=conn, market_repo=repo, projection=projection,
@@ -598,12 +631,13 @@ def cmd_signal_generate(args):
             sys.exit(1)
             
     # Gather portfolio snapshot
-    available_cash = projection.get_cash_balance(args.account)
+    account_id = resolve_account_id(conn, args.account)
+    available_cash = projection.get_cash_balance(account_id)
     positions = {}
     cursor = conn.cursor()
     cursor.execute(
         "SELECT symbol, SUM(quantity) as qty, AVG(price) as avg_price FROM position_lots WHERE account_id = ? GROUP BY symbol",
-        (args.account,)
+        (account_id,)
     )
     for row in cursor.fetchall():
         qty = row["qty"]
@@ -832,7 +866,7 @@ def cmd_trade_plan(args):
         
     # We need to construct PortfolioState
     # Let's get current portfolio state for account
-    account_id = args.account
+    account_id = resolve_account_id(conn, args.account)
     available_cash = projection.get_cash_balance(account_id)
     
     # Get positions
@@ -958,7 +992,7 @@ def cmd_trade_record_fill(args):
     side = args.side.upper()
     qty = args.quantity
     price = args.price
-    account_id = args.account
+    account_id = resolve_account_id(conn, args.account)
     
     price_scaled = int(round(price * 10000))
     
@@ -1008,8 +1042,9 @@ def cmd_portfolio_reconcile(args):
     conn = get_db_connection(settings.trading.database_path)
     projection = PortfolioProjection(conn)
     
-    print(f"Reconciling account {args.account}...")
-    errors = projection.reconcile(args.account)
+    account_id = resolve_account_id(conn, args.account)
+    print(f"Reconciling account {account_id}...")
+    errors = projection.reconcile(account_id)
     if not errors:
         print("Reconciliation successful: cash ledger balances match projections.")
     else:
@@ -1024,8 +1059,9 @@ def cmd_portfolio_rebuild_projections(args):
     conn = get_db_connection(settings.trading.database_path)
     projection = PortfolioProjection(conn)
     
-    print(f"Rebuilding projections for account {args.account}...")
-    projection.rebuild_from_ledger(args.account)
+    account_id = resolve_account_id(conn, args.account)
+    print(f"Rebuilding projections for account {account_id}...")
+    projection.rebuild_from_ledger(account_id)
     print("Projections successfully rebuilt from ledger facts.")
     conn.close()
 
@@ -1034,13 +1070,14 @@ def cmd_report_pnl(args):
     conn = get_db_connection(settings.trading.database_path)
     projection = PortfolioProjection(conn)
     
+    account_id = resolve_account_id(conn, args.account)
     report_date = date.fromisoformat(args.date) if args.date else date.today()
-    cash = projection.get_cash_balance(args.account)
+    cash = projection.get_cash_balance(account_id)
     
     cursor = conn.cursor()
     cursor.execute(
         "SELECT symbol, SUM(quantity) as qty, AVG(price) as avg_price FROM position_lots WHERE account_id = ? GROUP BY symbol",
-        (args.account,)
+        (account_id,)
     )
     positions = []
     total_pos_value = 0
@@ -1062,7 +1099,7 @@ def cmd_report_pnl(args):
                 "value": pos_val
             })
             
-    print(f"\n--- 帳戶 {args.account} 於 {report_date} 的損益報告 ---")
+    print(f"\n--- 帳戶 {account_id} 於 {report_date} 的損益報告 ---")
     print(f"可用現金：{cash:,} TWD")
     print(f"部位價值：{total_pos_value:,} TWD")
     print(f"總資產淨值：{cash + total_pos_value:,} TWD")
@@ -1176,11 +1213,11 @@ def main():
     account_subs = parser_account.add_subparsers(dest="subcommand", required=True)
     
     parser_acc_init = account_subs.add_parser("init", help="初始化投資組合帳戶")
-    parser_acc_init.add_argument("--account", type=str, required=True, help="帳戶名稱")
+    parser_acc_init.add_argument("--account", type=str, default=None, help="帳戶名稱")
     parser_acc_init.add_argument("--initial-cash", type=int, required=True, help="初始台幣現金金額")
     
     parser_acc_adjust = account_subs.add_parser("adjust-cash", help="調整/設定帳戶的初始剩餘金額")
-    parser_acc_adjust.add_argument("--account", type=str, required=True, help="帳戶名稱")
+    parser_acc_adjust.add_argument("--account", type=str, default=None, help="帳戶名稱")
     parser_acc_adjust.add_argument("--amount", type=int, required=True, help="設定的新初始台幣現金金額")
     
     # 5. backtest group
@@ -1198,11 +1235,11 @@ def main():
     
     parser_sim_daily = sim_subs.add_parser("run-daily", help="執行每日模擬交易工作流")
     parser_sim_daily.add_argument("--date", type=str, help="執行日期 YYYY-MM-DD")
-    parser_sim_daily.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
+    parser_sim_daily.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
     
     parser_sim_exec = sim_subs.add_parser("execute-pending", help="執行待處理的交易訊號包")
     parser_sim_exec.add_argument("--execution-date", type=str, help="執行委託的日期 YYYY-MM-DD")
-    parser_sim_exec.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
+    parser_sim_exec.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
     
     parser_sim_reset = sim_subs.add_parser("reset", help="重置特定日期的模擬狀態與已產生的交易訊號")
     parser_sim_reset.add_argument("--date", type=str, required=True, help="指定重置的日期 YYYY-MM-DD")
@@ -1213,7 +1250,7 @@ def main():
     
     parser_sig_gen = sig_subs.add_parser("generate", help="手動產生收盤交易訊號")
     parser_sig_gen.add_argument("--as-of-date", type=str, help="作為基準的收盤日期 YYYY-MM-DD")
-    parser_sig_gen.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
+    parser_sig_gen.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
     
     parser_sig_list = sig_subs.add_parser("list", help="查詢並列出已產生的交易訊號")
     parser_sig_list.add_argument("--date", type=str, help="過濾特定的訊號產生日期 YYYY-MM-DD")
@@ -1224,14 +1261,14 @@ def main():
     
     parser_trade_plan = trade_subs.add_parser("plan", help="產生委託計畫預覽")
     parser_trade_plan.add_argument("--bundle", type=str, required=True, help="訊號包 JSON 檔案路徑，或資料庫中的日期/Bundle ID")
-    parser_trade_plan.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
+    parser_trade_plan.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
     
     parser_trade_record = trade_subs.add_parser("record-fill", help="手動錄入成交交易資料")
     parser_trade_record.add_argument("--symbol", type=str, required=True, help="股票代號")
     parser_trade_record.add_argument("--side", type=str, required=True, choices=["BUY", "SELL"], help="交易動作 (BUY/SELL)")
     parser_trade_record.add_argument("--quantity", type=int, required=True, help="交易股數")
     parser_trade_record.add_argument("--price", type=float, required=True, help="每股成交價格")
-    parser_trade_record.add_argument("--account", type=str, default="simulation-main", help="目標帳戶名稱")
+    parser_trade_record.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
     
     parser_trade_close = trade_subs.add_parser("close-all", help="強制平倉所有持有部位（緊急避險退出）")
     parser_trade_close.add_argument("--broker", type=str, default="fake", help="券商介面名稱")
@@ -1242,17 +1279,17 @@ def main():
     portfolio_subs = parser_portfolio.add_subparsers(dest="subcommand", required=True)
     
     parser_port_rec = portfolio_subs.add_parser("reconcile", help="進行持倉投影與現金流水帳對帳")
-    parser_port_rec.add_argument("--account", type=str, required=True, help="帳戶名稱")
+    parser_port_rec.add_argument("--account", type=str, default=None, help="帳戶名稱")
     
     parser_port_reb = portfolio_subs.add_parser("rebuild-projections", help="從交易歷史事實重建持倉投影表")
-    parser_port_reb.add_argument("--account", type=str, required=True, help="帳戶名稱")
+    parser_port_reb.add_argument("--account", type=str, default=None, help="帳戶名稱")
     
     # 10. report group
     parser_report = subparsers.add_parser("report", help="損益與資產淨值曲線報告")
     report_subs = parser_report.add_subparsers(dest="subcommand", required=True)
     
     parser_rep_pnl = report_subs.add_parser("pnl", help="顯示帳戶的損益對帳單摘要")
-    parser_rep_pnl.add_argument("--account", type=str, required=True, help="帳戶名稱")
+    parser_rep_pnl.add_argument("--account", type=str, default=None, help="帳戶名稱")
     parser_rep_pnl.add_argument("--date", type=str, help="指定報告日期 YYYY-MM-DD")
     
     # Dispatching commands
