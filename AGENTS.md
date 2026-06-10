@@ -36,7 +36,7 @@
 - [x] Milestone 1: Simulation Closed Loop (已完成)
 - [x] Milestone 2: 20~60 日確定性回測 (已完成)
 - [x] Milestone 3: 3~6 個月初步觀察 (已完成)
-- [ ] Milestone 4: 每日模擬運行 (未開工)
+- [x] Milestone 4: 每日模擬運行 (已完成)
 
 ---
 
