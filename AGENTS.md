@@ -46,6 +46,7 @@
 - [x] 每日報告頂層輸出 Manifest Preflight 狀態與過期預警 (已完成)
 - [x] `record-fill` 成交事實補上 `source` 欄位，手動補錄標記 `MANUAL_IMPORT` (已完成)
 - [x] `simulation run-daily` 加入進程級 file lock 防止雙重執行 (已完成)
+- [x] `trade reject-signal` / `trade un-reject-signal`：訊號人工拒絕閘門，`signal list` 顯示 `signal_id` 與拒絕狀態 (已完成)
 
 ---
 
