@@ -206,3 +206,162 @@ def test_run_daily_idempotency_already_completed(temp_db):
     # Provider shouldn't be called because status is already COMPLETED
     assert status == "COMPLETED"
     mock_provider.fetch_kbars.assert_not_called()
+
+
+# ── Integration: engine must NOT crash when long-term lot blocks a SELL ───────
+
+def test_engine_skips_sell_blocked_by_long_term_position():
+    """
+    Regression test for the bug where simulation run-daily crashed with
+    SELL_WITHOUT_POSITION when the strategy issued a SELL for a symbol
+    held as a long-term (is_long_term=1) position.
+
+    Expected behaviour: engine skips the SELL fill gracefully and returns
+    COMPLETED; the long-term lot remains untouched.
+    """
+    import uuid
+    from src.application.execution.engine import TradeExecutionEngine
+    from src.contracts.models import (
+        DailySignalBundle, SignalItem, StrategyInfo,
+        TrendPullbackParams,
+    )
+    from src.portfolio.db import init_db, get_db_connection
+    from src.portfolio.projection import PortfolioProjection
+    from src.application.execution.engine import ExecutionContext
+
+    import tempfile, os
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        init_db(db_path)
+        conn = get_db_connection(db_path)
+        projection = PortfolioProjection(conn)
+
+        # Set up account with cash
+        conn.execute(
+            "INSERT INTO cash_balances (account_id, balance, currency, updated_at) "
+            "VALUES ('test-acct', 1000000, 'TWD', datetime('now'))"
+        )
+        conn.commit()
+
+        # Record a long-term BUY for 2330 (simulating manual record-fill --long-term)
+        lt_fill = {
+            "fill_id": "fill-lt-buy-1",
+            "account_id": "test-acct",
+            "run_id": "manual-20260611",
+            "order_id": "ord-lt-1",
+            "execution_key": "lt-buy-2330-1",
+            "symbol": "2330",
+            "side": "BUY",
+            "quantity": 66,
+            "price": 19752300,  # 1975.23
+            "filled_at": "2026-06-10T09:00:00",
+            "is_long_term": 1,
+            "source": "MANUAL_IMPORT",
+        }
+        projection.apply_fill_transaction(lt_fill)
+
+        # Build a SELL signal bundle for 2330 (as strategy would generate)
+        sell_signal = SignalItem(
+            item_id="item-sell-1",
+            signal_id="sig-sell-1",
+            symbol="2330",
+            action="SELL",
+            reference_price=22550000,
+            reason_code="TAKE_PROFIT_EXIT",
+        )
+        bundle = DailySignalBundle(
+            schema_version="1.0",
+            bundle_id="bundle-test-lt",
+            run_id="run-lt-test",
+            approval_id="app-lt-test",
+            strategy=StrategyInfo(
+                strategy_id="trend_pullback",
+                strategy_version="1.0.0",
+                params_canonicalization="strategy-params-v1",
+                params_hash="hash-lt-test",
+            ),
+            signal_date=date(2026, 6, 10),
+            target_execution_date=date(2026, 6, 11),
+            market_data_cutoff=date(2026, 6, 10),
+            signals=[sell_signal],
+        )
+
+        # Mock market data returning today's close for 2330
+        mock_repo = MagicMock()
+        mock_repo.find.return_value = MarketBar(
+            symbol="2330", exchange="TSE", instrument_type="STOCK",
+            trade_date=date(2026, 6, 11),
+            open=22550000, high=22550000, low=22550000, close=22550000,
+            volume=1000, amount=10000000,
+            source="shioaji", source_fetched_at="now", raw_payload_checksum="chk",
+        )
+
+        lt_manifest = StrategyApprovalManifest(
+            schema_version="1.0",
+            approval_id="app-lt-test",
+            issuer_id="manual-research-review",
+            strategy=StrategyInfo(
+                strategy_id="trend_pullback",
+                strategy_version="1.0.0",
+                params_canonicalization="strategy-params-v1",
+                params_hash="hash-lt-test",
+            ),
+            permissions={
+                "execution_modes": ["simulation"],
+                "risk_increasing_actions": ["open_long"],
+            },
+            limits={
+                "currency": "TWD",
+                "max_order_value": 500000,
+                "max_daily_buy_value": 500000,
+                "max_open_positions": 10,
+            },
+            validity={
+                "valid_from": "2026-01-01T00:00:00+08:00",
+                "expires_at": "2099-12-31T23:59:59+08:00",
+            },
+            integrity={
+                "algorithm": "sha256",
+                "canonicalization": "manifest-v1",
+                "digest": "sha256:f19e6152422fbd2e3431edd4ba4a48c367cd7e8ca2fc4f55845878c49550e185",
+            },
+        )
+
+        engine = TradeExecutionEngine(
+            db_conn=conn,
+            market_repo=mock_repo,
+            projection=projection,
+            allowed_issuers=["manual-research-review"],
+            revoked_approvals=[],
+            manifest=lt_manifest,
+            strategy_budget=500000,
+        )
+
+        context = ExecutionContext(
+            account_id="test-acct",
+            run_id="run-lt-test",
+            run_type="DAILY_SIMULATION",
+            as_of_date=date(2026, 6, 10),
+            execution_date=date(2026, 6, 11),
+        )
+
+        # This must NOT raise — engine should skip the SELL and return COMPLETED
+        result = engine.execute_bundle(context, bundle)
+
+        assert result["status"] == "COMPLETED", f"Expected COMPLETED, got {result}"
+        # SELL was skipped: fills list should be empty
+        assert result["fills"] == [], f"Expected no fills applied, got {result['fills']}"
+
+        # Long-term lot must remain intact
+        lot = conn.execute(
+            "SELECT quantity, is_long_term FROM position_lots "
+            "WHERE symbol='2330' AND account_id='test-acct'"
+        ).fetchone()
+        assert lot is not None, "Long-term lot should still exist"
+        assert lot["quantity"] == 66
+        assert lot["is_long_term"] == 1
+
+        conn.close()
+    finally:
+        os.unlink(db_path)
