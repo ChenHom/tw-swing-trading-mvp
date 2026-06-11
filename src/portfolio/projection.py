@@ -299,7 +299,21 @@ class PortfolioProjection:
                 )
             
             if remaining_sell > 0:
-                raise ValueError(f"SELL_WITHOUT_POSITION: Attempted to sell {quantity} shares of {symbol}, but only matched {quantity - remaining_sell}")
+                matched = quantity - remaining_sell
+                if matched == 0:
+                    # Check if this symbol has long-term lots that blocked the sale
+                    cursor.execute(
+                        "SELECT COUNT(*) as cnt FROM position_lots WHERE account_id = ? AND symbol = ? AND is_long_term = 1",
+                        (account_id, symbol)
+                    )
+                    lt_count = cursor.fetchone()["cnt"]
+                    if lt_count > 0:
+                        raise ValueError(
+                            f"LONG_TERM_PROTECTED: SELL {quantity} shares of {symbol} blocked — "
+                            f"position is marked as long-term and cannot be automatically sold."
+                        )
+                raise ValueError(f"SELL_WITHOUT_POSITION: Attempted to sell {quantity} shares of {symbol}, but only matched {matched}")
+
                 
             new_balance = current_balance + (trade_value - broker_fee - tax)
             

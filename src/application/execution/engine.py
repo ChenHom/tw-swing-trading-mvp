@@ -102,6 +102,7 @@ class TradeExecutionEngine:
             }
             
         # 5. Apply Fills to Portfolio Projection
+        applied_fills = []
         for fill in fills:
             # Add account_id, run_id and execution_key which are needed for fill entity
             fill_payload = {
@@ -116,12 +117,22 @@ class TradeExecutionEngine:
                 "price": fill["price"],
                 "filled_at": fill["filled_at"]
             }
-            self.projection.apply_fill_transaction(fill_payload)
-            
+            try:
+                self.projection.apply_fill_transaction(fill_payload)
+                applied_fills.append(fill)
+            except ValueError as e:
+                err_str = str(e)
+                if err_str.startswith("LONG_TERM_PROTECTED"):
+                    # Position is marked long-term — skip SELL silently with a warning
+                    print(f"[engine] SKIP SELL {fill['symbol']}: {err_str}")
+                else:
+                    raise
+
         return {
             "status": "COMPLETED",
-            "fills": fills
+            "fills": applied_fills
         }
+
 
 def uuid_like() -> str:
     import uuid

@@ -142,7 +142,7 @@ def test_db_long_term_fill_record(tmp_path):
         "is_long_term": 0
     }
     
-    with pytest.raises(ValueError, match="SELL_WITHOUT_POSITION"):
+    with pytest.raises(ValueError, match="LONG_TERM_PROTECTED"):
         projection.apply_fill_transaction(sell_payload)
         
     # Now record a BUY with is_long_term = 0 (strategy position)
