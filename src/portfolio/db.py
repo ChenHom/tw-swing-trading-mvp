@@ -232,5 +232,16 @@ def init_db(db_path: str) -> None:
     if "is_long_term" not in lot_columns:
         cursor.execute("ALTER TABLE position_lots ADD COLUMN is_long_term INTEGER NOT NULL DEFAULT 0;")
 
+    # Migration: Add user_override column to signal_items if it doesn't exist
+    # Allowed values: NULL (no override) | 'REJECTED' (human rejected, skip execution)
+    cursor.execute("PRAGMA table_info(signal_items);")
+    signal_item_columns = [row["name"] for row in cursor.fetchall()]
+    if "user_override" not in signal_item_columns:
+        cursor.execute("ALTER TABLE signal_items ADD COLUMN user_override TEXT;")
+    if "override_reason" not in signal_item_columns:
+        cursor.execute("ALTER TABLE signal_items ADD COLUMN override_reason TEXT;")
+    if "overridden_at" not in signal_item_columns:
+        cursor.execute("ALTER TABLE signal_items ADD COLUMN overridden_at TEXT;")
+
     conn.commit()
     conn.close()

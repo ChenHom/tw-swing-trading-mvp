@@ -479,3 +479,134 @@ def test_simulation_run_daily_locked(temp_db_path, monkeypatch, capsys):
     finally:
         fcntl.flock(lock_file, fcntl.LOCK_UN)
         lock_file.close()
+
+
+# ── reject-signal / un-reject-signal tests ────────────────────────────────────
+
+def _insert_signal_item(conn, signal_id="sig-r1", bundle_id="b-r1", symbol="2330", action="BUY"):
+    """Helper: insert a minimal signal_item row."""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO signal_bundles (
+            bundle_id, run_id, approval_id, strategy_id, strategy_version,
+            params_hash, signal_date, target_execution_date, market_data_cutoff, created_at
+        ) VALUES (?, 'run-r1', 'app-r1', 'trend_pullback', '1.0', 'hash-r1',
+                  '2026-06-10', '2026-06-11', '2026-06-10', datetime('now'))
+        """,
+        (bundle_id,),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO signal_items (
+            item_id, bundle_id, signal_id, symbol, action, reference_price, reason_code, created_at
+        ) VALUES (?, ?, ?, ?, ?, 1000000, 'PULLBACK', datetime('now'))
+        """,
+        (f"item-{signal_id}", bundle_id, signal_id, symbol, action),
+    )
+    conn.commit()
+
+
+def test_reject_signal(temp_db_path, monkeypatch, capsys):
+    """reject-signal should set user_override=REJECTED in signal_items."""
+    from src.cli import cmd_trade_reject_signal
+
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    conn = get_db_connection(temp_db_path)
+    _insert_signal_item(conn, signal_id="sig-rej1")
+    conn.close()
+
+    class Args:
+        signal_id = "sig-rej1"
+        reason = "今日不適合買入"
+
+    cmd_trade_reject_signal(Args())
+    captured = capsys.readouterr()
+    assert "已拒絕訊號" in captured.out
+    assert "sig-rej1" in captured.out
+
+    # Verify DB
+    conn = get_db_connection(temp_db_path)
+    row = conn.execute(
+        "SELECT user_override, override_reason FROM signal_items WHERE signal_id = 'sig-rej1'"
+    ).fetchone()
+    assert row["user_override"] == "REJECTED"
+    assert row["override_reason"] == "今日不適合買入"
+    conn.close()
+
+
+def test_reject_signal_idempotent(temp_db_path, monkeypatch, capsys):
+    """Rejecting an already-rejected signal should be a no-op with friendly message."""
+    from src.cli import cmd_trade_reject_signal
+
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    conn = get_db_connection(temp_db_path)
+    _insert_signal_item(conn, signal_id="sig-rej2")
+    # Pre-reject it
+    conn.execute(
+        "UPDATE signal_items SET user_override='REJECTED', override_reason='先前拒絕' WHERE signal_id='sig-rej2'"
+    )
+    conn.commit()
+    conn.close()
+
+    class Args:
+        signal_id = "sig-rej2"
+        reason = "再次拒絕"
+
+    cmd_trade_reject_signal(Args())
+    captured = capsys.readouterr()
+    assert "已經是拒絕狀態" in captured.out
+
+
+def test_un_reject_signal(temp_db_path, monkeypatch, capsys):
+    """un-reject-signal should clear user_override back to NULL."""
+    from src.cli import cmd_trade_un_reject_signal
+
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    conn = get_db_connection(temp_db_path)
+    _insert_signal_item(conn, signal_id="sig-rej3")
+    conn.execute(
+        "UPDATE signal_items SET user_override='REJECTED', override_reason='測試' WHERE signal_id='sig-rej3'"
+    )
+    conn.commit()
+    conn.close()
+
+    class Args:
+        signal_id = "sig-rej3"
+
+    cmd_trade_un_reject_signal(Args())
+    captured = capsys.readouterr()
+    assert "已恢復訊號" in captured.out
+
+    conn = get_db_connection(temp_db_path)
+    row = conn.execute(
+        "SELECT user_override FROM signal_items WHERE signal_id = 'sig-rej3'"
+    ).fetchone()
+    assert row["user_override"] is None
+    conn.close()
+
+
+def test_reject_signal_unknown_id(temp_db_path, monkeypatch, capsys):
+    """Rejecting a non-existent signal_id should exit with error."""
+    from src.cli import cmd_trade_reject_signal
+
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    class Args:
+        signal_id = "does-not-exist"
+        reason = "whatever"
+
+    with pytest.raises(SystemExit):
+        cmd_trade_reject_signal(Args())
+    captured = capsys.readouterr()
+    assert "找不到訊號 ID" in captured.out

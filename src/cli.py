@@ -879,6 +879,8 @@ def cmd_trade_plan(args):
         with open(filepath, "r", encoding="utf-8") as f:
             bundle_dict = json.load(f)
         bundle = DailySignalBundle(**bundle_dict)
+        # File-based bundle: no user_override info available in memory
+        user_overrides = {}
     else:
         # Try to load bundle from database by bundle_id or signal_date
         cursor = conn.cursor()
@@ -904,14 +906,24 @@ def cmd_trade_plan(args):
         items = []
         for item_row in cursor.fetchall():
             items.append(
-                SignalItem(
-                    signal_id=item_row["signal_id"],
-                    symbol=item_row["symbol"],
-                    action=item_row["action"],
-                    reference_price=float(item_row["reference_price"] / 10000.0),
-                    reason_code=item_row["reason_code"]
+                    SignalItem(
+                        signal_id=item_row["signal_id"],
+                        symbol=item_row["symbol"],
+                        action=item_row["action"],
+                        reference_price=float(item_row["reference_price"] / 10000.0),
+                        reason_code=item_row["reason_code"]
+                    )
                 )
-            )
+
+        # Load user_override map: signal_id -> (override, reason)
+        cursor.execute(
+            "SELECT signal_id, user_override, override_reason FROM signal_items WHERE bundle_id = ?",
+            (bundle_id,)
+        )
+        user_overrides = {
+            r["signal_id"]: (r["user_override"], r["override_reason"])
+            for r in cursor.fetchall()
+        }
             
         strategy_info = StrategyInfo(
             strategy_id=row["strategy_id"],
@@ -930,7 +942,8 @@ def cmd_trade_plan(args):
             market_data_cutoff=date.fromisoformat(row["market_data_cutoff"]),
             signals=items
         )
-        
+    # End of DB-based bundle loading
+
     # We need to construct PortfolioState
     # Let's get current portfolio state for account
     account_id = resolve_account_id(conn, args.account)
@@ -990,7 +1003,17 @@ def cmd_trade_plan(args):
         symbol = sig.symbol
         name = STOCK_NAMES.get(symbol, "未知")
         action = "買入" if sig.action == "BUY" else "賣出"
-        
+
+        # Check user override first
+        override, override_reason = user_overrides.get(sig.signal_id, (None, None))
+        if override == "REJECTED":
+            reason_str = f"已拒絕 ({override_reason})" if override_reason else "已拒絕 (手動拒絕)"
+            table_rows.append([
+                symbol, name, action, f"{sig.reference_price:.2f}",
+                "-", "-", "-", reason_str
+            ])
+            continue
+
         result = signal_results.get(sig.signal_id, [])
         if isinstance(result, str):
             table_rows.append([
@@ -1042,6 +1065,76 @@ def cmd_trade_plan(args):
         row_str = " | ".join(pad_str(str(val), widths[i]) for i, val in enumerate(row))
         print(row_str)
     conn.close()
+
+
+def cmd_trade_reject_signal(args):
+    """標記一個訊號為 REJECTED，trade plan 與 execute-pending 將跳過此訊號。"""
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    cursor = conn.cursor()
+
+    # Verify signal_id exists
+    cursor.execute(
+        "SELECT signal_id, symbol, action, user_override FROM signal_items WHERE signal_id = ?",
+        (args.signal_id,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        print(f"找不到訊號 ID：{args.signal_id}")
+        conn.close()
+        sys.exit(1)
+
+    if row["user_override"] == "REJECTED":
+        print(f"訊號 {args.signal_id} ({row['symbol']} {row['action']}) 已經是拒絕狀態，無需重複設定。")
+        conn.close()
+        return
+
+    reason = getattr(args, "reason", None) or "手動拒絕"
+    now_str = datetime.now(timezone.utc).isoformat()
+    cursor.execute(
+        """
+        UPDATE signal_items
+        SET user_override = 'REJECTED', override_reason = ?, overridden_at = ?
+        WHERE signal_id = ?
+        """,
+        (reason, now_str, args.signal_id)
+    )
+    conn.commit()
+    action_label = "買入" if row["action"] == "BUY" else "賣出"
+    print(f"已拒絕訊號：{args.signal_id}  ({row['symbol']} {action_label})  原因：{reason}")
+    conn.close()
+
+
+def cmd_trade_un_reject_signal(args):
+    """取消訊號的 REJECTED 標記，恢復為正常待執行狀態。"""
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT signal_id, symbol, action, user_override FROM signal_items WHERE signal_id = ?",
+        (args.signal_id,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        print(f"找不到訊號 ID：{args.signal_id}")
+        conn.close()
+        sys.exit(1)
+
+    if row["user_override"] != "REJECTED":
+        print(f"訊號 {args.signal_id} 目前並非拒絕狀態 (user_override={row['user_override']})，無需操作。")
+        conn.close()
+        return
+
+    cursor.execute(
+        "UPDATE signal_items SET user_override = NULL, override_reason = NULL, overridden_at = NULL WHERE signal_id = ?",
+        (args.signal_id,)
+    )
+    conn.commit()
+    action_label = "買入" if row["action"] == "BUY" else "賣出"
+    print(f"已恢復訊號：{args.signal_id}  ({row['symbol']} {action_label})  → 恢復為待執行狀態")
+    conn.close()
+
 
 def cmd_trade_record_fill(args):
     settings = get_settings()
@@ -1340,6 +1433,19 @@ def main():
     parser_trade_record.add_argument("--price", type=float, required=True, help="每股成交價格")
     parser_trade_record.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
     parser_trade_record.add_argument("--long-term", action="store_true", help="設定此成交為長期持有部位，免受策略自動出場訊號影響")
+
+    parser_trade_reject = trade_subs.add_parser(
+        "reject-signal",
+        help="拒絕執行一個訊號 (REJECTED)，trade plan 與模擬執行將跳過此訊號"
+    )
+    parser_trade_reject.add_argument("--signal-id", type=str, required=True, help="要拒絕的訊號 ID")
+    parser_trade_reject.add_argument("--reason", type=str, default="手動拒絕", help="拒絕原因（顯示於 trade plan）")
+
+    parser_trade_un_reject = trade_subs.add_parser(
+        "un-reject-signal",
+        help="取消訊號的拒絕標記，恢復為待執行狀態"
+    )
+    parser_trade_un_reject.add_argument("--signal-id", type=str, required=True, help="要恢復的訊號 ID")
     
     parser_trade_close = trade_subs.add_parser("close-all", help="強制平倉所有持有部位（緊急避險退出）")
     parser_trade_close.add_argument("--broker", type=str, default="fake", help="券商介面名稱")
@@ -1386,6 +1492,8 @@ def main():
         ("trade", "plan"): cmd_trade_plan,
         ("trade", "record-fill"): cmd_trade_record_fill,
         ("trade", "close-all"): cmd_trade_close_all,
+        ("trade", "reject-signal"): cmd_trade_reject_signal,
+        ("trade", "un-reject-signal"): cmd_trade_un_reject_signal,
         ("portfolio", "reconcile"): cmd_portfolio_reconcile,
         ("portfolio", "rebuild-projections"): cmd_portfolio_rebuild_projections,
         ("report", "pnl"): cmd_report_pnl,
