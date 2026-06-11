@@ -790,11 +790,14 @@ def cmd_signal_list(args):
         SELECT 
             b.signal_date, 
             b.target_execution_date, 
+            i.signal_id,
             i.symbol, 
             i.action, 
             i.reference_price, 
             i.reason_code,
-            b.strategy_id
+            b.strategy_id,
+            i.user_override,
+            i.override_reason
         FROM signal_items i
         JOIN signal_bundles b ON i.bundle_id = b.bundle_id
     """
@@ -809,12 +812,17 @@ def cmd_signal_list(args):
     cursor.execute(query, params)
     rows = cursor.fetchall()
     
-    headers = ["訊號日期", "執行日期", "代號", "名稱", "動作", "參考價格", "原因", "策略"]
+    headers = ["訊號日期", "執行日期", "代號", "名稱", "動作", "參考價格", "原因", "狀態", "訊號 ID"]
     table_rows = []
     for r in rows:
         ref_price = r["reference_price"] / 10000.0
         symbol = r["symbol"]
         name = STOCK_NAMES.get(symbol, "未知")
+        override = r["user_override"]
+        if override == "REJECTED":
+            status = f"已拒絕 ({r['override_reason'] or '手動拒絕'})"
+        else:
+            status = "待執行"
         table_rows.append([
             r["signal_date"],
             r["target_execution_date"],
@@ -823,7 +831,8 @@ def cmd_signal_list(args):
             r["action"],
             f"{ref_price:.2f}",
             r["reason_code"],
-            r["strategy_id"]
+            status,
+            r["signal_id"],
         ])
         
     if not table_rows:
@@ -864,6 +873,8 @@ def cmd_signal_list(args):
         row_str = " | ".join(pad_str(str(val), widths[i]) for i, val in enumerate(row))
         print(row_str)
     print(f"\n共計: {len(table_rows)} 筆訊號。")
+    print("\n提示：使用以下指令拒絕執行某筆訊號：")
+    print("  python3 -m src.cli trade reject-signal --signal-id <訊號 ID> [--reason '原因']")
     conn.close()
 
 
