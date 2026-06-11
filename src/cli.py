@@ -786,8 +786,17 @@ def cmd_signal_list(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
     
+    manifest = load_active_manifest(settings)
+    try:
+        account_id = resolve_account_id(conn, getattr(args, "account", None))
+    except Exception:
+        account_id = "simulation-main"
+        
+    projection = PortfolioProjection(conn)
+    
     query = """
         SELECT 
+            b.bundle_id,
             b.signal_date, 
             b.target_execution_date, 
             i.signal_id,
@@ -812,6 +821,83 @@ def cmd_signal_list(args):
     cursor.execute(query, params)
     rows = cursor.fetchall()
     
+    if not rows:
+        if args.date:
+            print(f"查無日期 {args.date} 的訊號紀錄。")
+        else:
+            print("資料庫中無任何訊號紀錄。")
+        conn.close()
+        return
+        
+    # Get all execution keys for this account to check for executed fills
+    cursor.execute("SELECT execution_key FROM fills WHERE account_id = ?", (account_id,))
+    filled_keys = [row["execution_key"] for row in cursor.fetchall()]
+    
+    # Load current portfolio state for dynamic order planning status of future/today signals
+    available_cash = projection.get_cash_balance(account_id)
+    
+    # Get positions
+    cursor.execute(
+        "SELECT symbol, SUM(quantity) as qty FROM position_lots WHERE account_id = ? GROUP BY symbol",
+        (account_id,)
+    )
+    positions = {row["symbol"]: row["qty"] for row in cursor.fetchall() if row["qty"] > 0}
+    
+    # Calculate daily buy value spent today (using date.today())
+    today = date.today()
+    cursor.execute(
+        "SELECT SUM(quantity * price) as val FROM fills WHERE account_id = ? AND side = 'BUY' AND date(filled_at) = ?",
+        (account_id, today.isoformat())
+    )
+    val_row = cursor.fetchone()
+    daily_buy_value_spent = int(val_row["val"] / 10000.0) if (val_row and val_row["val"]) else 0
+    
+    portfolio_state = PortfolioState(
+        available_cash=available_cash,
+        positions=positions,
+        daily_buy_value_spent=daily_buy_value_spent
+    )
+    
+    limits = manifest.limits if manifest else LimitsInfo(
+        currency="TWD",
+        max_order_value=35000,
+        max_daily_buy_value=150000,
+        max_open_positions=5
+    )
+    strategy_budget = manifest.limits.max_order_value if manifest else 35000
+    
+    # Group rows by bundle_id so we can plan them
+    bundle_signals = {}
+    for r in rows:
+        bid = r["bundle_id"]
+        if bid not in bundle_signals:
+            bundle_signals[bid] = []
+        bundle_signals[bid].append(r)
+        
+    # Run planner for each bundle to determine planning status for future/today bundles
+    planned_results = {} # signal_id -> status_string/list
+    for bid, r_list in bundle_signals.items():
+        target_exec_date = date.fromisoformat(r_list[0]["target_execution_date"])
+        # If target execution date is today or in the future, we plan it dynamically
+        if target_exec_date >= today:
+            signals = [
+                SignalItem(
+                    signal_id=r["signal_id"],
+                    symbol=r["symbol"],
+                    action=r["action"],
+                    reference_price=float(r["reference_price"] / 10000.0),
+                    reason_code=r["reason_code"]
+                )
+                for r in r_list
+            ]
+            planned_orders, signal_results = OrderPlanner.plan_all(
+                signals=signals,
+                portfolio=portfolio_state,
+                strategy_budget=strategy_budget,
+                manifest_limits=limits
+            )
+            planned_results.update(signal_results)
+
     headers = ["訊號日期", "執行日期", "代號", "名稱", "動作", "參考價格", "原因", "狀態", "訊號 ID"]
     table_rows = []
     for r in rows:
@@ -819,10 +905,38 @@ def cmd_signal_list(args):
         symbol = r["symbol"]
         name = STOCK_NAMES.get(symbol, "未知")
         override = r["user_override"]
+        signal_id = r["signal_id"]
+        target_exec_date = date.fromisoformat(r["target_execution_date"])
+        
+        # Determine status
         if override == "REJECTED":
             status = f"已拒絕 ({r['override_reason'] or '手動拒絕'})"
         else:
-            status = "待執行"
+            # 1. Check if the signal is filled (already executed)
+            is_filled = any(signal_id in key for key in filled_keys)
+            if is_filled:
+                status = "已成交"
+            else:
+                # 2. Check if it's in the past (already expired/failed/blocked during execution)
+                if target_exec_date < today:
+                    status = "已過期/未成交"
+                else:
+                    # 3. Dynamic planning check for future/today signals
+                    planner_res = planned_results.get(signal_id, [])
+                    if isinstance(planner_res, str):
+                        code = planner_res.split(":")[0].strip()
+                        friendly_names = {
+                            "MAX_OPEN_POSITIONS_EXCEEDED": "風控阻擋:持倉超限",
+                            "DAILY_BUY_LIMIT_EXCEEDED": "風控阻擋:每日買額超限",
+                            "INSUFFICIENT_CASH": "風控阻擋:資金不足",
+                            "DAILY_NEW_BUY_LIMIT_EXCEEDED": "風控阻擋:新買入超限"
+                        }
+                        status = friendly_names.get(code, f"風控阻擋:{code}")
+                    elif not planner_res and r["action"] == "SELL":
+                        status = "無持倉 (跳過)"
+                    else:
+                        status = "待執行"
+                        
         table_rows.append([
             r["signal_date"],
             r["target_execution_date"],
@@ -832,16 +946,8 @@ def cmd_signal_list(args):
             f"{ref_price:.2f}",
             r["reason_code"],
             status,
-            r["signal_id"],
+            signal_id,
         ])
-        
-    if not table_rows:
-        if args.date:
-            print(f"查無日期 {args.date} 的訊號紀錄。")
-        else:
-            print("資料庫中無任何訊號紀錄。")
-        conn.close()
-        return
         
     # 計算顯示長度的輔助函式（中文字元計為 2 個寬度）
     def display_len(s: str) -> int:
@@ -874,7 +980,7 @@ def cmd_signal_list(args):
         print(row_str)
     print(f"\n共計: {len(table_rows)} 筆訊號。")
     print("\n提示：使用以下指令拒絕執行某筆訊號：")
-    print("  python3 -m src.cli trade reject-signal --signal-id <訊號 ID> [--reason '原因']")
+    print("  python3 -m app trade reject-signal --signal-id <訊號 ID> [--reason '原因']")
     conn.close()
 
 
@@ -1425,6 +1531,7 @@ def main():
     
     parser_sig_list = sig_subs.add_parser("list", help="查詢並列出已產生的交易訊號")
     parser_sig_list.add_argument("--date", type=str, help="過濾特定的訊號產生日期 YYYY-MM-DD")
+    parser_sig_list.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
     
     # 8. trade group
     parser_trade = subparsers.add_parser("trade", help="交易與委託單指令")
