@@ -116,7 +116,7 @@ python3 -m app signal list
 共計: 4 筆訊號。
 
 提示：使用以下指令拒絕執行某筆訊號：
-  python3 -m src.cli trade reject-signal --signal-id <訊號 ID> [--reason '原因']
+  python3 -m app trade reject-signal --signal-id <訊號 ID> [--reason '原因']
 ```
 
 ### 第四步：產生委託計畫預覽 (依據帳戶可用餘額計算規劃買入的張數/股數)
@@ -142,10 +142,10 @@ python3 -m app trade plan --bundle 2026-06-10
 如果某筆訊號經審察後决定不執行，可將其標記為已拒絕。標記後該訊號將在 `trade plan` 與模擬執行中被跳過，不占用當日購買額度：
 ```bash
 # 1. 拒絕執行訊號（signal_id 從 signal list 輸出的最後一欄複製）
-python3 -m src.cli trade reject-signal --signal-id sig-i9j0k1l2 --reason "今日不適合"
+python3 -m app trade reject-signal --signal-id sig-i9j0k1l2 --reason "今日不適合"
 
 # 2. 反悔恢復（拒絕前請確認已提交的成交事實是否已記錄）
-python3 -m src.cli trade un-reject-signal --signal-id sig-i9j0k1l2
+python3 -m app trade un-reject-signal --signal-id sig-i9j0k1l2
 ```
 
 ### 第五步：手動錄入成交紀錄 (手動建立已購買/已賣出的交易資料)
@@ -209,7 +209,69 @@ python3 -m app portfolio reconcile
 
 ---
 
-## 5. 已知設計限制與未來改善 (Known Limits & Future Improvements)
+## 5. 自動排程設定 (Cron Job Setup)
+
+為了實現每日自動化運行，建議設定 `cron` 定期排程在收盤後執行。
+
+### 做法 A：使用包裝腳本（推薦，內建時區處理）
+使用專案內附的包裝腳本 [run_daily_sim.sh](file:///home/hom/services/stock/tw-day-trading/scripts/run_daily_sim.sh)。此腳本會自動將時區指定為台北時間、計算今日日期、確保日誌目錄存在，並自動檢查 `.venv` 虛擬環境。
+
+1. **賦予腳本執行權限**：
+   ```bash
+   chmod +x scripts/run_daily_sim.sh
+   ```
+2. **編輯 crontab**：
+   ```bash
+   crontab -e
+   ```
+3. **加入排程設定**（請將 `/path/to/tw-swing-trading-mvp` 替換為您的實際專案絕對路徑）：
+   ```cron
+   CRON_TZ=Asia/Taipei
+   10 15 * * 1-5 /path/to/tw-swing-trading-mvp/scripts/run_daily_sim.sh
+   ```
+   *(註：每個交易日週一至週五下午 15:10 執行。即使遇到非交易日或國定假日，`TradingCalendar` 也會自動偵測並安全跳過執行。)*
+
+---
+
+### 做法 B：直接設定 crontab 指令
+如果您不想使用包裝腳本，也可以直接將指令寫入 crontab 中。
+
+1. **確認虛擬環境的 Python 絕對路徑**：
+   ```bash
+   # 於正常 terminal 中執行確認路徑
+   which python
+   # 通常長得像：/path/to/tw-swing-trading-mvp/.venv/bin/python
+   ```
+2. **編輯 crontab**：
+   ```bash
+   crontab -e
+   ```
+3. **寫入以下內容**（注意：`simulation run-daily` **不接受** `--strategy` 參數，策略設定已寫在對應的 yaml 設定檔中）：
+   ```cron
+   CRON_TZ=Asia/Taipei
+   10 15 * * 1-5 cd /path/to/tw-swing-trading-mvp && /path/to/tw-swing-trading-mvp/.venv/bin/python -m app simulation run-daily --account simulation-main >> logs/daily_sim.log 2>&1
+   ```
+
+> [!IMPORTANT]
+> * **非互動式安全防護**：在 `cron` 等非互動式環境中執行時，系統**強制要求**必須顯式指定 `--account` 參數，否則基於防呆安全機制會拒絕執行。
+> * **時區問題**：`cron` 預設使用系統時間。若您的伺服器不是台北時間，務必在 `crontab` 頂端設定 `CRON_TZ=Asia/Taipei`（如上所示）或在腳本中設定 `TZ=Asia/Taipei`。
+
+---
+
+### 驗證排程是否有正常跑
+
+您可以透過以下方式檢查排程狀態與執行狀況：
+```bash
+# 1. 檢查 cron 排程最近的執行記錄 (Linux 系統)
+grep CRON /var/log/syslog | tail -20
+
+# 2. 檢視排程輸出日誌
+tail -n 50 logs/daily_sim.log
+```
+
+---
+
+## 6. 已知設計限制與未來改善 (Known Limits & Future Improvements)
 
 當前 MVP 為了流程閉環與架構安全進行了重構，已解決資金超額分配、長期持倉 FIFO 污染、模擬重置事實刪除、交易宇宙配置污染、排程安全（帳戶解析強制、file lock、fill source 標記）等問題。後續開發仍需注意以下設計限制與改善方向：
 
@@ -220,7 +282,7 @@ python3 -m app portfolio reconcile
 
 ---
 
-## 6. 測試與驗證
+## 7. 測試與驗證
 
 本專案使用 `pytest` 進行完整的單元與整合測試，包含 Shioaji 行情模組測試、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、長期持有與 FIFO 隔離、資金配置與超額分配優化、排程安全（非互動帳戶解析、file lock、MANUAL_IMPORT 來源標記）、訊號拒絕閘門等共計 **67 個測試案例**。
 
