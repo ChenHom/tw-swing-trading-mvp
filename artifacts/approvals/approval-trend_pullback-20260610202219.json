@@ -22,7 +22,7 @@
     "currency": "TWD",
     "max_order_value": 35000,
     "max_daily_buy_value": 150000,
-    "max_open_positions": 5
+    "max_open_positions": 9
   },
   "validity": {
     "valid_from": "2026-06-10T20:22:19.798892+08:00",

@@ -454,7 +454,7 @@ class DailySimulationRunner:
         
         cursor.execute(
             """
-            SELECT signal_id, symbol, action, reference_price, reason_code
+            SELECT signal_id, symbol, action, reference_price, reason_code, user_override
             FROM signal_items
             WHERE bundle_id = ?
             """,
@@ -462,6 +462,8 @@ class DailySimulationRunner:
         )
         items = []
         for row in cursor.fetchall():
+            if row["user_override"] == "REJECTED":
+                continue
             items.append(
                 SignalItem(
                     signal_id=row["signal_id"],

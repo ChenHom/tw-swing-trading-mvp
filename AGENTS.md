@@ -47,6 +47,7 @@
 - [x] `record-fill` 成交事實補上 `source` 欄位，手動補錄標記 `MANUAL_IMPORT` (已完成)
 - [x] `simulation run-daily` 加入進程級 file lock 防止雙重執行 (已完成)
 - [x] `trade reject-signal` / `trade un-reject-signal`：訊號人工拒絕閘門，`signal list` 顯示 `signal_id` 與拒絕狀態 (已完成)
+- [x] `report pnl` 支援依交易來源 (`STRATEGY` / `MANUAL_IMPORT`) 進行損益與部位的分流顯示與篩選 (已完成)
 
 ---
 
@@ -77,7 +78,7 @@ MVP 核心功能、首批架構缺陷修正、與排程安全強化已完成。�
 後續開發前，必須注意當前 MVP 實作存在的以下設計限制與風險：
 
 1. **手動成交的事實完整性**:
-   - 目前 `record-fill` 已標記 `source = MANUAL_IMPORT`，但仍僅能使用估計費率，且缺乏沖銷修正的模型支援（reversal / corrected fill）。
+   - 目前 `record-fill` 已標記 `source = MANUAL_IMPORT`，且 `report pnl` 已支援依交易來源進行損益與部位的分流顯示，但手動錄入仍僅能使用估計費率，且缺乏沖銷修正的模型支援（reversal / corrected fill）。
 2. **撮合模型與公司行動限制**:
    - 零股與整張股票採用相同的成交滑價模型；未追蹤除權息等公司行動；缺乏詳細的排程異常告警閉環。
 

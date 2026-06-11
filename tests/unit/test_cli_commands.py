@@ -610,3 +610,211 @@ def test_reject_signal_unknown_id(temp_db_path, monkeypatch, capsys):
         cmd_trade_reject_signal(Args())
     captured = capsys.readouterr()
     assert "找不到訊號 ID" in captured.out
+
+
+def test_cmd_report_pnl_source_split(temp_db_path, monkeypatch, capsys):
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    
+    conn = get_db_connection(temp_db_path)
+    cursor = conn.cursor()
+    
+    # Insert cash
+    cursor.execute("INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('acc-split-test', 200000, 'TWD', datetime('now'))")
+    
+    # Insert two fills (one STRATEGY, one MANUAL_IMPORT)
+    cursor.execute(
+        """
+        INSERT INTO fills (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, created_at, source)
+        VALUES ('fill-strat', 'acc-split-test', 'run-1', 'ord-1', 'key-1', '2330', 'BUY', 100, 10000000, '2026-06-10T09:00:00', datetime('now'), 'STRATEGY')
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO fills (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, created_at, source)
+        VALUES ('fill-man', 'acc-split-test', 'run-1', 'ord-2', 'key-2', '2327', 'BUY', 50, 5000000, '2026-06-10T09:00:00', datetime('now'), 'MANUAL_IMPORT')
+        """
+    )
+    
+    # Insert two position lots
+    cursor.execute(
+        """
+        INSERT INTO position_lots (lot_id, account_id, symbol, quantity, price, acquired_at, fill_id, created_at)
+        VALUES ('lot-strat', 'acc-split-test', '2330', 100, 10000000, '2026-06-10T09:00:00', 'fill-strat', datetime('now'))
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO position_lots (lot_id, account_id, symbol, quantity, price, acquired_at, fill_id, created_at)
+        VALUES ('lot-man', 'acc-split-test', '2327', 50, 5000000, '2026-06-10T09:00:00', 'fill-man', datetime('now'))
+        """
+    )
+    
+    # Insert daily bars for close prices: 2330 at 1050.0, 2327 at 510.0
+    cursor.execute(
+        """
+        INSERT INTO market_bars (symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount, source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum, created_at, updated_at)
+        VALUES ('2330', 'TSE', 'STOCK', '2026-06-10', 10000000, 10600000, 9900000, 10500000, 100, 10000, 'test', 'Asia/Taipei', 1, 'now', 'chk', datetime('now'), datetime('now'))
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO market_bars (symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount, source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum, created_at, updated_at)
+        VALUES ('2327', 'TSE', 'STOCK', '2026-06-10', 5000000, 5200000, 4900000, 5100000, 100, 10000, 'test', 'Asia/Taipei', 1, 'now', 'chk', datetime('now'), datetime('now'))
+        """
+    )
+    conn.commit()
+    conn.close()
+    
+    class MockPnLArgs:
+        def __init__(self, source="all"):
+            self.account = "acc-split-test"
+            self.date = "2026-06-10"
+            self.source = source
+
+    # 1. Test strategy filter
+    cmd_report_pnl(MockPnLArgs(source="strategy"))
+    captured = capsys.readouterr()
+    assert "僅看策略交易" in captured.out
+    assert "2330" in captured.out
+    assert "2327" not in captured.out
+    assert "部位價值：105,000 TWD" in captured.out
+    assert "未實現損益：+5,000 TWD" in captured.out
+
+    # 2. Test manual filter
+    cmd_report_pnl(MockPnLArgs(source="manual"))
+    captured = capsys.readouterr()
+    assert "僅看手動錄入" in captured.out
+    assert "2327" in captured.out
+    assert "2330" not in captured.out
+    assert "部位價值：25,500 TWD" in captured.out
+    assert "未實現損益：+500 TWD" in captured.out
+
+    # 3. Test all (default)
+    cmd_report_pnl(MockPnLArgs(source="all"))
+    captured = capsys.readouterr()
+    assert "策略自動交易 (STRATEGY)" in captured.out
+    assert "手動錄入交易 (MANUAL_IMPORT)" in captured.out
+    assert "2330" in captured.out
+    assert "2327" in captured.out
+    assert "部位總價值：130,500 TWD" in captured.out
+
+
+def test_execute_pending_skips_rejected_signal(temp_db_path, monkeypatch, capsys):
+    from src.cli import cmd_simulation_execute_pending
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    mock_settings.issuer_allowlist = ["manual-research-review"]
+    mock_settings.revoked_approvals = []
+    mock_settings.backtest.slippage_bps = 10
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    conn = get_db_connection(temp_db_path)
+    cursor = conn.cursor()
+    
+    # 1. Initialize cash
+    cursor.execute("INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('acc-exec-test', 200000, 'TWD', datetime('now'))")
+    
+    # 2. Insert mock approval manifest
+    from src.cli import sign_manifest
+    from src.contracts.models import StrategyApprovalManifest
+    manifest_dict = {
+        "schema_version": "1.0",
+        "approval_id": "app-1",
+        "issuer_id": "manual-research-review",
+        "strategy": {
+            "strategy_id": "trend_pullback",
+            "strategy_version": "1.0",
+            "params_canonicalization": "strategy-params-v1",
+            "params_hash": "hash-1"
+        },
+        "permissions": {
+            "execution_modes": ["backtest", "simulation"],
+            "risk_increasing_actions": ["open_long", "increase_long"]
+        },
+        "limits": {
+            "currency": "TWD",
+            "max_order_value": 35000,
+            "max_daily_buy_value": 150000,
+            "max_open_positions": 5
+        },
+        "validity": {
+            "valid_from": "2026-06-01T00:00:00+08:00",
+            "expires_at": "2026-06-30T00:00:00+08:00"
+        },
+        "integrity": {
+            "algorithm": "sha256",
+            "canonicalization": "manifest-v1",
+            "digest": ""
+        }
+    }
+    signed_dict = sign_manifest(manifest_dict)
+    dummy_manifest = StrategyApprovalManifest(**signed_dict)
+    monkeypatch.setattr("src.cli.load_active_manifest", lambda s: dummy_manifest)
+
+    # 3. Create signal bundle targeting 2026-06-11
+    cursor.execute(
+        """
+        INSERT INTO signal_bundles (
+            bundle_id, run_id, approval_id, strategy_id, strategy_version,
+            params_hash, signal_date, target_execution_date, market_data_cutoff, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        """,
+        ("b-exec", "r-exec", "app-1", "trend_pullback", "1.0", "hash-1", "2026-06-10", "2026-06-11", "2026-06-10")
+    )
+    
+    # Normal BUY signal for 2330
+    cursor.execute(
+        """
+        INSERT INTO signal_items (
+            item_id, bundle_id, signal_id, symbol, action, reference_price, reason_code, created_at, user_override
+        ) VALUES (?, ?, ?, ?, ?, 1000000, 'PULLBACK', datetime('now'), NULL)
+        """,
+        ("item-normal", "b-exec", "sig-normal", "2330", "BUY")
+    )
+    # Rejected BUY signal for 2327
+    cursor.execute(
+        """
+        INSERT INTO signal_items (
+            item_id, bundle_id, signal_id, symbol, action, reference_price, reason_code, created_at, user_override
+        ) VALUES (?, ?, ?, ?, ?, 5000000, 'PULLBACK', datetime('now'), 'REJECTED')
+        """,
+        ("item-rejected", "b-exec", "sig-rejected", "2327", "BUY")
+    )
+    
+    # 4. Insert market bars so FakeBroker can fill
+    cursor.execute(
+        """
+        INSERT INTO market_bars (symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount, source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum, created_at, updated_at)
+        VALUES ('2330', 'TSE', 'STOCK', '2026-06-11', 1000000, 1050000, 990000, 1000000, 100, 10000, 'shioaji', 'Asia/Taipei', 1, 'now', 'chk', datetime('now'), datetime('now'))
+        """
+    )
+    cursor.execute(
+        """
+        INSERT INTO market_bars (symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount, source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum, created_at, updated_at)
+        VALUES ('2327', 'TSE', 'STOCK', '2026-06-11', 500000, 520000, 490000, 500000, 100, 10000, 'shioaji', 'Asia/Taipei', 1, 'now', 'chk', datetime('now'), datetime('now'))
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    class Args:
+        execution_date = "2026-06-11"
+        account = "acc-exec-test"
+
+    cmd_simulation_execute_pending(Args())
+    captured = capsys.readouterr()
+    assert "Executing pending bundle b-exec" in captured.out
+    
+    # 5. Verify fills in database
+    conn = get_db_connection(temp_db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT symbol FROM fills WHERE account_id = 'acc-exec-test'")
+    rows = cursor.fetchall()
+    symbols = [r["symbol"] for r in rows]
+    # Normal signal should be executed (filled)
+    assert "2330" in symbols
+    # Rejected signal should NOT be executed (not filled)
+    assert "2327" not in symbols
+    conn.close()

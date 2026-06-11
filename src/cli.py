@@ -638,11 +638,13 @@ def cmd_simulation_execute_pending(args):
         
     bundle_id = row["bundle_id"]
     cursor.execute(
-        "SELECT signal_id, symbol, action, reference_price, reason_code FROM signal_items WHERE bundle_id = ?",
+        "SELECT signal_id, symbol, action, reference_price, reason_code, user_override FROM signal_items WHERE bundle_id = ?",
         (bundle_id,)
     )
     items = []
     for item_row in cursor.fetchall():
+        if item_row["user_override"] == "REJECTED":
+            continue
         items.append(
             SignalItem(
                 signal_id=item_row["signal_id"],
@@ -1348,45 +1350,148 @@ def cmd_report_pnl(args):
     
     account_id = resolve_account_id(conn, args.account)
     report_date = date.fromisoformat(args.date) if args.date else date.today()
+    filter_source = getattr(args, "source", "all")
+    
     cash = projection.get_cash_balance(account_id)
     
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT symbol, SUM(quantity) as qty, AVG(price) as avg_price FROM position_lots WHERE account_id = ? GROUP BY symbol",
+        """
+        SELECT pl.symbol, SUM(pl.quantity) as qty, AVG(pl.price) as avg_price, COALESCE(f.source, 'STRATEGY') as source
+        FROM position_lots pl
+        LEFT JOIN fills f ON pl.fill_id = f.fill_id
+        WHERE pl.account_id = ?
+        GROUP BY pl.symbol, source
+        """,
         (account_id,)
     )
-    positions = []
+    
+    strategy_positions = []
+    manual_positions = []
     total_pos_value = 0
     repo = SqliteMarketBarRepository(conn)
     
     for row in cursor.fetchall():
         qty = row["qty"]
         if qty > 0:
+            symbol = row["symbol"]
+            source = row["source"]
             # Try to find closing price on report_date
-            bar = repo.find(row["symbol"], report_date)
+            bar = repo.find(symbol, report_date)
             close_price = bar.close / 10000.0 if bar else row["avg_price"] / 10000.0
             pos_val = int(qty * close_price)
             total_pos_value += pos_val
-            positions.append({
-                "symbol": row["symbol"],
-                "quantity": qty,
-                "entry_price": row["avg_price"] / 10000.0,
-                "current_price": close_price,
-                "value": pos_val
-            })
             
-    print(f"\n--- 帳戶 {account_id} 於 {report_date} 的損益報告 ---")
-    print(f"可用現金：{cash:,} TWD")
-    print(f"部位價值：{total_pos_value:,} TWD")
-    print(f"總資產淨值：{cash + total_pos_value:,} TWD")
-    print("\n持有部位：")
-    if not positions:
-        print("  無持有部位。")
-    for pos in positions:
-        name = STOCK_NAMES.get(pos['symbol'], "未知")
-        print(f"  {pos['symbol']} {name}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD")
+            entry_price = row["avg_price"] / 10000.0
+            unrealized_pnl = int(qty * (close_price - entry_price))
+            
+            pos_item = {
+                "symbol": symbol,
+                "quantity": qty,
+                "entry_price": entry_price,
+                "current_price": close_price,
+                "value": pos_val,
+                "unrealized_pnl": unrealized_pnl
+            }
+            
+            if source == "STRATEGY":
+                strategy_positions.append(pos_item)
+            else:
+                manual_positions.append(pos_item)
+                
+    def get_source_performance(src: str):
+        # Gross realized from FIFO matches where buy fill belongs to the source
+        cursor.execute(
+            """
+            SELECT SUM(m.realized_pnl) as gross_pnl
+            FROM fifo_matches m
+            JOIN fills f ON m.buy_fill_id = f.fill_id
+            WHERE m.account_id = ? AND f.source = ?
+            """,
+            (account_id, src)
+        )
+        r_gross = cursor.fetchone()
+        gross_pnl = r_gross["gross_pnl"] if r_gross["gross_pnl"] is not None else 0
         
+        # Fees/taxes from cash_ledger associated with fills of this source
+        cursor.execute(
+            """
+            SELECT SUM(cl.amount) as total_fees_taxes
+            FROM cash_ledger cl
+            JOIN fills f ON cl.source_id = f.fill_id
+            WHERE cl.account_id = ? AND f.source = ? AND cl.event_type IN ('BROKER_FEE', 'TRANSACTION_TAX')
+            """,
+            (account_id, src)
+        )
+        r_fees = cursor.fetchone()
+        fees_taxes = r_fees["total_fees_taxes"] if r_fees["total_fees_taxes"] is not None else 0
+        
+        return gross_pnl, fees_taxes
+
+    strat_gross_pnl, strat_fees_taxes = get_source_performance("STRATEGY")
+    strat_net_realized = strat_gross_pnl + strat_fees_taxes
+    strat_unrealized = sum(p["unrealized_pnl"] for p in strategy_positions)
+    strat_pos_val = sum(p["value"] for p in strategy_positions)
+    
+    manual_gross_pnl, manual_fees_taxes = get_source_performance("MANUAL_IMPORT")
+    manual_net_realized = manual_gross_pnl + manual_fees_taxes
+    manual_unrealized = sum(p["unrealized_pnl"] for p in manual_positions)
+    manual_pos_val = sum(p["value"] for p in manual_positions)
+    
+    if filter_source == "strategy":
+        print(f"\n--- 帳戶 {account_id} 於 {report_date} 的損益報告 (僅看策略交易) ---")
+        print(f"部位價值：{strat_pos_val:,} TWD")
+        print(f"已實現損益（淨額）：{strat_net_realized:+,} TWD (毛損益: {strat_gross_pnl:+,} TWD, 交易規費: {strat_fees_taxes:,} TWD)")
+        print(f"未實現損益：{strat_unrealized:+,} TWD")
+        print("\n持倉部位：")
+        if not strategy_positions:
+            print("  無持有部位。")
+        for pos in strategy_positions:
+            name = STOCK_NAMES.get(pos['symbol'], "未知")
+            print(f"  {pos['symbol']} {name}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD (未實現: {pos['unrealized_pnl']:+,} TWD)")
+            
+    elif filter_source == "manual":
+        print(f"\n--- 帳戶 {account_id} 於 {report_date} 的損益報告 (僅看手動錄入) ---")
+        print(f"部位價值：{manual_pos_val:,} TWD")
+        print(f"已實現損益（淨額）：{manual_net_realized:+,} TWD (毛損益: {manual_gross_pnl:+,} TWD, 交易規費: {manual_fees_taxes:,} TWD)")
+        print(f"未實現損益：{manual_unrealized:+,} TWD")
+        print("\n持倉部位：")
+        if not manual_positions:
+            print("  無持有部位。")
+        for pos in manual_positions:
+            name = STOCK_NAMES.get(pos['symbol'], "未知")
+            print(f"  {pos['symbol']} {name}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD (未實現: {pos['unrealized_pnl']:+,} TWD)")
+            
+    else:
+        print(f"\n--- 帳戶 {account_id} 於 {report_date} 的損益報告 ---")
+        print(f"可用現金：{cash:,} TWD")
+        print(f"部位總價值：{total_pos_value:,} TWD")
+        print(f"總資產淨值：{cash + total_pos_value:,} TWD")
+        
+        print(f"\n================ 策略自動交易 (STRATEGY) ================")
+        print(f"部位價值：{strat_pos_val:,} TWD")
+        print(f"已實現損益（淨額）：{strat_net_realized:+,} TWD (毛損益: {strat_gross_pnl:+,} TWD, 交易規費: {strat_fees_taxes:,} TWD)")
+        print(f"未實現損益：{strat_unrealized:+,} TWD")
+        print("持倉部位：")
+        if not strategy_positions:
+            print("  無持有部位。")
+        for pos in strategy_positions:
+            name = STOCK_NAMES.get(pos['symbol'], "未知")
+            print(f"  {pos['symbol']} {name}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD (未實現: {pos['unrealized_pnl']:+,} TWD)")
+            
+        print(f"\n================ 手動錄入交易 (MANUAL_IMPORT) ================")
+        print(f"部位價值：{manual_pos_val:,} TWD")
+        print(f"已實現損益（淨額）：{manual_net_realized:+,} TWD (毛損益: {manual_gross_pnl:+,} TWD, 交易規費: {manual_fees_taxes:,} TWD)")
+        print(f"未實現損益：{manual_unrealized:+,} TWD")
+        print("持倉部位：")
+        if not manual_positions:
+            print("  無持有部位。")
+        for pos in manual_positions:
+            name = STOCK_NAMES.get(pos['symbol'], "未知")
+            print(f"  {pos['symbol']} {name}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD (未實現: {pos['unrealized_pnl']:+,} TWD)")
+            
     conn.close()
+
 
 def cmd_trade_close_all(args):
     # Manual emergency exit
@@ -1586,6 +1691,7 @@ def main():
     parser_rep_pnl = report_subs.add_parser("pnl", help="顯示帳戶的損益對帳單摘要")
     parser_rep_pnl.add_argument("--account", type=str, default=None, help="帳戶名稱")
     parser_rep_pnl.add_argument("--date", type=str, help="指定報告日期 YYYY-MM-DD")
+    parser_rep_pnl.add_argument("--source", type=str, choices=["all", "strategy", "manual"], default="all", help="篩選成交來源：all (全部), strategy (僅策略), manual (僅手動錄入)")
     
     # Dispatching commands
     args = parser.parse_args()
