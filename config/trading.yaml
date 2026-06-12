@@ -3,5 +3,19 @@ approval:
   expiry_warning_sessions: 3
   allowlist_path: "config/issuer-allowlist.json"
   revoked_path: "config/revoked-approvals.json"
-  active_pointer_path: "artifacts/approvals/active-approval.json"
+  active_pointer_path: "artifacts/approvals/active-approval.json"   # legacy 單一 pointer（向下相容回讀）
+  active_map_path: "artifacts/approvals/active-approvals.json"      # 多策略 active map（strategy_id -> approval_id）
   approvals_dir: "artifacts/approvals/"
+
+# 每日訊號管線固定順序（risk_exit 一律最先執行，再依此清單跑進場策略）
+pipeline:
+  entry_strategies:
+    - trend_breakout
+    - pullback_rebound
+  index_symbol: "TSE"
+
+# 全局帳戶風控（per-strategy 限額由各策略 manifest 定義）
+global_limits:
+  max_open_positions: 8
+  max_daily_buy_value: 200000
+  max_new_positions_per_day: 2

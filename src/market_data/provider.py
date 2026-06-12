@@ -81,6 +81,11 @@ class ShioajiMarketDataProvider:
             self._api.login(api_key=self.api_key, secret_key=self.secret_key)
         return self._api
 
+    # CLI symbol -> Shioaji index contract locator (exchange group, contract code)
+    INDEX_CONTRACTS = {
+        "TSE": ("TSE", "001"),  # 加權指數 (TAIEX)
+    }
+
     def fetch_kbars(
         self,
         symbol: str,
@@ -88,14 +93,21 @@ class ShioajiMarketDataProvider:
         end_date: date,
     ) -> list[MinuteBar]:
         api = self._get_api()
-        
-        # Try to find the contract for the symbol
-        # First check in Stocks
-        try:
-            contract = api.Contracts.Stocks[symbol]
-        except KeyError:
-            raise ValueError(f"Contract not found for symbol: {symbol}")
-            
+
+        # Index symbols route to Contracts.Indexs; everything else to Stocks.
+        contract = None
+        if symbol in self.INDEX_CONTRACTS:
+            group, code = self.INDEX_CONTRACTS[symbol]
+            try:
+                contract = getattr(api.Contracts.Indexs, group)[code]
+            except (KeyError, AttributeError):
+                raise ValueError(f"Index contract not found for symbol: {symbol}")
+        else:
+            try:
+                contract = api.Contracts.Stocks[symbol]
+            except KeyError:
+                raise ValueError(f"Contract not found for symbol: {symbol}")
+
         if not contract:
             raise ValueError(f"Contract not found for symbol: {symbol}")
             
@@ -137,8 +149,9 @@ class ShioajiMarketDataProvider:
                     high=float(kbars.High[i]),
                     low=float(kbars.Low[i]),
                     close=float(kbars.Close[i]),
-                    volume=int(kbars.Volume[i]),
-                    amount=float(kbars.Amount[i])
+                    # Index kbars may carry missing volume/amount; coerce to 0.
+                    volume=int(kbars.Volume[i] or 0),
+                    amount=float(kbars.Amount[i] or 0)
                 )
             )
         return bars

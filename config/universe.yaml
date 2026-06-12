@@ -68,3 +68,8 @@ symbols:
   - code: "6805"
     exchange: "TSE"
     instrument_type: "STOCK"
+# 指數（僅供策略大盤濾網使用，不納入估值宇宙與可交易標的）
+indices:
+  - code: "TSE"
+    exchange: "TSE"
+    instrument_type: "INDEX"

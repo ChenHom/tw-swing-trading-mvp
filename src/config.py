@@ -9,17 +9,13 @@ from dotenv import load_dotenv
 # Load environment variables from .env if present
 load_dotenv()
 
-class StrategyParamConfig(BaseModel):
-    ma_short: int
-    ma_long: int
-    stop_loss_bps: int
-    take_profit_bps: int
-    order_budget_twd: int
-
 class StrategyConfig(BaseModel):
+    """Raw strategy YAML. `parameters`/`exit` are validated against the per-strategy
+    models in src/strategy/registry.py (this module stays schema-agnostic)."""
     strategy_id: str
     strategy_version: str
-    parameters: StrategyParamConfig
+    parameters: dict
+    exit: Optional[dict] = None
 
 class BacktestConfig(BaseModel):
     initial_cash_twd: int
@@ -30,12 +26,25 @@ class ApprovalConfig(BaseModel):
     expiry_warning_sessions: int = 3
     allowlist_path: str = "config/issuer-allowlist.json"
     revoked_path: str = "config/revoked-approvals.json"
-    active_pointer_path: str = "artifacts/approvals/active-approval.json"
+    active_pointer_path: str = "artifacts/approvals/active-approval.json"  # legacy single pointer
+    active_map_path: str = "artifacts/approvals/active-approvals.json"      # strategy_id -> approval_id
     approvals_dir: str = "artifacts/approvals/"
+
+class PipelineConfig(BaseModel):
+    # Deterministic daily order: risk_exit runs first, then these entry strategies.
+    entry_strategies: list[str] = Field(default_factory=lambda: ["trend_breakout", "pullback_rebound"])
+    index_symbol: str = "TSE"
+
+class GlobalLimitsConfig(BaseModel):
+    max_open_positions: int = 8
+    max_daily_buy_value: int = 200000
+    max_new_positions_per_day: int = 2
 
 class TradingConfig(BaseModel):
     database_path: str = "data/app.db"
     approval: ApprovalConfig
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    global_limits: GlobalLimitsConfig = Field(default_factory=GlobalLimitsConfig)
 
 class SymbolConfig(BaseModel):
     code: str
@@ -44,6 +53,7 @@ class SymbolConfig(BaseModel):
 
 class UniverseConfig(BaseModel):
     symbols: list[SymbolConfig]
+    indices: list[SymbolConfig] = Field(default_factory=list)
 
 class CalendarOverridesConfig(BaseModel):
     open_dates: list[str] = Field(default_factory=list)

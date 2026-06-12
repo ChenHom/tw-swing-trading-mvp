@@ -77,10 +77,12 @@ class MarketBarValidator:
             errors.append(f"Low price must be positive, got {bar.low}")
         if bar.close <= 0:
             errors.append(f"Close price must be positive, got {bar.close}")
-        if bar.volume < 0:
-            errors.append(f"Volume cannot be negative, got {bar.volume}")
-        if bar.amount < 0:
-            errors.append(f"Amount cannot be negative, got {bar.amount}")
+        # Index bars have no tradable volume/amount; zero or missing is valid (§2.3).
+        if bar.instrument_type != "INDEX":
+            if bar.volume < 0:
+                errors.append(f"Volume cannot be negative, got {bar.volume}")
+            if bar.amount < 0:
+                errors.append(f"Amount cannot be negative, got {bar.amount}")
             
         if bar.high < max(bar.open, bar.close, bar.low):
             errors.append(f"High ({bar.high}) must be >= max(open={bar.open}, close={bar.close}, low={bar.low})")

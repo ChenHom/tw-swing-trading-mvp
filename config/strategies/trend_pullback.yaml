@@ -1,3 +1,5 @@
+# 已退役策略：不再產生新進場訊號（不在 pipeline.entry_strategies 中），
+# 存量倉位由 risk_exit 引擎依下方 exit: 參數管理至出清。檔案保留供損益歸因。
 strategy_id: trend_pullback
 strategy_version: 1.0.0
 
@@ -7,3 +9,12 @@ parameters:
   stop_loss_bps: 500
   take_profit_bps: 1200
   order_budget_twd: 20000
+
+exit:
+  fixed_stop_loss_bps: 500
+  trailing_stop_bps: 800
+  ma_break_period: 20
+  ma_break_buffer_bps: 0
+  ma_break_confirm_days: 2
+  time_stop_days: 20
+  time_stop_min_return_bps: 500

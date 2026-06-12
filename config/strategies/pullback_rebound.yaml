@@ -1,0 +1,18 @@
+strategy_id: pullback_rebound
+strategy_version: 1.0.0
+
+parameters:
+  ma_short: 20                    # 月線（回踩支撐）
+  ma_long: 60                     # 季線（趨勢偏多）
+  pullback_touch_buffer_bps: 200  # low <= sma_20 * 1.02
+  index_ma_period: 60             # 大盤多頭濾網
+  order_budget_twd: 20000
+
+exit:
+  fixed_stop_loss_bps: 500        # 固定停損 -5%（進場貼近支撐，停損較緊）
+  trailing_stop_bps: 800
+  ma_break_period: 20
+  ma_break_buffer_bps: 200        # 收盤低於 sma_20 * 0.98 才觸發（防進場/退出互咬）
+  ma_break_confirm_days: 2
+  time_stop_days: 20
+  time_stop_min_return_bps: 500
