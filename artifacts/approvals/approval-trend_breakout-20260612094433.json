@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "approval_id": "approval-trend_breakout-20260612094433",
+  "issuer_id": "manual-research-review",
+  "strategy": {
+    "strategy_id": "trend_breakout",
+    "strategy_version": "1.0.0",
+    "params_canonicalization": "strategy-params-v1",
+    "params_hash": "sha256:5f4ebbfe2406a2ab654d375717d7368fc06c26c6cc5dba069cf7b39f319d1a3c"
+  },
+  "permissions": {
+    "execution_modes": [
+      "backtest",
+      "simulation"
+    ],
+    "risk_increasing_actions": [
+      "open_long",
+      "increase_long"
+    ]
+  },
+  "limits": {
+    "currency": "TWD",
+    "max_order_value": 35000,
+    "max_daily_buy_value": 150000,
+    "max_open_positions": 5
+  },
+  "validity": {
+    "valid_from": "2026-06-12T09:44:33.051273+08:00",
+    "expires_at": "2026-12-31T23:59:59+08:00"
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "manifest-v1",
+    "digest": "sha256:dfec32e4101f2bd8898035384d2e9cdbae444431505703139c1d21d22bb563aa"
+  }
+}

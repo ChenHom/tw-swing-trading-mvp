@@ -46,7 +46,8 @@ def test_shioaji_market_data_provider_success(monkeypatch):
         mock_api.kbars.assert_called_once_with(
             mock_contract,
             start="2026-06-10",
-            end="2026-06-10"
+            end="2026-06-10",
+            timeout=60000
         )
         
         # Verify results
@@ -118,3 +119,43 @@ def test_shioaji_market_data_provider_empty_kbars():
         provider = ShioajiMarketDataProvider(api_key="test-api-key", secret_key="test-secret")
         bars = provider.fetch_kbars("2330", date(2026, 6, 10), date(2026, 6, 10))
         assert len(bars) == 0
+
+
+def test_shioaji_kbars_retries_on_transient_timeout(monkeypatch):
+    """登入後首筆 kbars 偶發逾時：逾時最多重試 3 次，其他例外直接拋出。"""
+    monkeypatch.setenv("IS_SIMULATION", "False")
+    ts_ns = 1781305200 * 1_000_000_000
+    mock_kbars = MagicMock()
+    mock_kbars.ts = [ts_ns]
+    mock_kbars.Open = [100.0]
+    mock_kbars.High = [101.5]
+    mock_kbars.Low = [99.5]
+    mock_kbars.Close = [101.0]
+    mock_kbars.Volume = [10]
+    mock_kbars.Amount = [1000.0]
+
+    with patch("shioaji.Shioaji") as mock_sj_class, patch("time.sleep"):
+        mock_api = MagicMock()
+        mock_sj_class.return_value = mock_api
+        mock_contract = MagicMock()
+        mock_api.Contracts.Stocks = {"2330": mock_contract}
+
+        # 前兩次逾時，第三次成功
+        mock_api.kbars.side_effect = [TimeoutError("t1"), TimeoutError("t2"), mock_kbars]
+        provider = ShioajiMarketDataProvider(api_key="k", secret_key="s")
+        bars = provider.fetch_kbars("2330", date(2026, 6, 10), date(2026, 6, 10))
+        assert len(bars) == 1
+        assert mock_api.kbars.call_count == 3
+
+    with patch("shioaji.Shioaji") as mock_sj_class, patch("time.sleep"):
+        mock_api = MagicMock()
+        mock_sj_class.return_value = mock_api
+        mock_api.Contracts.Stocks = {"2330": MagicMock()}
+
+        # 連續逾時 3 次後拋出
+        mock_api.kbars.side_effect = TimeoutError("always")
+        provider = ShioajiMarketDataProvider(api_key="k", secret_key="s")
+        import pytest as _pytest
+        with _pytest.raises(TimeoutError):
+            provider.fetch_kbars("2330", date(2026, 6, 10), date(2026, 6, 10))
+        assert mock_api.kbars.call_count == 3

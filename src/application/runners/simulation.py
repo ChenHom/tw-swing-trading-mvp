@@ -349,7 +349,16 @@ class DailySimulationRunner:
                 account_id, strategy_id, symbol, as_of_date.isoformat(), bar.close
             )
 
-    def sync_market_data(self, sync_date: date, symbol_specs: list) -> bool:
+    def sync_market_data(
+        self, sync_date: date, symbol_specs: list, skip_missing_symbols: bool = False
+    ) -> bool:
+        """同步指定日期的日 K。
+
+        skip_missing_symbols=False（每日流程）：任一檔缺資料即視為整日未完成，
+        交由 WAITING_MARKET_DATA 機制處理。
+        skip_missing_symbols=True（歷史回補）：個別商品缺資料（如尚未上市的 ETF）
+        僅跳過該檔，不放棄整個日期，避免阻斷排在後面的指數同步。
+        """
         aggregator = DailyBarAggregator()
         validator = MarketBarValidator()
 
@@ -358,6 +367,9 @@ class DailySimulationRunner:
             symbol = spec["code"]
             bars = self.market_provider.fetch_kbars(symbol, sync_date, sync_date)
             if not bars:
+                if skip_missing_symbols:
+                    print(f"  [skip] {symbol}: no data on {sync_date}")
+                    continue
                 return False
 
             # Simple dummy fetch time and checksum
@@ -376,6 +388,9 @@ class DailySimulationRunner:
                 raw_payload_checksum=checksum
             )
             if not daily_bar:
+                if skip_missing_symbols:
+                    print(f"  [skip] {symbol}: aggregation produced no bar on {sync_date}")
+                    continue
                 return False
 
             validator.validate(daily_bar)

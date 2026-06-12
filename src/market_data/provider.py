@@ -111,12 +111,23 @@ class ShioajiMarketDataProvider:
         if not contract:
             raise ValueError(f"Contract not found for symbol: {symbol}")
             
-        kbars = api.kbars(
-            contract,
-            start=start_date.isoformat(),
-            end=end_date.isoformat()
-        )
-        
+        # 登入後首筆請求偶發逾時（觀察於長時間回補），逾時重試但其他錯誤（如 TokenError）直接拋出
+        import time as _time
+        kbars = None
+        for attempt in range(3):
+            try:
+                kbars = api.kbars(
+                    contract,
+                    start=start_date.isoformat(),
+                    end=end_date.isoformat(),
+                    timeout=60000
+                )
+                break
+            except TimeoutError:
+                if attempt == 2:
+                    raise
+                _time.sleep(2)
+
         if not kbars or len(kbars.ts) == 0:
             return []
             

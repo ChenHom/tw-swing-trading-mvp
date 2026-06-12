@@ -152,13 +152,14 @@ def cmd_market_backfill(args):
     sessions = calendar.sessions_between(start_date, today_dt)
     print(f"Backfilling {len(sessions)} trading sessions from {start_date} to {today_dt}...")
 
-    # Stocks + index symbols (index needed for the market-regime MA filters)
-    sync_specs = list(settings.universe.symbols) + list(settings.universe.indices)
+    # Indices first (market-regime MA filters depend on them), then stocks.
+    # skip_missing_symbols: 上市前無資料的個股/ETF 只跳過該檔，不阻斷整個日期。
+    sync_specs = list(settings.universe.indices) + list(settings.universe.symbols)
 
     success_count = 0
     for s_date in sessions:
         print(f"Syncing market data for {s_date}...")
-        if runner.sync_market_data(s_date, sync_specs):
+        if runner.sync_market_data(s_date, sync_specs, skip_missing_symbols=True):
             success_count += 1
             
     print(f"Successfully sync'd {success_count} / {len(sessions)} days.")

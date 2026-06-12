@@ -3,7 +3,7 @@ import sqlite3
 from datetime import date, datetime
 from unittest.mock import MagicMock
 from src.contracts.models import (
-    MarketBar, TrendPullbackParams, StrategyApprovalManifest, DailySignalBundle, SignalItem, StrategyInfo
+    MarketBar, MinuteBar, TrendPullbackParams, StrategyApprovalManifest, DailySignalBundle, SignalItem, StrategyInfo
 )
 from src.calendar.calendar import ExchangeCalendarsTradingCalendar, TradingCalendar
 from src.portfolio.db import init_db, get_db_connection
@@ -164,6 +164,49 @@ def test_run_daily_waiting_market_data(temp_db):
     assert row["status"] == "WAITING"
     assert row["market_sync_status"] == "PENDING"
     assert row["last_error_code"] == "WAITING_MARKET_DATA"
+
+def test_sync_market_data_skip_missing_symbols(temp_db):
+    """回補容錯：個別商品無資料（如尚未上市的 ETF）只跳過該檔，
+    不放棄整個日期，排在後面的指數仍要寫入；嚴格模式則整日失敗。"""
+    from src.market_data.provider import FixtureMarketDataProvider
+    from datetime import timezone
+
+    calendar = ExchangeCalendarsTradingCalendar()
+    provider = FixtureMarketDataProvider()
+    sync_date = date(2026, 6, 10)
+    bars = [
+        MinuteBar(
+            time=datetime(2026, 6, 10, 9, 0, 0, tzinfo=timezone.utc),
+            open=100.0, high=101.0, low=99.0, close=100.5,
+            volume=1000, amount=100500.0
+        )
+    ]
+    provider.set_fixture_data("2330", bars)
+    provider.set_fixture_data("TSE", bars)
+    # "0099NEW" 故意不設 fixture：模擬上市前無資料的商品
+
+    repo = SqliteMarketBarRepository(temp_db)
+    runner = DailySimulationRunner(
+        db_conn=temp_db, calendar=calendar, market_provider=provider,
+        market_repo=repo, projection=PortfolioProjection(temp_db),
+        allowed_issuers=[], revoked_approvals=[]
+    )
+    specs = [
+        {"code": "2330", "exchange": "TSE", "instrument_type": "STOCK"},
+        {"code": "0099NEW", "exchange": "TSE", "instrument_type": "STOCK"},
+        {"code": "TSE", "exchange": "TSE", "instrument_type": "INDEX"},
+    ]
+
+    # 嚴格模式（每日流程）：缺一檔即整日失敗，TSE 不會被寫入
+    assert runner.sync_market_data(sync_date, specs) is False
+    assert repo.find("TSE", sync_date) is None
+
+    # 容錯模式（歷史回補）：跳過缺資料的商品，其餘照常寫入
+    assert runner.sync_market_data(sync_date, specs, skip_missing_symbols=True) is True
+    assert repo.find("2330", sync_date) is not None
+    assert repo.find("TSE", sync_date) is not None
+    assert repo.find("0099NEW", sync_date) is None
+
 
 def test_run_daily_idempotency_already_completed(temp_db):
     calendar = ExchangeCalendarsTradingCalendar()

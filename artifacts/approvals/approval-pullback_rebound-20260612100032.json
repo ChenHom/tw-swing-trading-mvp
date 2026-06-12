@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "approval_id": "approval-pullback_rebound-20260612100032",
+  "issuer_id": "manual-research-review",
+  "strategy": {
+    "strategy_id": "pullback_rebound",
+    "strategy_version": "1.0.0",
+    "params_canonicalization": "strategy-params-v1",
+    "params_hash": "sha256:ff1187f1de475f668b622db35b01cc02e9a3ccf07db630467c18700c3e3e7f9a"
+  },
+  "permissions": {
+    "execution_modes": [
+      "backtest",
+      "simulation"
+    ],
+    "risk_increasing_actions": [
+      "open_long",
+      "increase_long"
+    ]
+  },
+  "limits": {
+    "currency": "TWD",
+    "max_order_value": 35000,
+    "max_daily_buy_value": 150000,
+    "max_open_positions": 5
+  },
+  "validity": {
+    "valid_from": "2026-06-12T00:00:00+08:00",
+    "expires_at": "2026-12-31T23:59:59+08:00"
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "manifest-v1",
+    "digest": "sha256:0abff5e2dd80d906cb8ea14cd464950773fd8c35c933e00d52a8502e63611c97"
+  }
+}
