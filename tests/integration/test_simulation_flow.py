@@ -11,7 +11,10 @@ from src.market_data.repository import SqliteMarketBarRepository
 from src.portfolio.projection import PortfolioProjection
 from src.portfolio.ledger import PortfolioLedger
 from src.market_data.provider import FixtureMarketDataProvider
-from src.application.runners.simulation import DailySimulationRunner
+from src.application.runners.simulation import DailySimulationRunner, EntryStrategySpec
+from src.strategy.trend_pullback import TrendPullbackStrategy
+from src.strategy.registry import StrategyDefinition
+from src.trading.allocator import GlobalLimits
 
 @pytest.fixture
 def temp_db(tmp_path):
@@ -112,17 +115,32 @@ def test_daily_simulation_flow_integration(temp_db):
     manifest_dict["integrity"]["digest"] = f"sha256:{digest}"
     manifest = StrategyApprovalManifest(**manifest_dict)
     
+    entry_spec = EntryStrategySpec(
+        definition=StrategyDefinition(
+            strategy_id="trend_pullback",
+            strategy_version="1.0.0",
+            params=params,
+            exit_params=None,
+            params_hash=f"sha256:{params_hash}",
+            order_budget_twd=300000
+        ),
+        strategy=TrendPullbackStrategy(params, ["2330"])
+    )
     runner = DailySimulationRunner(
         db_conn=temp_db, calendar=calendar, market_provider=provider,
         market_repo=repo, projection=projection,
         allowed_issuers=["manual-research-review"], revoked_approvals=[],
-        manifest=manifest, strategy_budget=300000, slippage_bps=10
+        manifests={"trend_pullback": manifest},
+        entry_specs=[entry_spec],
+        exit_definitions={},
+        global_limits=GlobalLimits(max_open_positions=5, max_daily_buy_value=500000, max_new_positions_per_day=2),
+        slippage_bps=10
     )
     
     # Run Day 1 to 4:
     # Insufficient history, no signals
     for d in [date(2026, 6, 3), date(2026, 6, 4), date(2026, 6, 5), date(2026, 6, 8)]:
-        status = runner.run_daily(d, account_id, "trend_pullback", params, ["2330"])
+        status = runner.run_daily(d, account_id, ["2330"])
         assert status == "COMPLETED"
     
     # Run Day 5: 2026-06-09
@@ -135,7 +153,7 @@ def test_daily_simulation_flow_integration(temp_db):
     # 2. 108.0 > 103.2 (ma_short > ma_long) -> True
     # 3. 106.0 < 108.0 (close < ma_short) -> True
     # Triggers BUY signal targeting 2026-06-10
-    status = runner.run_daily(date(2026, 6, 9), account_id, "trend_pullback", params, ["2330"])
+    status = runner.run_daily(date(2026, 6, 9), account_id, ["2330"])
     assert status == "COMPLETED"
     
     # Check that bundle targeting 2026-06-10 is in database
@@ -156,7 +174,7 @@ def test_daily_simulation_flow_integration(temp_db):
     # Run Day 6: 2026-06-10
     # Will sync Day 6, execute pending BUY bundle at 107.0 + 10bps slippage = 107.107 (rounded price x 10000 = 1071070)
     # Budget = 300,000 TWD. Shares = 300000 // 107.107 = 2800 shares (整張 2000, 零股 800)
-    status = runner.run_daily(date(2026, 6, 10), account_id, "trend_pullback", params, ["2330"])
+    status = runner.run_daily(date(2026, 6, 10), account_id, ["2330"])
     assert status == "COMPLETED"
     
     # Verify fill records

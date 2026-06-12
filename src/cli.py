@@ -12,7 +12,7 @@ from typing import Optional
 from src.config import AppSettings
 from src.portfolio.db import init_db, get_db_connection
 from src.market_data.repository import SqliteMarketBarRepository
-from src.portfolio.projection import PortfolioProjection
+from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
 from src.portfolio.ledger import PortfolioLedger
 from src.contracts.models import (
     TrendPullbackParams, StrategyApprovalManifest, StrategyInfo, LimitsInfo,
@@ -21,12 +21,14 @@ from src.contracts.models import (
 from src.calendar.calendar import ExchangeCalendarsTradingCalendar
 from src.market_data.provider import ShioajiMarketDataProvider
 from src.application.runners.backtest import BacktestRunner
-from src.application.runners.simulation import DailySimulationRunner
+from src.application.runners.simulation import DailySimulationRunner, EntryStrategySpec
 from src.approval.validator import ManifestValidator
+from src.approval.store import load_active_manifests, activate_manifest, deactivate_strategy
 from src.strategy.canonicalizer import StrategyParameterCanonicalizer
-from src.strategy.trend_pullback import TrendPullbackStrategy
+from src.strategy import registry as strategy_registry
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot, PositionSnapshot
 from src.trading.planner import OrderPlanner, PortfolioState
+from src.trading.allocator import GlobalLimits
 from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 
@@ -86,7 +88,8 @@ STOCK_NAMES = {
     "2360": "致茂",
     "3090": "日電貿",
     "3691": "碩禾",
-    "6805": "富世達"
+    "6805": "富世達",
+    "TSE": "加權指數"
 }
 
 def sign_manifest(manifest_dict: dict) -> dict:
@@ -107,27 +110,27 @@ def sign_manifest(manifest_dict: dict) -> dict:
     dump_dict["integrity"]["digest"] = f"sha256:{calculated_digest}"
     return dump_dict
 
-def load_active_manifest(settings: AppSettings) -> Optional[StrategyApprovalManifest]:
-    active_pointer_path = Path(settings.trading.approval.active_pointer_path)
-    if not active_pointer_path.exists():
-        return None
-    with open(active_pointer_path, "r", encoding="utf-8") as f:
-        pointer = json.load(f)
-    
-    approval_id = pointer.get("approval_id")
-    if not approval_id:
-        return None
-        
-    manifest_path = Path(settings.trading.approval.approvals_dir) / f"{approval_id}.json"
-    if not manifest_path.exists():
-        # Fallback to checking active pointer path parent folder or custom name
-        manifest_path = Path("artifacts/approvals") / f"{approval_id}.json"
-    if not manifest_path.exists():
-        return None
-        
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest_dict = json.load(f)
-    return StrategyApprovalManifest(**manifest_dict)
+def build_global_limits(settings: AppSettings) -> GlobalLimits:
+    g = settings.trading.global_limits
+    return GlobalLimits(
+        max_open_positions=g.max_open_positions,
+        max_daily_buy_value=g.max_daily_buy_value,
+        max_new_positions_per_day=g.max_new_positions_per_day
+    )
+
+
+def build_pipeline(settings: AppSettings, universe_symbols: list[str]):
+    """Load entry strategy specs (in configured order) and exit-managed definitions."""
+    index_symbol = settings.trading.pipeline.index_symbol
+    entry_specs = []
+    for sid in settings.trading.pipeline.entry_strategies:
+        defn = strategy_registry.load_strategy_definition(settings, sid)
+        entry_specs.append(EntryStrategySpec(
+            definition=defn,
+            strategy=strategy_registry.build_entry_strategy(defn, universe_symbols, index_symbol)
+        ))
+    exit_definitions = strategy_registry.load_exit_managed_definitions(settings)
+    return entry_specs, exit_definitions
 
 # Subcommand Handlers
 def cmd_market_backfill(args):
@@ -145,16 +148,17 @@ def cmd_market_backfill(args):
     
     today_dt = date.today()
     start_date = today_dt - timedelta(days=args.calendar_days)
-    
+
     sessions = calendar.sessions_between(start_date, today_dt)
     print(f"Backfilling {len(sessions)} trading sessions from {start_date} to {today_dt}...")
-    
-    symbols = [s.code for s in settings.universe.symbols]
-    
+
+    # Stocks + index symbols (index needed for the market-regime MA filters)
+    sync_specs = list(settings.universe.symbols) + list(settings.universe.indices)
+
     success_count = 0
     for s_date in sessions:
         print(f"Syncing market data for {s_date}...")
-        if runner.sync_market_data(s_date, symbols):
+        if runner.sync_market_data(s_date, sync_specs):
             success_count += 1
             
     print(f"Successfully sync'd {success_count} / {len(sessions)} days.")
@@ -190,9 +194,10 @@ def cmd_market_sync(args):
     sync_date = date.fromisoformat(args.date) if args.date else date.today()
     strategy_symbols = [s.code for s in settings.universe.symbols]
     symbols = get_valuation_universe(conn, strategy_symbols)
-    
+    sync_specs = symbols + list(settings.universe.indices)
+
     print(f"Syncing market data for {sync_date}...")
-    if runner.sync_market_data(sync_date, symbols):
+    if runner.sync_market_data(sync_date, sync_specs):
         print(f"Market data for {sync_date} sync'd successfully.")
     else:
         print(f"Failed to sync market data for {sync_date}.")
@@ -209,8 +214,8 @@ def cmd_market_validate(args):
     sessions = calendar.sessions_between(today_dt - timedelta(days=args.last_sessions * 2), today_dt)
     sessions = sessions[-args.last_sessions:]
     
-    symbols = [s.code for s in settings.universe.symbols]
-    
+    symbols = [s.code for s in settings.universe.symbols] + [s.code for s in settings.universe.indices]
+
     print(f"Validating last {len(sessions)} trading sessions...")
     missing_count = 0
     for s in sessions:
@@ -227,48 +232,46 @@ def cmd_market_validate(args):
         sys.exit(1)
     conn.close()
 
+def _resolve_strategy_id_from_path(settings, path_or_id: str) -> str:
+    """Accept either a strategy_id or a YAML path/filename; return the strategy_id."""
+    candidate = Path(path_or_id)
+    if candidate.suffix in (".yaml", ".yml"):
+        return candidate.stem
+    return path_or_id
+
+
 def cmd_strategy_inspect(args):
     settings = get_settings()
-    # If file name, check in strategies directory
-    filepath = Path(args.config_path)
-    if not filepath.exists():
-        filepath = Path(settings.config_dir) / "strategies" / args.config_path
-    if not filepath.exists():
-        print(f"Strategy config file not found: {args.config_path}")
+    strategy_id = _resolve_strategy_id_from_path(settings, args.config_path)
+    try:
+        defn = strategy_registry.load_strategy_definition(settings, strategy_id)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"載入策略設定失敗: {e}")
         sys.exit(1)
-        
-    import yaml
-    with open(filepath, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    
-    strategy_id = data["strategy_id"]
-    strategy_version = data["strategy_version"]
-    params = TrendPullbackParams(**data["parameters"])
-    params_hash = StrategyParameterCanonicalizer.compute_hash(params)
-    
-    print(f"strategy_id: {strategy_id}")
-    print(f"strategy_version: {strategy_version}")
+
+    print(f"strategy_id: {defn.strategy_id}")
+    print(f"strategy_version: {defn.strategy_version}")
     print("canonicalization: strategy-params-v1")
-    print(f"params_hash: {params_hash}")
+    print(f"params_hash: {defn.params_hash}  (含 exit: 區塊)")
+    print(f"order_budget_twd: {defn.order_budget_twd}")
+    if defn.exit_params:
+        print(f"exit: {defn.exit_params.model_dump()}")
+    else:
+        print("exit: 無（不受 risk_exit 監控）")
 
 def cmd_approval_create(args):
     settings = get_settings()
-    filepath = Path(args.strategy)
-    if not filepath.exists():
-        filepath = Path(settings.config_dir) / "strategies" / args.strategy
-    if not filepath.exists():
-        print(f"Strategy config file not found: {args.strategy}")
+    strategy_id_arg = _resolve_strategy_id_from_path(settings, args.strategy)
+    try:
+        defn = strategy_registry.load_strategy_definition(settings, strategy_id_arg)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"載入策略設定失敗: {e}")
         sys.exit(1)
-        
-    import yaml
-    with open(filepath, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-        
-    strategy_id = data["strategy_id"]
-    strategy_version = data["strategy_version"]
-    params = TrendPullbackParams(**data["parameters"])
-    params_hash = StrategyParameterCanonicalizer.compute_hash(params)
-    
+
+    strategy_id = defn.strategy_id
+    strategy_version = defn.strategy_version
+    params_hash = defn.params_hash
+
     valid_from = args.valid_from if args.valid_from else datetime.now(timezone.utc).astimezone().isoformat()
     
     manifest_dict = {
@@ -339,55 +342,60 @@ def cmd_approval_activate(args):
     if not filepath.exists():
         print(f"Manifest file not found: {args.manifest_path}")
         sys.exit(1)
-        
+
     with open(filepath, "r", encoding="utf-8") as f:
         manifest_dict = json.load(f)
     manifest = StrategyApprovalManifest(**manifest_dict)
-    
-    # Save manifest into approvals dir
-    approvals_dir = Path(settings.trading.approval.approvals_dir)
-    approvals_dir.mkdir(parents=True, exist_ok=True)
-    stored_manifest_path = approvals_dir / f"{manifest.approval_id}.json"
-    with open(stored_manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest_dict, f, indent=2, ensure_ascii=False)
-        
-    # Atomic rename active pointer file
-    pointer_path = Path(settings.trading.approval.active_pointer_path)
-    pointer_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    temp_pointer_path = pointer_path.with_suffix(".tmp")
-    with open(temp_pointer_path, "w", encoding="utf-8") as f:
-        json.dump({
-            "approval_id": manifest.approval_id,
-            "activated_at": datetime.now(timezone.utc).astimezone().isoformat()
-        }, f, indent=2)
-        
-    os.replace(temp_pointer_path, pointer_path)
-    print(f"Manifest {manifest.approval_id} activated.")
+
+    activate_manifest(settings, manifest, manifest_dict)
+    print(f"Manifest {manifest.approval_id} activated for strategy '{manifest.strategy.strategy_id}'.")
+
+def cmd_approval_deactivate(args):
+    settings = get_settings()
+    if deactivate_strategy(settings, args.strategy):
+        print(f"策略 '{args.strategy}' 的有效授權已停用。該策略的 BUY 訊號將被系統阻擋（SELL 不受影響）。")
+    else:
+        print(f"策略 '{args.strategy}' 目前沒有有效授權，無需停用。")
+
+def cmd_approval_list(args):
+    settings = get_settings()
+    manifests = load_active_manifests(settings)
+    if not manifests:
+        print("目前沒有任何策略擁有有效授權。")
+        return
+    runner = _make_preflight_runner(settings)
+    print(f"{'策略':<20} {'授權識別碼':<45} {'到期日':<28} 狀態")
+    print("-" * 110)
+    for strategy_id in sorted(manifests):
+        m = manifests[strategy_id]
+        preflight = runner.get_preflight_status(date.today(), m)
+        print(f"{strategy_id:<20} {m.approval_id:<45} {m.validity.expires_at:<28} {preflight}")
+
+def _make_preflight_runner(settings) -> DailySimulationRunner:
+    calendar = ExchangeCalendarsTradingCalendar()
+    return DailySimulationRunner(
+        db_conn=None, calendar=calendar, market_provider=None,
+        market_repo=None, projection=None,
+        allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals,
+        expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions
+    )
 
 def cmd_approval_status(args):
     settings = get_settings()
-    manifest = load_active_manifest(settings)
-    if not manifest:
-        print("Status: MISSING (No active manifest pointer found)")
+    manifests = load_active_manifests(settings)
+    if not manifests:
+        print("Status: MISSING (No active manifest found for any strategy)")
         return
-        
-    calendar = ExchangeCalendarsTradingCalendar()
-    mock_provider = None
-    conn = None
-    # Just temporary objects to init runner
-    runner = DailySimulationRunner(
-        db_conn=conn, calendar=calendar, market_provider=mock_provider,
-        market_repo=None, projection=None,
-        allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals,
-        manifest=manifest, expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions
-    )
-    
-    preflight = runner.get_preflight_status(date.today())
-    print(f"approval_id: {manifest.approval_id}")
-    print(f"valid_from: {manifest.validity.valid_from}")
-    print(f"expires_at: {manifest.validity.expires_at}")
-    print(f"Preflight status for today: {preflight}")
+
+    runner = _make_preflight_runner(settings)
+    for strategy_id in sorted(manifests):
+        manifest = manifests[strategy_id]
+        preflight = runner.get_preflight_status(date.today(), manifest)
+        print(f"[{strategy_id}]")
+        print(f"  approval_id: {manifest.approval_id}")
+        print(f"  valid_from: {manifest.validity.valid_from}")
+        print(f"  expires_at: {manifest.validity.expires_at}")
+        print(f"  Preflight status for today: {preflight}")
 
 def cmd_account_init(args):
     settings = get_settings()
@@ -442,37 +450,51 @@ def cmd_backtest_run(args):
     settings = get_settings()
     init_db(settings.trading.database_path)
     conn = get_db_connection(settings.trading.database_path)
-    
-    manifest = load_active_manifest(settings)
+
+    strategy_id = args.strategy
+    manifests = load_active_manifests(settings)
+    manifest = manifests.get(strategy_id)
     if not manifest:
-        print("Error: No active manifest activated. Run 'approval activate' first.")
+        print(f"Error: 策略 '{strategy_id}' 無有效授權。請先執行 'approval create' + 'approval activate'。")
         sys.exit(1)
-        
+
+    try:
+        defn = strategy_registry.load_strategy_definition(settings, strategy_id)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"載入策略設定失敗: {e}")
+        sys.exit(1)
+
     repo = SqliteMarketBarRepository(conn)
     projection = PortfolioProjection(conn)
     calendar = ExchangeCalendarsTradingCalendar()
-    
+    symbols = [s.code for s in settings.universe.symbols]
+    index_symbol = settings.trading.pipeline.index_symbol
+
+    entry_spec = EntryStrategySpec(
+        definition=defn,
+        strategy=strategy_registry.build_entry_strategy(defn, symbols, index_symbol)
+    )
+    exit_definitions = strategy_registry.load_exit_managed_definitions(settings)
+
     runner = BacktestRunner(
         db_conn=conn, calendar=calendar, market_repo=repo, projection=projection,
         allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals,
-        manifest=manifest, strategy_budget=manifest.limits.max_order_value,
-        slippage_bps=settings.backtest.slippage_bps
+        manifest=manifest, strategy_budget=defn.order_budget_twd,
+        slippage_bps=settings.backtest.slippage_bps,
+        exit_definitions=exit_definitions,
+        index_symbols=list(settings.universe.indices)
     )
-    
+
     start_date = date.fromisoformat(args.start)
     end_date = date.fromisoformat(args.to)
-    symbols = [s.code for s in settings.universe.symbols]
-    
-    strategy_config = settings.load_strategy_config("trend_pullback")
-    params = TrendPullbackParams(**strategy_config.parameters.model_dump())
-    
-    print(f"Running backtest from {start_date} to {end_date}...")
+
+    print(f"Running backtest [{strategy_id}] from {start_date} to {end_date}...")
     result = runner.run(
         start_date=start_date,
         end_date=end_date,
         initial_cash=args.initial_cash,
         universe_symbols=symbols,
-        strategy_params=params
+        entry_spec=entry_spec
     )
     
     stats = result["statistics"]
@@ -501,52 +523,56 @@ def cmd_simulation_run_daily(args):
     
     try:
         conn = get_db_connection(settings.trading.database_path)
-        
-        manifest = load_active_manifest(settings)
-        if not manifest:
-            print("Warning: No active manifest found. Simulation will run using a dummy manifest.")
-            
+
+        manifests = load_active_manifests(settings)
+        symbols = [s.code for s in settings.universe.symbols]
+        try:
+            entry_specs, exit_definitions = build_pipeline(settings, symbols)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"載入策略管線失敗: {e}")
+            sys.exit(1)
+
         repo = SqliteMarketBarRepository(conn)
         projection = PortfolioProjection(conn)
         calendar = ExchangeCalendarsTradingCalendar()
         provider = ShioajiMarketDataProvider(settings.shioaji_api_key, settings.shioaji_secret_key)
-        
+
         runner = DailySimulationRunner(
             db_conn=conn, calendar=calendar, market_provider=provider,
             market_repo=repo, projection=projection,
             allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals,
-            manifest=manifest, slippage_bps=settings.backtest.slippage_bps,
+            manifests=manifests,
+            entry_specs=entry_specs,
+            exit_definitions=exit_definitions,
+            global_limits=build_global_limits(settings),
+            index_symbols=list(settings.universe.indices),
+            slippage_bps=settings.backtest.slippage_bps,
             expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions
         )
-        
+
         run_date = date.fromisoformat(args.date) if args.date else date.today()
-        symbols = [s.code for s in settings.universe.symbols]
-        
-        strategy_config = settings.load_strategy_config("trend_pullback")
-        params = TrendPullbackParams(**strategy_config.parameters.model_dump())
-        
         account_id = resolve_account_id(conn, args.account)
-        
-        # Manifest preflight check
-        preflight_status = runner.get_preflight_status(run_date)
+
+        # Per-strategy manifest preflight check
         print("--- 策略授權 preflight 查驗 ---")
-        print(f"授權識別碼 (Approval ID): {manifest.approval_id if manifest else '無'}")
-        print(f"授權狀態 (Preflight Status): {preflight_status}")
-        if preflight_status in ["EXPIRED", "REVOKED", "MISSING", "INVALID"]:
-            print(f"警告：授權狀態異常 ({preflight_status})！新的買入委託 (BUY) 將被系統安全阻擋。")
-        elif preflight_status == "EXPIRING_SOON":
-            print(f"提示：授權即將過期 ({preflight_status})。請儘速更新策略授權清單。")
+        for spec in entry_specs:
+            sid = spec.definition.strategy_id
+            manifest = manifests.get(sid)
+            preflight_status = runner.get_preflight_status(run_date, manifest)
+            print(f"[{sid}] 授權: {manifest.approval_id if manifest else '無'} | 狀態: {preflight_status}")
+            if preflight_status in ["EXPIRED", "REVOKED", "MISSING", "INVALID"]:
+                print(f"  警告：授權狀態異常 ({preflight_status})！該策略的買入委託 (BUY) 將被阻擋；風險退出 (SELL) 不受影響。")
+            elif preflight_status == "EXPIRING_SOON":
+                print(f"  提示：授權即將過期。請儘速更新策略授權清單。")
         print("-------------------------------\n")
-        
-        print(f"Running daily simulation workflow for {run_date}...")
+
+        print(f"Running daily multi-strategy simulation workflow for {run_date}...")
         status = runner.run_daily(
             run_date=run_date,
             account_id=account_id,
-            strategy_id="trend_pullback",
-            strategy_params=params,
             universe_symbols=symbols
         )
-        
+
         print(f"Simulation runner finished with status: {status}")
         if status == "FAILED":
             sys.exit(1)
@@ -616,81 +642,50 @@ def cmd_simulation_execute_pending(args):
     conn = get_db_connection(settings.trading.database_path)
     repo = SqliteMarketBarRepository(conn)
     projection = PortfolioProjection(conn)
-    manifest = load_active_manifest(settings)
-    
+    manifests = load_active_manifests(settings)
+    calendar = ExchangeCalendarsTradingCalendar()
+
     run_date = date.fromisoformat(args.execution_date) if args.execution_date else date.today()
-    
-    # Query pending signal bundle
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT bundle_id, run_id, approval_id, strategy_id, strategy_version, params_hash, signal_date, target_execution_date, market_data_cutoff
-        FROM signal_bundles WHERE target_execution_date = ?
-        ORDER BY created_at DESC LIMIT 1
-        """,
-        (run_date.isoformat(),)
+
+    # Reuse the orchestrator's bundle loader (all bundles targeting run_date)
+    loader = DailySimulationRunner(
+        db_conn=conn, calendar=calendar, market_provider=None,
+        market_repo=repo, projection=projection,
+        allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals
     )
-    row = cursor.fetchone()
-    if not row:
+    bundles = loader._find_bundles_for_execution(run_date)
+    if not bundles:
         print(f"No pending signal bundle found targeting execution date {run_date}")
         conn.close()
         return
-        
-    bundle_id = row["bundle_id"]
-    cursor.execute(
-        "SELECT signal_id, symbol, action, reference_price, reason_code, user_override FROM signal_items WHERE bundle_id = ?",
-        (bundle_id,)
-    )
-    items = []
-    for item_row in cursor.fetchall():
-        if item_row["user_override"] == "REJECTED":
-            continue
-        items.append(
-            SignalItem(
-                signal_id=item_row["signal_id"],
-                symbol=item_row["symbol"],
-                action=item_row["action"],
-                reference_price=float(item_row["reference_price"] / 10000.0),
-                reason_code=item_row["reason_code"]
-            )
-        )
-        
-    strategy_info = StrategyInfo(
-        strategy_id=row["strategy_id"],
-        strategy_version=row["strategy_version"],
-        params_canonicalization="strategy-params-v1",
-        params_hash=row["params_hash"]
-    )
-    bundle = DailySignalBundle(
-        schema_version="1.0",
-        bundle_id=bundle_id,
-        run_id=row["run_id"],
-        approval_id=row["approval_id"],
-        strategy=strategy_info,
-        signal_date=date.fromisoformat(row["signal_date"]),
-        target_execution_date=date.fromisoformat(row["target_execution_date"]),
-        market_data_cutoff=date.fromisoformat(row["market_data_cutoff"]),
-        signals=items
-    )
-    
+
     account_id = resolve_account_id(conn, args.account)
-    
+
+    strategy_budgets = {}
+    for sid in {b.strategy.strategy_id for b in bundles}:
+        try:
+            strategy_budgets[sid] = strategy_registry.load_strategy_definition(settings, sid).order_budget_twd
+        except (FileNotFoundError, ValueError):
+            pass
+
     context = ExecutionContext(
         run_id=f"exec-only-{datetime.now().strftime('%H%M%S')}",
         run_type="DAILY_SIMULATION",
-        as_of_date=bundle.signal_date,
+        as_of_date=bundles[0].signal_date,
         execution_date=run_date,
         account_id=account_id
     )
     engine = TradeExecutionEngine(
         db_conn=conn, market_repo=repo, projection=projection,
         allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals,
-        manifest=manifest, strategy_budget=manifest.limits.max_order_value if manifest else 30000,
+        manifests=manifests, strategy_budgets=strategy_budgets,
+        global_limits=build_global_limits(settings),
+        pipeline_order=settings.trading.pipeline.entry_strategies,
         slippage_bps=settings.backtest.slippage_bps
     )
-    
-    print(f"Executing pending bundle {bundle_id} on {run_date}...")
-    res = engine.execute_bundle(context, bundle)
+
+    print(f"Executing {len(bundles)} pending bundle(s) on {run_date}: {[b.bundle_id for b in bundles]}")
+    res = engine.execute_bundles(context, bundles)
     print(f"Execution result status: {res['status']}")
     conn.close()
 
@@ -700,59 +695,68 @@ def cmd_signal_generate(args):
     repo = SqliteMarketBarRepository(conn)
     projection = PortfolioProjection(conn)
     calendar = ExchangeCalendarsTradingCalendar()
-    manifest = load_active_manifest(settings)
-    
+    manifests = load_active_manifests(settings)
+
     as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else date.today()
     symbols = [s.code for s in settings.universe.symbols]
-    
-    strategy_config = settings.load_strategy_config("trend_pullback")
-    params = TrendPullbackParams(**strategy_config.parameters.model_dump())
-    
-    strategy = TrendPullbackStrategy(params=params, universe_symbols=symbols)
+    strategy_id = args.strategy
+    index_symbol = settings.trading.pipeline.index_symbol
+
+    try:
+        defn = strategy_registry.load_strategy_definition(settings, strategy_id)
+        strategy = strategy_registry.build_entry_strategy(defn, symbols, index_symbol)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"載入策略失敗: {e}")
+        sys.exit(1)
+
     pit_data = repo.as_of(as_of_date)
-    
-    # Verify complete data
+
+    # Verify complete data (stocks + index filter data)
     for symbol in symbols:
         if not repo.find(symbol, as_of_date):
             print(f"Error: Missing market bar for {symbol} on {as_of_date}. Run 'market sync' first.")
             sys.exit(1)
-            
-    # Gather portfolio snapshot
+    for spec in settings.universe.indices:
+        if not repo.find(spec.code, as_of_date):
+            print(f"Error: Missing index bar for {spec.code} on {as_of_date}. Run 'market sync' first.")
+            sys.exit(1)
+
+    # Gather per-strategy portfolio snapshot (entry strategies see only their own lots)
     account_id = resolve_account_id(conn, args.account)
     available_cash = projection.get_cash_balance(account_id)
     positions = {}
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT symbol, SUM(quantity) as qty, AVG(price) as avg_price, MAX(is_long_term) as is_long_term FROM position_lots WHERE account_id = ? GROUP BY symbol",
-        (account_id,)
-    )
-    for row in cursor.fetchall():
-        qty = row["qty"]
-        if qty > 0:
-            positions[row["symbol"]] = PositionSnapshot(
-                symbol=row["symbol"],
-                quantity=qty,
-                entry_price=int(row["avg_price"]),
-                is_long_term=bool(row["is_long_term"])
-            )
+    for (pos_sid, symbol), pos in projection.get_strategy_positions(account_id, include_long_term=True).items():
+        if pos_sid != strategy_id or pos["quantity"] <= 0:
+            continue
+        positions[symbol] = PositionSnapshot(
+            symbol=symbol,
+            quantity=pos["quantity"],
+            entry_price=pos["wavg_price"],
+            is_long_term=pos["is_long_term"]
+        )
     portfolio_snapshot = PortfolioSnapshot(available_cash=available_cash, positions=positions)
-    
+
+    manifest = manifests.get(strategy_id)
     sig_ctx = SignalGenerationContext(
         as_of_date=as_of_date,
-        strategy_id="trend_pullback",
-        strategy_version=manifest.strategy.strategy_version if manifest else "1.0.0",
+        strategy_id=strategy_id,
+        strategy_version=defn.strategy_version,
         run_id=f"manual-sig-{as_of_date.strftime('%Y%m%d')}",
-        approval_id=manifest.approval_id if manifest else "app-dummy",
-        params_hash=manifest.strategy.params_hash if manifest else "hash-dummy"
+        approval_id=manifest.approval_id if manifest else f"no-approval-{strategy_id}",
+        params_hash=defn.params_hash
     )
-    
-    print(f"Generating signals as of {as_of_date} close...")
+
+    print(f"Generating [{strategy_id}] signals as of {as_of_date} close...")
     new_bundle = strategy.generate(sig_ctx, pit_data, portfolio_snapshot)
-    
+
     target_execution_date = calendar.next_trading_day(as_of_date)
-    
-    # Save bundle
-    # Save via helper (reimplemented locally to avoid DailySimulationRunner requirement)
+
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM signal_bundles WHERE bundle_id = ?", (new_bundle.bundle_id,))
+    if cursor.fetchone():
+        print(f"Bundle {new_bundle.bundle_id} 已存在（冪等跳過）。")
+        conn.close()
+        return
     cursor.execute(
         """
         INSERT INTO signal_bundles (
@@ -771,13 +775,13 @@ def cmd_signal_generate(args):
         cursor.execute(
             """
             INSERT INTO signal_items (
-                item_id, bundle_id, signal_id, symbol, action, reference_price, reason_code, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                item_id, bundle_id, signal_id, symbol, action, reference_price, reason_code, created_at, signal_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
             """,
             (
                 f"item-{hashlib.sha256(sig.signal_id.encode()).hexdigest()[:8]}",
                 new_bundle.bundle_id, sig.signal_id, sig.symbol, sig.action,
-                int(round(sig.reference_price * 10000)), sig.reason_code
+                int(round(sig.reference_price * 10000)), sig.reason_code, sig.signal_source
             )
         )
     conn.commit()
@@ -787,28 +791,29 @@ def cmd_signal_generate(args):
 def cmd_signal_list(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
-    
-    manifest = load_active_manifest(settings)
+
+    manifests = load_active_manifests(settings)
     try:
         account_id = resolve_account_id(conn, getattr(args, "account", None))
     except Exception:
         account_id = "simulation-main"
-        
+
     projection = PortfolioProjection(conn)
-    
+
     query = """
-        SELECT 
+        SELECT
             b.bundle_id,
-            b.signal_date, 
-            b.target_execution_date, 
+            b.signal_date,
+            b.target_execution_date,
             i.signal_id,
-            i.symbol, 
-            i.action, 
-            i.reference_price, 
+            i.symbol,
+            i.action,
+            i.reference_price,
             i.reason_code,
             b.strategy_id,
             i.user_override,
-            i.override_reason
+            i.override_reason,
+            i.signal_source
         FROM signal_items i
         JOIN signal_bundles b ON i.bundle_id = b.bundle_id
     """
@@ -859,15 +864,14 @@ def cmd_signal_list(args):
         positions=positions,
         daily_buy_value_spent=daily_buy_value_spent
     )
-    
-    limits = manifest.limits if manifest else LimitsInfo(
+
+    default_limits = LimitsInfo(
         currency="TWD",
         max_order_value=35000,
         max_daily_buy_value=150000,
         max_open_positions=5
     )
-    strategy_budget = manifest.limits.max_order_value if manifest else 35000
-    
+
     # Group rows by bundle_id so we can plan them
     bundle_signals = {}
     for r in rows:
@@ -875,13 +879,16 @@ def cmd_signal_list(args):
         if bid not in bundle_signals:
             bundle_signals[bid] = []
         bundle_signals[bid].append(r)
-        
+
     # Run planner for each bundle to determine planning status for future/today bundles
     planned_results = {} # signal_id -> status_string/list
     for bid, r_list in bundle_signals.items():
         target_exec_date = date.fromisoformat(r_list[0]["target_execution_date"])
         # If target execution date is today or in the future, we plan it dynamically
         if target_exec_date >= today:
+            bundle_manifest = manifests.get(r_list[0]["strategy_id"])
+            limits = bundle_manifest.limits if bundle_manifest else default_limits
+            strategy_budget = bundle_manifest.limits.max_order_value if bundle_manifest else 35000
             signals = [
                 SignalItem(
                     signal_id=r["signal_id"],
@@ -900,7 +907,7 @@ def cmd_signal_list(args):
             )
             planned_results.update(signal_results)
 
-    headers = ["訊號日期", "執行日期", "代號", "名稱", "動作", "參考價格", "原因", "狀態", "訊號 ID"]
+    headers = ["訊號日期", "執行日期", "策略", "來源", "代號", "名稱", "動作", "參考價格", "原因", "狀態", "訊號 ID"]
     table_rows = []
     for r in rows:
         ref_price = r["reference_price"] / 10000.0
@@ -942,6 +949,8 @@ def cmd_signal_list(args):
         table_rows.append([
             r["signal_date"],
             r["target_execution_date"],
+            r["strategy_id"],
+            r["signal_source"] or "ENTRY",
             symbol,
             name,
             r["action"],
@@ -990,8 +999,8 @@ def cmd_trade_plan(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
     projection = PortfolioProjection(conn)
-    manifest = load_active_manifest(settings)
-    
+    manifests = load_active_manifests(settings)
+
     # Read bundle
     filepath = Path(args.bundle)
     if filepath.exists():
@@ -1062,6 +1071,9 @@ def cmd_trade_plan(args):
             signals=items
         )
     # End of DB-based bundle loading
+
+    # Per-strategy manifest routing (§2.7)
+    manifest = manifests.get(bundle.strategy.strategy_id)
 
     # We need to construct PortfolioState
     # Let's get current portfolio state for account
@@ -1282,7 +1294,8 @@ def cmd_trade_record_fill(args):
         "price": price_scaled,
         "filled_at": datetime.now().isoformat(),
         "is_long_term": is_long_term,
-        "source": "MANUAL_IMPORT"
+        "source": "MANUAL_IMPORT",
+        "strategy_id": MANUAL_STRATEGY_ID
     }
     
     try:
@@ -1343,21 +1356,102 @@ def cmd_portfolio_rebuild_projections(args):
     print("Projections successfully rebuilt from ledger facts.")
     conn.close()
 
+def _report_pnl_by_strategy(conn, projection, account_id, report_date):
+    """策略別損益歸因報表 (report pnl --by-strategy)。"""
+    repo = SqliteMarketBarRepository(conn)
+    cursor = conn.cursor()
+
+    positions = projection.get_strategy_positions(account_id, include_long_term=True)
+
+    # Gross realized per strategy (FIFO matches carry strategy_id after migration)
+    cursor.execute(
+        "SELECT strategy_id, SUM(realized_pnl) as gross FROM fifo_matches WHERE account_id = ? GROUP BY strategy_id",
+        (account_id,)
+    )
+    gross_by_strategy = {r["strategy_id"]: r["gross"] or 0 for r in cursor.fetchall()}
+
+    # Fees/taxes per strategy via fills attribution
+    cursor.execute(
+        """
+        SELECT f.strategy_id as strategy_id, SUM(cl.amount) as fees
+        FROM cash_ledger cl
+        JOIN fills f ON cl.source_id = f.fill_id
+        WHERE cl.account_id = ? AND cl.event_type IN ('BROKER_FEE', 'TRANSACTION_TAX')
+        GROUP BY f.strategy_id
+        """,
+        (account_id,)
+    )
+    fees_by_strategy = {r["strategy_id"]: r["fees"] or 0 for r in cursor.fetchall()}
+
+    all_strategies = sorted(
+        set(gross_by_strategy) | set(fees_by_strategy) | {sid for (sid, _sym) in positions}
+    )
+
+    cash = projection.get_cash_balance(account_id)
+    print(f"\n--- 帳戶 {account_id} 於 {report_date} 的策略別損益報告 ---")
+    print(f"可用現金：{cash:,} TWD")
+
+    for sid in all_strategies:
+        gross = gross_by_strategy.get(sid, 0)
+        fees = fees_by_strategy.get(sid, 0)
+        net_realized = gross + fees  # fees are negative ledger amounts
+
+        sid_positions = []
+        for (pos_sid, symbol), pos in sorted(positions.items()):
+            if pos_sid != sid:
+                continue
+            bar = repo.find(symbol, report_date)
+            close_price = bar.close / 10000.0 if bar else pos["wavg_price"] / 10000.0
+            entry_price = pos["wavg_price"] / 10000.0
+            qty = pos["quantity"]
+            sid_positions.append({
+                "symbol": symbol,
+                "quantity": qty,
+                "entry_price": entry_price,
+                "current_price": close_price,
+                "value": int(qty * close_price),
+                "unrealized_pnl": int(qty * (close_price - entry_price)),
+                "is_long_term": pos["is_long_term"]
+            })
+
+        pos_val = sum(p["value"] for p in sid_positions)
+        unrealized = sum(p["unrealized_pnl"] for p in sid_positions)
+
+        print(f"\n================ 策略 {sid} ================")
+        print(f"部位價值：{pos_val:,} TWD")
+        print(f"已實現損益（淨額）：{net_realized:+,} TWD (毛損益: {gross:+,} TWD, 交易規費: {fees:,} TWD)")
+        print(f"未實現損益：{unrealized:+,} TWD")
+        print("持倉部位：")
+        if not sid_positions:
+            print("  無持有部位。")
+        for pos in sid_positions:
+            name = STOCK_NAMES.get(pos['symbol'], "未知")
+            lt_tag = " [長期]" if pos["is_long_term"] else ""
+            print(f"  {pos['symbol']} {name}{lt_tag}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD (未實現: {pos['unrealized_pnl']:+,} TWD)")
+
+
 def cmd_report_pnl(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
     projection = PortfolioProjection(conn)
-    
+
     account_id = resolve_account_id(conn, args.account)
     report_date = date.fromisoformat(args.date) if args.date else date.today()
     filter_source = getattr(args, "source", "all")
-    
+
+    if getattr(args, "by_strategy", False):
+        _report_pnl_by_strategy(conn, projection, account_id, report_date)
+        conn.close()
+        return
+
     cash = projection.get_cash_balance(account_id)
     
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT pl.symbol, SUM(pl.quantity) as qty, AVG(pl.price) as avg_price, COALESCE(f.source, 'STRATEGY') as source
+        SELECT pl.symbol, SUM(pl.quantity) as qty,
+               CAST(SUM(CAST(pl.quantity AS REAL) * pl.price) / SUM(pl.quantity) AS INTEGER) as avg_price,
+               COALESCE(f.source, 'STRATEGY') as source
         FROM position_lots pl
         LEFT JOIN fills f ON pl.fill_id = f.fill_id
         WHERE pl.account_id = ?
@@ -1494,48 +1588,57 @@ def cmd_report_pnl(args):
 
 
 def cmd_trade_close_all(args):
-    # Manual emergency exit
+    # Manual emergency exit: close every non-long-term bucket (per strategy, FIFO-isolated)
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
     projection = PortfolioProjection(conn)
-    
+
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT symbol, SUM(quantity) as qty FROM position_lots GROUP BY symbol"
+        """
+        SELECT strategy_id, symbol, SUM(quantity) as qty
+        FROM position_lots
+        WHERE is_long_term = 0
+        GROUP BY strategy_id, symbol
+        """
     )
-    open_positions = {row["symbol"]: row["qty"] for row in cursor.fetchall() if row["qty"] > 0}
-    
-    if not open_positions:
+    open_buckets = [
+        (row["strategy_id"], row["symbol"], row["qty"])
+        for row in cursor.fetchall() if row["qty"] > 0
+    ]
+
+    if not open_buckets:
         print("No open positions to close.")
         conn.close()
         return
-        
-    print(f"EMERGENCY CLOSE: Closing all {len(open_positions)} positions due to: '{args.reason}'")
+
+    print(f"EMERGENCY CLOSE: Closing {len(open_buckets)} position bucket(s) due to: '{args.reason}'")
     # For each open position, we write a sell fill at today's close or entry price
     # In fake broker mode we simulate immediate closure
     today_dt = date.today()
     repo = SqliteMarketBarRepository(conn)
-    
-    for symbol, qty in open_positions.items():
+
+    for strategy_id, symbol, qty in open_buckets:
         bar = repo.find(symbol, today_dt)
         close_price = bar.close if bar else 1000000 # Default fallback
-        
+
         # Apply fill transaction
         fill_payload = {
             "fill_id": f"fill-emergency-{uuid_like()}",
             "account_id": "simulation-main",
             "run_id": f"emergency-{today_dt.strftime('%Y%m%d')}",
             "order_id": f"ord-emergency-{uuid_like()}",
-            "execution_key": f"emergency-close-{symbol}-{today_dt.isoformat()}",
+            "execution_key": f"emergency-close-{strategy_id}-{symbol}-{today_dt.isoformat()}",
             "symbol": symbol,
             "side": "SELL",
             "quantity": qty,
             "price": close_price,
-            "filled_at": datetime.now().isoformat()
+            "filled_at": datetime.now().isoformat(),
+            "strategy_id": strategy_id
         }
         projection.apply_fill_transaction(fill_payload)
-        print(f"  Closed {qty} shares of {symbol} at price {close_price/10000.0:.2f}")
-        
+        print(f"  Closed {qty} shares of {symbol} [{strategy_id}] at price {close_price/10000.0:.2f}")
+
     conn.close()
 
 def uuid_like() -> str:
@@ -1585,10 +1688,15 @@ def main():
     parser_app_val = approval_subs.add_parser("validate", help="驗證授權清單的完整性與簽章")
     parser_app_val.add_argument("manifest_path", type=str, help="授權清單 JSON 檔案路徑")
     
-    parser_app_act = approval_subs.add_parser("activate", help="啟用並將授權清單設為當前執行目標")
+    parser_app_act = approval_subs.add_parser("activate", help="啟用授權清單（依 manifest 內的 strategy_id 設為該策略的有效授權）")
     parser_app_act.add_argument("manifest_path", type=str, help="授權清單 JSON 檔案路徑")
-    
-    approval_subs.add_parser("status", help="顯示當前啟用授權清單的每日預檢狀態 (Preflight)")
+
+    parser_app_deact = approval_subs.add_parser("deactivate", help="停用指定策略的有效授權（該策略 BUY 將被阻擋，SELL 不受影響）")
+    parser_app_deact.add_argument("--strategy", type=str, required=True, help="策略 ID")
+
+    approval_subs.add_parser("list", help="列出各策略當前有效授權與到期日")
+
+    approval_subs.add_parser("status", help="顯示各策略啟用授權清單的每日預檢狀態 (Preflight)")
     
     # 4. account group
     parser_account = subparsers.add_parser("account", help="帳戶管理")
@@ -1610,6 +1718,7 @@ def main():
     parser_bt_run.add_argument("--from", dest="start", type=str, required=True, help="回測開始日期 YYYY-MM-DD")
     parser_bt_run.add_argument("--to", type=str, required=True, help="回測結束日期 YYYY-MM-DD")
     parser_bt_run.add_argument("--initial-cash", type=int, default=300000, help="初始現金金額")
+    parser_bt_run.add_argument("--strategy", type=str, default="trend_breakout", help="進場策略 ID（出場由 risk_exit 依該策略 exit: 參數執行）")
     
     # 6. simulation group
     parser_sim = subparsers.add_parser("simulation", help="模擬交易執行器指令")
@@ -1633,6 +1742,7 @@ def main():
     parser_sig_gen = sig_subs.add_parser("generate", help="手動產生收盤交易訊號")
     parser_sig_gen.add_argument("--as-of-date", type=str, help="作為基準的收盤日期 YYYY-MM-DD")
     parser_sig_gen.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
+    parser_sig_gen.add_argument("--strategy", type=str, default="trend_breakout", help="進場策略 ID")
     
     parser_sig_list = sig_subs.add_parser("list", help="查詢並列出已產生的交易訊號")
     parser_sig_list.add_argument("--date", type=str, help="過濾特定的訊號產生日期 YYYY-MM-DD")
@@ -1692,10 +1802,11 @@ def main():
     parser_rep_pnl.add_argument("--account", type=str, default=None, help="帳戶名稱")
     parser_rep_pnl.add_argument("--date", type=str, help="指定報告日期 YYYY-MM-DD")
     parser_rep_pnl.add_argument("--source", type=str, choices=["all", "strategy", "manual"], default="all", help="篩選成交來源：all (全部), strategy (僅策略), manual (僅手動錄入)")
-    
+    parser_rep_pnl.add_argument("--by-strategy", action="store_true", dest="by_strategy", help="依策略 (strategy_id) 分組顯示損益歸因報表")
+
     # Dispatching commands
     args = parser.parse_args()
-    
+
     handlers = {
         ("market", "backfill"): cmd_market_backfill,
         ("market", "sync"): cmd_market_sync,
@@ -1704,6 +1815,8 @@ def main():
         ("approval", "create"): cmd_approval_create,
         ("approval", "validate"): cmd_approval_validate,
         ("approval", "activate"): cmd_approval_activate,
+        ("approval", "deactivate"): cmd_approval_deactivate,
+        ("approval", "list"): cmd_approval_list,
         ("approval", "status"): cmd_approval_status,
         ("account", "init"): cmd_account_init,
         ("account", "adjust-cash"): cmd_account_adjust_cash,

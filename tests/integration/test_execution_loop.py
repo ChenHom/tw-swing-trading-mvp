@@ -131,8 +131,8 @@ def test_trade_execution_engine_e2e(test_setup):
         projection=projection,
         allowed_issuers=allowlist,
         revoked_approvals=revoked,
-        manifest=manifest,
-        strategy_budget=25000,
+        manifests={"trend_pullback": manifest},
+        strategy_budgets={"trend_pullback": 25000},
         slippage_bps=10
     )
     

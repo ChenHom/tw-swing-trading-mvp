@@ -63,26 +63,24 @@ def test_get_preflight_status(temp_db, dummy_manifest):
     runner = DailySimulationRunner(
         db_conn=temp_db, calendar=calendar, market_provider=mock_provider,
         market_repo=repo, projection=projection,
-        allowed_issuers=["manual-research-review"], revoked_approvals=[],
-        manifest=None
+        allowed_issuers=["manual-research-review"], revoked_approvals=[]
     )
-    assert runner.get_preflight_status(date(2026, 6, 10)) == "MISSING"
+    assert runner.get_preflight_status(date(2026, 6, 10), None) == "MISSING"
     
     # 2. Revoked manifest
     runner = DailySimulationRunner(
         db_conn=temp_db, calendar=calendar, market_provider=mock_provider,
         market_repo=repo, projection=projection,
-        allowed_issuers=["manual-research-review"], revoked_approvals=["app-sim-test"],
-        manifest=dummy_manifest
+        allowed_issuers=["manual-research-review"], revoked_approvals=["app-sim-test"]
     )
-    assert runner.get_preflight_status(date(2026, 6, 10)) == "REVOKED"
+    assert runner.get_preflight_status(date(2026, 6, 10), dummy_manifest) == "REVOKED"
     
     # 3. Naive check / success
     runner = DailySimulationRunner(
         db_conn=temp_db, calendar=calendar, market_provider=mock_provider,
         market_repo=repo, projection=projection,
         allowed_issuers=["manual-research-review"], revoked_approvals=[],
-        manifest=dummy_manifest, expiry_warning_sessions=3
+        expiry_warning_sessions=3
     )
     # Mock validation because digest in dummy manifest is mock
     with MagicMock() as mock_validator:
@@ -94,17 +92,17 @@ def test_get_preflight_status(temp_db, dummy_manifest):
         mp.setattr("src.approval.validator.ManifestValidator.validate", lambda self, m, t, mode: None)
         
         # Test active status (expiry is 2026-06-30)
-        assert runner.get_preflight_status(date(2026, 6, 10)) == "ACTIVE"
+        assert runner.get_preflight_status(date(2026, 6, 10), dummy_manifest) == "ACTIVE"
         
         # Test expiring soon status
         # June 30 is expiry, June 29 is 1 session away
-        assert runner.get_preflight_status(date(2026, 6, 29)) == "EXPIRING_SOON"
+        assert runner.get_preflight_status(date(2026, 6, 29), dummy_manifest) == "EXPIRING_SOON"
         
         # Test expired status
-        assert runner.get_preflight_status(date(2026, 7, 1)) == "EXPIRED"
+        assert runner.get_preflight_status(date(2026, 7, 1), dummy_manifest) == "EXPIRED"
         
         # Test not yet valid
-        assert runner.get_preflight_status(date(2026, 5, 31)) == "NOT_YET_VALID"
+        assert runner.get_preflight_status(date(2026, 5, 31), dummy_manifest) == "NOT_YET_VALID"
 
 def test_run_daily_skipped_non_trading_day(temp_db):
     calendar = ExchangeCalendarsTradingCalendar()
@@ -122,8 +120,6 @@ def test_run_daily_skipped_non_trading_day(temp_db):
     status = runner.run_daily(
         run_date=date(2026, 6, 7),
         account_id="sim-test",
-        strategy_id="trend_pullback",
-        strategy_params=TrendPullbackParams(order_budget_twd=30000),
         universe_symbols=["2330"]
     )
     assert status == "SKIPPED"
@@ -155,8 +151,6 @@ def test_run_daily_waiting_market_data(temp_db):
     status = runner.run_daily(
         run_date=date(2026, 6, 10),
         account_id="sim-test",
-        strategy_id="trend_pullback",
-        strategy_params=TrendPullbackParams(order_budget_twd=30000),
         universe_symbols=["2330"]
     )
     assert status == "WAITING"
@@ -184,7 +178,7 @@ def test_run_daily_idempotency_already_completed(temp_db):
         INSERT INTO daily_runs (
             run_id, run_date, account_id, strategy_id, status, market_sync_status,
             execution_status, signal_generation_status, report_status, started_at, completed_at
-        ) VALUES ('sim-20260610', '2026-06-10', 'sim-test', 'trend_pullback', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'now', 'now')
+        ) VALUES ('sim-20260610', '2026-06-10', 'sim-test', 'MULTI', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'now', 'now')
         """
     )
     temp_db.commit()
@@ -198,8 +192,6 @@ def test_run_daily_idempotency_already_completed(temp_db):
     status = runner.run_daily(
         run_date=date(2026, 6, 10),
         account_id="sim-test",
-        strategy_id="trend_pullback",
-        strategy_params=TrendPullbackParams(order_budget_twd=30000),
         universe_symbols=["2330"]
     )
     
@@ -258,6 +250,7 @@ def test_engine_skips_sell_blocked_by_long_term_position():
             "filled_at": "2026-06-10T09:00:00",
             "is_long_term": 1,
             "source": "MANUAL_IMPORT",
+            "strategy_id": "MANUAL",
         }
         projection.apply_fill_transaction(lt_fill)
 
@@ -334,8 +327,8 @@ def test_engine_skips_sell_blocked_by_long_term_position():
             projection=projection,
             allowed_issuers=["manual-research-review"],
             revoked_approvals=[],
-            manifest=lt_manifest,
-            strategy_budget=500000,
+            manifests={"trend_pullback": lt_manifest},
+            strategy_budgets={"trend_pullback": 500000},
         )
 
         context = ExecutionContext(

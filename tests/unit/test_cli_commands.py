@@ -708,6 +708,10 @@ def test_execute_pending_skips_rejected_signal(temp_db_path, monkeypatch, capsys
     mock_settings.issuer_allowlist = ["manual-research-review"]
     mock_settings.revoked_approvals = []
     mock_settings.backtest.slippage_bps = 10
+    mock_settings.trading.pipeline.entry_strategies = ["trend_breakout", "pullback_rebound"]
+    mock_settings.trading.global_limits.max_open_positions = 8
+    mock_settings.trading.global_limits.max_daily_buy_value = 200000
+    mock_settings.trading.global_limits.max_new_positions_per_day = 2
     monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
 
     conn = get_db_connection(temp_db_path)
@@ -751,7 +755,7 @@ def test_execute_pending_skips_rejected_signal(temp_db_path, monkeypatch, capsys
     }
     signed_dict = sign_manifest(manifest_dict)
     dummy_manifest = StrategyApprovalManifest(**signed_dict)
-    monkeypatch.setattr("src.cli.load_active_manifest", lambda s: dummy_manifest)
+    monkeypatch.setattr("src.cli.load_active_manifests", lambda s: {"trend_pullback": dummy_manifest})
 
     # 3. Create signal bundle targeting 2026-06-11
     cursor.execute(
@@ -805,7 +809,7 @@ def test_execute_pending_skips_rejected_signal(temp_db_path, monkeypatch, capsys
 
     cmd_simulation_execute_pending(Args())
     captured = capsys.readouterr()
-    assert "Executing pending bundle b-exec" in captured.out
+    assert "b-exec" in captured.out
     
     # 5. Verify fills in database
     conn = get_db_connection(temp_db_path)

@@ -11,7 +11,10 @@ from src.portfolio.db import init_db, get_db_connection
 from src.market_data.repository import SqliteMarketBarRepository
 from src.portfolio.projection import PortfolioProjection
 from src.strategy.canonicalizer import StrategyParameterCanonicalizer
+from src.strategy.trend_pullback import TrendPullbackStrategy
+from src.strategy.registry import StrategyDefinition
 from src.application.runners.backtest import BacktestRunner
+from src.application.runners.simulation import EntryStrategySpec
 
 def test_milestone_3_long_backtest(tmp_path):
     # 1. Setup temporary database
@@ -146,13 +149,24 @@ def test_milestone_3_long_backtest(tmp_path):
         slippage_bps=10
     )
     
-    # Run backtest
+    # Run backtest (legacy trend_pullback entry strategy via explicit spec)
+    entry_spec = EntryStrategySpec(
+        definition=StrategyDefinition(
+            strategy_id="trend_pullback",
+            strategy_version="1.0.0",
+            params=params,
+            exit_params=None,
+            params_hash=params_hash,
+            order_budget_twd=params.order_budget_twd
+        ),
+        strategy=TrendPullbackStrategy(params, universe_symbols)
+    )
     result = runner.run(
         start_date=sessions[0],
         end_date=sessions[-1],
         initial_cash=500000,
         universe_symbols=universe_symbols,
-        strategy_params=params
+        entry_spec=entry_spec
     )
     
     # 6. Verify trade occurred
