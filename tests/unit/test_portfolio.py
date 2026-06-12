@@ -46,7 +46,8 @@ def test_portfolio_buy_and_sell_transaction_cycle(db_conn):
         "side": "BUY",
         "quantity": 1000,
         "price": 1000000,  # 100.0 x 10000
-        "filled_at": "2026-06-11T09:00:00+08:00"
+        "filled_at": "2026-06-11T09:00:00+08:00",
+        "strategy_id": "trend_pullback"
     }
     
     projection.apply_fill_transaction(fill_buy)
@@ -76,7 +77,8 @@ def test_portfolio_buy_and_sell_transaction_cycle(db_conn):
         "side": "SELL",
         "quantity": 1000,
         "price": 1050000,  # 105.0 x 10000
-        "filled_at": "2026-06-12T09:00:00+08:00"
+        "filled_at": "2026-06-12T09:00:00+08:00",
+        "strategy_id": "trend_pullback"
     }
     
     projection.apply_fill_transaction(fill_sell)
@@ -115,7 +117,8 @@ def test_portfolio_rebuild_and_reconcile(db_conn):
         "side": "BUY",
         "quantity": 100,
         "price": 1000000,
-        "filled_at": "2026-06-11T09:00:00+08:00"
+        "filled_at": "2026-06-11T09:00:00+08:00",
+        "strategy_id": "trend_pullback"
     }
     projection.apply_fill_transaction(fill_buy)
     

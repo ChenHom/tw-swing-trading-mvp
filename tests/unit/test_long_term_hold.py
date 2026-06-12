@@ -102,7 +102,8 @@ def test_db_long_term_fill_record(tmp_path):
         "quantity": 10,
         "price": 1000000,  # 100.0
         "filled_at": datetime.now().isoformat(),
-        "is_long_term": 1
+        "is_long_term": 1,
+        "strategy_id": "MANUAL"
     }
     
     projection.apply_fill_transaction(fill_payload)
@@ -139,7 +140,8 @@ def test_db_long_term_fill_record(tmp_path):
         "quantity": 5,
         "price": 1100000, # 110.0
         "filled_at": datetime.now().isoformat(),
-        "is_long_term": 0
+        "is_long_term": 0,
+        "strategy_id": "MANUAL"
     }
     
     with pytest.raises(ValueError, match="LONG_TERM_PROTECTED"):
@@ -157,7 +159,8 @@ def test_db_long_term_fill_record(tmp_path):
         "quantity": 5,
         "price": 1000000,
         "filled_at": datetime.now().isoformat(),
-        "is_long_term": 0
+        "is_long_term": 0,
+        "strategy_id": "MANUAL"
     }
     projection.apply_fill_transaction(buy_managed_payload)
     

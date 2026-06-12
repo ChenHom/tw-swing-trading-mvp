@@ -2,6 +2,9 @@ import sqlite3
 import uuid
 from datetime import datetime
 
+# Strategy bucket for manually recorded fills (record-fill); excluded from risk_exit monitoring.
+MANUAL_STRATEGY_ID = "MANUAL"
+
 class PortfolioProjection:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -16,7 +19,7 @@ class PortfolioProjection:
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            SELECT lot_id, symbol, quantity, price, acquired_at, fill_id, is_long_term
+            SELECT lot_id, symbol, quantity, price, acquired_at, fill_id, is_long_term, strategy_id
             FROM position_lots
             WHERE account_id = ? AND symbol = ?
             ORDER BY acquired_at ASC
@@ -50,7 +53,7 @@ class PortfolioProjection:
             # Fetch all fills for this account chronologically first
             cursor.execute(
                 """
-                SELECT fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term, source
+                SELECT fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term, source, strategy_id
                 FROM fills
                 WHERE account_id = ?
                 ORDER BY filled_at ASC
@@ -101,7 +104,8 @@ class PortfolioProjection:
                     "price": f["price"],
                     "filled_at": f["filled_at"],
                     "is_long_term": f["is_long_term"],
-                    "source": f["source"]
+                    "source": f["source"],
+                    "strategy_id": f["strategy_id"]
                 }
                 self._apply_fill_ops(cursor, fill_dict)
 
@@ -162,8 +166,106 @@ class PortfolioProjection:
                     "expected": expected,
                     "actual": actual
                 }
-                
+
+        # 3. Per-strategy bucket check (FIFO isolation integrity)
+        cursor.execute(
+            """
+            SELECT symbol, strategy_id, SUM(CASE WHEN side = 'BUY' THEN quantity ELSE -quantity END) as net_qty
+            FROM fills
+            WHERE account_id = ?
+            GROUP BY symbol, strategy_id
+            """,
+            (account_id,)
+        )
+        fill_bucket_net = {(r["symbol"], r["strategy_id"]): r["net_qty"] for r in cursor.fetchall()}
+
+        cursor.execute(
+            """
+            SELECT symbol, strategy_id, SUM(quantity) as lot_qty
+            FROM position_lots
+            WHERE account_id = ?
+            GROUP BY symbol, strategy_id
+            """,
+            (account_id,)
+        )
+        lot_bucket_qty = {(r["symbol"], r["strategy_id"]): r["lot_qty"] for r in cursor.fetchall()}
+
+        all_buckets = set(fill_bucket_net.keys()).union(lot_bucket_qty.keys())
+        for bucket in all_buckets:
+            expected = fill_bucket_net.get(bucket, 0)
+            actual = lot_bucket_qty.get(bucket, 0)
+            if expected != actual:
+                return {
+                    "status": "STRATEGY_POSITION_MISMATCH",
+                    "symbol": bucket[0],
+                    "strategy_id": bucket[1],
+                    "expected": expected,
+                    "actual": actual
+                }
+
         return {"status": "RECONCILE_OK"}
+
+    def get_strategy_positions(self, account_id: str, include_long_term: bool = False) -> dict:
+        """
+        Aggregate open lots into per-(strategy_id, symbol) positions with
+        quantity-weighted average entry price and first acquisition timestamp.
+        """
+        cursor = self.conn.cursor()
+        long_term_filter = "" if include_long_term else "AND is_long_term = 0"
+        cursor.execute(
+            f"""
+            SELECT strategy_id, symbol,
+                   SUM(quantity) as qty,
+                   CAST(SUM(CAST(quantity AS REAL) * price) / SUM(quantity) AS INTEGER) as wavg_price,
+                   MIN(acquired_at) as first_acquired_at,
+                   MAX(is_long_term) as is_long_term
+            FROM position_lots
+            WHERE account_id = ? {long_term_filter}
+            GROUP BY strategy_id, symbol
+            HAVING SUM(quantity) > 0
+            """,
+            (account_id,)
+        )
+        return {
+            (row["strategy_id"], row["symbol"]): {
+                "strategy_id": row["strategy_id"],
+                "symbol": row["symbol"],
+                "quantity": row["qty"],
+                "wavg_price": row["wavg_price"],
+                "first_acquired_at": row["first_acquired_at"],
+                "is_long_term": bool(row["is_long_term"])
+            }
+            for row in cursor.fetchall()
+        }
+
+    def upsert_high_watermark(self, account_id: str, strategy_id: str, symbol: str, trade_date: str, close_price: int) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO position_high_watermarks (account_id, strategy_id, symbol, trade_date, highest_close, created_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(account_id, strategy_id, symbol, trade_date) DO UPDATE SET
+                highest_close = excluded.highest_close
+            """,
+            (account_id, strategy_id, symbol, trade_date, close_price)
+        )
+        self.conn.commit()
+
+    def get_position_high(self, account_id: str, strategy_id: str, symbol: str, since_date: str) -> int | None:
+        """
+        Highest recorded close for the position window starting at the first
+        acquisition date of the currently open lots (since_date, 'YYYY-MM-DD').
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT MAX(highest_close) as high FROM position_high_watermarks
+            WHERE account_id = ? AND strategy_id = ? AND symbol = ? AND trade_date >= ?
+            """,
+            (account_id, strategy_id, symbol, since_date)
+        )
+        row = cursor.fetchone()
+        return row["high"] if row and row["high"] is not None else None
 
     def _apply_fill_ops(self, cursor, fill: dict) -> None:
         fill_id = fill["fill_id"]
@@ -184,14 +286,20 @@ class PortfolioProjection:
         # 1. Insert fill
         is_long_term = fill.get("is_long_term", 0)
         source = fill.get("source", "STRATEGY")
+        strategy_id = fill.get("strategy_id")
+        if not strategy_id:
+            raise ValueError(
+                f"FILL_MISSING_STRATEGY_ID: fill {fill_id} for {symbol} has no strategy_id; "
+                f"run scripts/migrate_multi_strategy.py to backfill legacy facts."
+            )
         cursor.execute(
             """
             INSERT INTO fills (
                 fill_id, account_id, run_id, order_id, execution_key,
-                symbol, side, quantity, price, filled_at, reverses_fill_id, created_at, is_long_term, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), ?, ?)
+                symbol, side, quantity, price, filled_at, reverses_fill_id, created_at, is_long_term, source, strategy_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'), ?, ?, ?)
             """,
-            (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term, source)
+            (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term, source, strategy_id)
         )
 
         # 2. Append cash ledger events
@@ -241,21 +349,23 @@ class PortfolioProjection:
             cursor.execute(
                 """
                 INSERT INTO position_lots (
-                    lot_id, account_id, symbol, quantity, price, acquired_at, fill_id, created_at, is_long_term
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                    lot_id, account_id, symbol, quantity, price, acquired_at, fill_id, created_at, is_long_term, strategy_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
                 """,
-                (lot_id, account_id, symbol, quantity, price, filled_at, fill_id, is_long_term)
+                (lot_id, account_id, symbol, quantity, price, filled_at, fill_id, is_long_term, strategy_id)
             )
             new_balance = current_balance - (trade_value + broker_fee)
-            
+
         else:  # SELL
+            # FIFO deduction is isolated per strategy bucket so concurrent
+            # strategies holding the same symbol never consume each other's lots.
             cursor.execute(
                 """
                 SELECT lot_id, quantity, price, fill_id FROM position_lots
-                WHERE account_id = ? AND symbol = ? AND is_long_term = ?
+                WHERE account_id = ? AND symbol = ? AND strategy_id = ? AND is_long_term = ?
                 ORDER BY acquired_at ASC
                 """,
-                (account_id, symbol, is_long_term)
+                (account_id, symbol, strategy_id, is_long_term)
             )
             lots = cursor.fetchall()
             
@@ -292,10 +402,10 @@ class PortfolioProjection:
                     """
                     INSERT INTO fifo_matches (
                         match_id, account_id, symbol, buy_fill_id, sell_fill_id,
-                        quantity, buy_price, sell_price, matched_at, realized_pnl, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                        quantity, buy_price, sell_price, matched_at, realized_pnl, created_at, strategy_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
                     """,
-                    (match_id, account_id, symbol, buy_fill_id, fill_id, matched_qty, buy_price, price, filled_at, match_pnl)
+                    (match_id, account_id, symbol, buy_fill_id, fill_id, matched_qty, buy_price, price, filled_at, match_pnl, strategy_id)
                 )
             
             if remaining_sell > 0:
@@ -312,19 +422,22 @@ class PortfolioProjection:
                             f"LONG_TERM_PROTECTED: SELL {quantity} shares of {symbol} blocked — "
                             f"position is marked as long-term and cannot be automatically sold."
                         )
-                raise ValueError(f"SELL_WITHOUT_POSITION: Attempted to sell {quantity} shares of {symbol}, but only matched {matched}")
+                raise ValueError(
+                    f"SELL_WITHOUT_POSITION: Attempted to sell {quantity} shares of {symbol} "
+                    f"(strategy {strategy_id}), but only matched {matched}"
+                )
 
-                
+
             new_balance = current_balance + (trade_value - broker_fee - tax)
-            
+
             pnl_id = f"pnl-{uuid.uuid4().hex[:8]}"
             cursor.execute(
                 """
                 INSERT INTO realized_pnl (
-                    pnl_id, account_id, run_id, symbol, realized_amount, tax_amount, fee_amount, occurred_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    pnl_id, account_id, run_id, symbol, realized_amount, tax_amount, fee_amount, occurred_at, created_at, strategy_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
                 """,
-                (pnl_id, account_id, run_id, symbol, total_realized_pnl, tax, broker_fee, filled_at)
+                (pnl_id, account_id, run_id, symbol, total_realized_pnl, tax, broker_fee, filled_at, strategy_id)
             )
 
         # Update cash balance
