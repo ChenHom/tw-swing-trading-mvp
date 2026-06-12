@@ -30,23 +30,48 @@ DATABASE_URL=data/app.db
 
 專案的所有設定檔均放置於 `config/` 目錄中，常用範本說明如下：
 
-### A. 策略參數範本：`config/strategies/trend_pullback.yaml`
-用於設定交易策略的指標與限制。例如均線長度與停損停利點（bps 代表萬分之一）：
+### A. 策略參數範本：`config/strategies/<strategy_id>.yaml`
+系統採**多策略並行**架構，每個策略一個 YAML，包含 `parameters:`（進場參數）與 `exit:`（退出參數，由 risk_exit 引擎執行）兩個區塊。目前的策略：
+
+| 策略 | 角色 | 說明 |
+|---|---|---|
+| `trend_breakout` | 進場（主） | 20 日新高 + 1.5 倍量 + 個股/大盤 60MA 濾網 |
+| `pullback_rebound` | 進場（輔） | 多頭結構回踩月線 + K 線轉強 + 大盤濾網 |
+| `trend_pullback` | 已退役 | 不再進場；存量倉位由 risk_exit 依其 `exit:` 管理至出清 |
+
+範例（`config/strategies/trend_breakout.yaml`，bps 代表萬分之一）：
 ```yaml
-strategy_id: trend_pullback      # 策略唯一識別碼
-strategy_version: 1.0.0          # 策略版本
+strategy_id: trend_breakout
+strategy_version: 1.0.0
 parameters:
-  ma_short: 20                   # 短期均線期數
-  ma_long: 60                    # 長期均線期數
-  stop_loss_bps: 500             # 停損點 (500 bps = 5%)
-  take_profit_bps: 1200          # 停利點 (1200 bps = 12%)
-  order_budget_twd: 20000        # 單筆委託預算 (元)
+  breakout_lookback_days: 20    # 收盤創 20 日新高
+  volume_multiple_pct: 150      # 當日量 > 20 日均量 1.5 倍
+  ma_trend_period: 60           # 個股多頭濾網
+  index_ma_period: 60           # 大盤多頭濾網（TSE 加權指數）
+  order_budget_twd: 20000       # 單筆委託預算 (元)
+exit:                           # 由 risk_exit 引擎讀取執行
+  fixed_stop_loss_bps: 700      # 固定停損 -7%（加權均價計）
+  trailing_stop_bps: 800        # 自持有後最高收盤回落 8%
+  ma_break_period: 20           # 均線失效（連續確認、可設 buffer）
+  ma_break_confirm_days: 2
+  time_stop_days: 20            # 時間停損（交易日）
+  time_stop_min_return_bps: 500
 ```
 
-### B. 策略授權清單 (Manifest)
-系統所有買入 (`BUY`) 指令必須嚴格匹配受信任發行者簽署的 `StrategyApprovalManifest`，以落實防呆與風控。
-* 授權清單包含有效期、單筆委託上限、每日總買入上限、最大持倉量等限制。
-* 行動指南請參閱下方指令。
+> [!IMPORTANT]
+> `exit:` 區塊**納入 params_hash**：變更任何進場或退出參數後，必須重新 `approval create` + `approval activate`，否則該策略的 BUY 會因 hash 不符被阻擋（SELL/停損不受授權閘門影響，照常執行）。
+
+### B. 策略授權清單 (Manifest) — 多策略並存
+系統所有買入 (`BUY`) 指令必須嚴格匹配該策略的 `StrategyApprovalManifest`；每個策略各自獨立一份有效授權（active map：`artifacts/approvals/active-approvals.json`，以 `strategy_id` 為鍵）。
+* 授權清單包含有效期、單筆委託上限、每日總買入上限、最大持倉量等**策略層限額**；全帳戶層限額（總持倉上限、每日總買入、每日新建倉數）設定於 `config/trading.yaml` 的 `global_limits:`。
+* **賣出（SELL，含 risk_exit 停損）永不受授權閘門阻擋**——授權過期期間持倉保護照常運作。
+* 管線順序設定於 `config/trading.yaml` 的 `pipeline:`（risk_exit 一律最先，再依序執行進場策略）。
+
+### C. 既有資料庫升級（一次性 Migration）
+從單策略版本升級者，需執行冪等的回填腳本（補 `strategy_id`、初始化移動停利 watermark），並於完成後自動對帳：
+```bash
+python3 -m scripts.migrate_multi_strategy --db data/app.db
+```
 
 ---
 
@@ -71,22 +96,36 @@ parameters:
 
 以下為一個完整的「每日排程運行與訊號查詢/重置」的標準操作範本：
 
-### 第一步：初始化模擬帳戶與啟用授權 (僅需執行一次)
+### 第一步：初始化模擬帳戶與啟用各策略授權 (僅需執行一次)
 ```bash
 # 1. 初始化模擬帳戶 (設定 1,000,000 元台幣初始現金)
 python3 -m app account init --initial-cash 1000000
 
-# 2. 建立策略授權清單 JSON 檔
+# 2. 為每個進場策略建立並啟用授權清單（每策略各一份）
 python3 -m app approval create \
-  --strategy config/strategies/trend_pullback.yaml \
+  --strategy config/strategies/trend_breakout.yaml \
   --expires-at 2026-12-31T23:59:59+08:00 \
-  --output artifacts/approvals/active-approval.json \
+  --output artifacts/approvals/trend_breakout-approval.json \
   --max-order-value 50000 \
   --max-daily-buy-value 200000 \
   --max-open-positions 5
+python3 -m app approval activate artifacts/approvals/trend_breakout-approval.json
 
-# 3. 啟用該授權清單 (使其成為系統當前活動授權)
-python3 -m app approval activate artifacts/approvals/active-approval.json
+python3 -m app approval create \
+  --strategy config/strategies/pullback_rebound.yaml \
+  --expires-at 2026-12-31T23:59:59+08:00 \
+  --output artifacts/approvals/pullback_rebound-approval.json \
+  --max-order-value 50000 \
+  --max-daily-buy-value 200000 \
+  --max-open-positions 5
+python3 -m app approval activate artifacts/approvals/pullback_rebound-approval.json
+
+# 3. 檢視各策略授權狀態 / 停用特定策略
+python3 -m app approval list
+python3 -m app approval deactivate --strategy pullback_rebound   # 停用後該策略 BUY 被擋，SELL 不受影響
+
+# 4. 首次啟用前回補行情（大盤濾網需要 ≥60 個交易日的 TSE 指數資料）
+python3 -m app market backfill --calendar-days 120
 ```
 
 ### 第二步：執行每日模擬交易工作流 (通常排入每日下午收盤後的 cron)
@@ -185,7 +224,10 @@ python3 -m app simulation run-daily --date 2026-06-10
 # 1. 查詢收盤後的帳戶資產與損益對帳單
 python3 -m app report pnl
 
-# 2. 手動對帳 (比對 cash_ledger 與持倉投影一致性)
+# 1b. 依策略分組的損益歸因報表（trend_breakout / pullback_rebound / MANUAL ...）
+python3 -m app report pnl --by-strategy
+
+# 2. 手動對帳 (比對 cash_ledger 與持倉投影一致性，含 per-strategy bucket 檢查)
 python3 -m app portfolio reconcile
 ```
 **損益報告範例**：

@@ -48,27 +48,36 @@
 - [x] `simulation run-daily` 加入進程級 file lock 防止雙重執行 (已完成)
 - [x] `trade reject-signal` / `trade un-reject-signal`：訊號人工拒絕閘門，`signal list` 顯示 `signal_id` 與拒絕狀態 (已完成)
 - [x] `report pnl` 支援依交易來源 (`STRATEGY` / `MANUAL_IMPORT`) 進行損益與部位的分流顯示與篩選 (已完成)
+- [x] **多策略並行第一階段**（依 `multi_strategy_plan.md` v3，2026-06-12 完成）:
+  - 帳務隔離：`fills`/`position_lots`/`fifo_matches`/`realized_pnl` 新增 `strategy_id`，FIFO 扣帳限定同策略 bucket；`scripts/migrate_multi_strategy.py` 冪等回填（已對 `data/app.db` 執行，9 筆手動 fills → `MANUAL`）。
+  - Approval 多策略並存：`active-approvals.json` map（strategy_id 為鍵）、`approval list`/`deactivate`、引擎按訊號策略路由驗證；**SELL 永不受授權閘門阻擋**。
+  - `risk_exit` 執行引擎：固定停損/移動停利/均線失效（buffer+連續確認）/時間停損，參數來自各策略 YAML `exit:` 區塊（納入 params_hash）；移動停利最高價持久化於 `position_high_watermarks` 事實表（rebuild 不清除）。
+  - TSE 指數同步（`Contracts.Indexs` 路由、INDEX 校驗放寬、估值池隔離）與兩個新進場策略 `trend_breakout`/`pullback_rebound`（含大盤 60MA 濾網、已持有不加碼）。
+  - 多策略 Allocator：固定管線順序（exit → breakout → pullback）、同日同標的 netting（`NETTING_SUPPRESSED` 入 `execution_events` 審計表）、策略/全局雙層限額、T+1 賣出款次日可用。
+  - `daily_runs` 單一 orchestrator run（`strategy_id='MULTI'`）；bundle/signal id 納入 strategy_id 防撞鍵；執行時取回當日全部 bundle。
+  - 舊策略 `trend_pullback` 退役：補 `exit:` 由 risk_exit 管理存量倉位，不再進場（回測仍可顯式指定）。
+  - `report pnl --by-strategy` 策略別損益歸因。
 
 ---
 
 ## Next Development Priority (下一步開發優先順序)
 
-MVP 核心功能、首批架構缺陷修正、與排程安全強化已完成。後續優先開發方向包含：
+MVP 核心功能、首批架構缺陷修正、排程安全強化、與多策略並行第一階段已完成。後續優先開發方向包含：
 
-1. **手動成交事實完整性與修正模型**:
+1. **公司行動處理**（多策略上線後風險被放大，列為最優先）:
+   - 實作對除權息、股票分割等公司行動的檢測與資料調整，避免持倉均價、`position_high_watermarks` 與停損基準失真。
+2. **手動成交事實完整性與修正模型**:
    - 擴展 `record-fill` 以支援手動輸入外部券商實際手續費與交易稅，並實作沖銷修正流水紀錄（reversal / corrected fill）以維持不可變 facts 的完整。
-2. **零股與整張股票成交模型分流**:
+3. **零股與整張股票成交模型分流**:
    - 在 Fake Broker 成交模擬中，引進整張股票 (Round Lot) 與零股 (Odd Lot) 的撮合流動性與滑價成本分流模型。
-3. **公司行動處理**:
-   - 實作對除權息、股票分割等公司行動的檢測與資料調整，避免持倉均價與資產估值失真。
-4. **多策略並行與視覺化報表**:
-   - 擴充資料庫支援同帳戶下多策略並行，並產出權益曲線視覺化圖表。
+4. **權益曲線視覺化報表**與多策略上線後的實際運行觀察（含 `execution_events` 審計回顧）。
 
 ---
 
 ## Important Docs (重要文件)
 
 - [tw-swing-trading-mvp-implementation-plan.md](file:///home/hom/services/stock/tw-day-trading/tw-swing-trading-mvp-implementation-plan.md) - 核心業務規則與決策記錄。
+- [multi_strategy_plan.md](file:///home/hom/services/stock/tw-day-trading/multi_strategy_plan.md) - 多策略架構設計與風險評估規劃書 (v3，含四項拍板決策與程式碼審查修正)。
 - [implementation_plan.md](file:///home/hom/.gemini/antigravity-cli/brain/51d942a2-225b-433a-913f-6889f769c880/implementation_plan.md) - 具體實作里程碑與程式結構規劃。
 
 ---
@@ -78,9 +87,13 @@ MVP 核心功能、首批架構缺陷修正、與排程安全強化已完成。�
 後續開發前，必須注意當前 MVP 實作存在的以下設計限制與風險：
 
 1. **手動成交的事實完整性**:
-   - 目前 `record-fill` 已標記 `source = MANUAL_IMPORT`，且 `report pnl` 已支援依交易來源進行損益與部位的分流顯示，但手動錄入仍僅能使用估計費率，且缺乏沖銷修正的模型支援（reversal / corrected fill）。
+   - 目前 `record-fill` 已標記 `source = MANUAL_IMPORT` 並落入 `MANUAL` 策略 bucket（結構性排除於 risk_exit 之外），且 `report pnl` 已支援依交易來源/策略分流，但手動錄入仍僅能使用估計費率，且缺乏沖銷修正的模型支援（reversal / corrected fill）。
 2. **撮合模型與公司行動限制**:
-   - 零股與整張股票採用相同的成交滑價模型；未追蹤除權息等公司行動；缺乏詳細的排程異常告警閉環。
+   - 零股與整張股票採用相同的成交滑價模型；未追蹤除權息等公司行動（會使加權均價與 `position_high_watermarks` 失真，多策略上線後此風險被放大）；缺乏詳細的排程異常告警閉環。
+3. **進場策略相關性高**:
+   - `trend_breakout` 與 `pullback_rebound` 皆為 long-only 順勢策略，大盤 60MA 濾網可規避空頭但無法規避高檔盤整鈍刀；中期方向為波動率/盤整偵測濾網或防禦型第三策略。
+4. **舊 `trend_pullback` 授權檔 digest 不一致（升級前即存在）**:
+   - `artifacts/approvals/approval-trend_pullback-20260610202219.json` 的 digest 與其內容不符（preflight 顯示 INVALID）。該策略已退役且 SELL 不受授權閘門影響，無實際風險；存量倉位出清後可清理。
 
 ---
 
