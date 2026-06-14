@@ -88,3 +88,6 @@ Thumbs.db
 # Log files
 *.log
 
+# 每日影子報告（執行時生成的產物，不入版控）
+artifacts/reports/daily/
+

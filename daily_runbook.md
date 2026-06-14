@@ -45,4 +45,48 @@ python3 -m app approval activate artifacts/approvals/approval-<strategy_id>-<dat
 python3 -m app approval list
 ```
 
+---
+
+## 上線 Gate（go-live 前必過，源自 2026-06-14 CEO review / HOLD SCOPE）
+
+> 背景：多策略系統已建好、103+ 測試綠、檢核清單（TSE≥60、雙策略授權、migration）機械上已完成。
+> **但閉環從未在真資料上跑出一筆策略 BUY**（`position_high_watermarks` 曾為 0 筆即鐵證）。
+> 開實單前，先用影子先行把閉環驗一遍、把停損的觀測與告警補上。
+
+| # | 項目 | 指令 / 驗收 | 狀態 |
+|---|---|---|---|
+| 0 | 回滾錨點 | `git tag` 已釘 `v0.1.0-pre-golive`；任何壞日 `git checkout v0.1.0-pre-golive` | ✅ 已完成 |
+| 1 | 殘留授權清理 | 已移除指向退役 trend_pullback 的 legacy `active-approval.json` | ✅ 已完成 |
+| 2 | **影子先行 ≥3 個交易日** | 連跑 `scripts/shadow_daily.sh`，逐日核對報告 §3〜§8（見下） | ⬜ 待執行 |
+| 3 | cron 失敗告警 | `shadow_daily.sh` 已在 run-daily 非 0 時輸出 `⚠ ALERT`；接上你的告警管道（Telegram/mail） | ⬜ 待接線 |
+| 4 | 開實單起步 | 全綠後建議先單策略小額（路徑 C），再放第二支 | ⬜ |
+
+**影子先行每日跑法（cron 可掛）：**
+
+```bash
+# 收盤後執行：run-daily（paper）+ 產生每日報告 + 失敗告警
+scripts/shadow_daily.sh simulation-main            # 日期預設今天
+scripts/shadow_daily.sh simulation-main 2026-06-12 # 指定日期
+```
+
+**每日報告落檔位置（A2 產物）：**
+
+| 檔案 | 內容 |
+|---|---|
+| `artifacts/reports/daily/<account>_<date>.txt` | 當日報告本體 |
+| `artifacts/reports/daily/LATEST.txt` | 最新一份報告的絕對路徑（單行，cron / 人工快速定位） |
+| `artifacts/reports/daily/INDEX.tsv` | 歷史索引：`date / account / status / path` |
+
+> 此目錄為執行時生成物，已列入 `.gitignore`，不入版控。
+> 也可單獨重產報告（不重跑模擬）：`python3 scripts/daily_report.py --date <YYYY-MM-DD>`。
+
+**影子先行每日人工核對清單（對著報告看）：**
+
+1. **§1 RUN 狀態** 全 `COMPLETED`，無 `last_error`。
+2. **§3 RISK_EXIT 監控中部位**：一旦有策略 BUY，監控數應 > 0，且**每檔都有移動停利水位**（若顯示「移動停利失效」＝ §2.2 水位 upsert 沒觸發，停損從第一天就壞）。
+3. **§4 今日成交 / §5 明日訊號**：BUY/SELL 標的與理由合理、無異常重複。
+4. **§6 執行事件**：`NETTING_SUPPRESSED` / `APPROVAL_*` 是否符合預期（退役 trend_pullback 的舊 `APPROVAL_INVALID` 屬已知無害）。
+5. **§8 對帳** 顯示 `✅ 通過`。
+
 詳細的初始化、訊號查詢、重置與 cron 排程說明見 [README.md](README.md) 第 4、5 節。
+go-live review 全文與兩個 🔴 見記憶 `ceo-review-golive-2026-06-14`。
