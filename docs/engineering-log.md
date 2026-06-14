@@ -9,6 +9,28 @@
 
 ---
 
+## 2026-06-14 ｜ 建立 uv venv + 修正依賴宣告缺漏（pytz）
+
+**背景／觸發**：UI/Web 需引入相依套件，使用者決定改用 venv 並偏好 uv。需先確認建 venv 對現行指令的影響。
+
+**影響檢查（重要）**：`scripts/run_daily_sim.sh` 與 `shadow_daily.sh` 已寫「有 `.venv/bin/python` 則優先用、否則 python3」。故一旦建 `.venv`，每日流程會**自動改用 venv**，venv 必須裝齊全部依賴（含 shioaji），否則日跑會壞。今天為週末非交易日，是安全切換+驗證窗口。
+
+**怎麼動**：
+- 新增 `requirements-web.txt`（fastapi/uvicorn/jinja2/python-multipart/httpx），與核心 `requirements.txt` 分離。
+- `uv venv --python python3`（解析到 CPython 3.11.13）；`uv pip install -r requirements.txt -r requirements-web.txt`。
+- venv 跑全測試**揪出隱性依賴**：`pytz` 被 `src/market_data/provider.py` 執行期使用，卻**從未宣告於 requirements**（先前靠系統環境碰巧有）。補進 `requirements.txt`。
+
+**考慮點／取捨**：
+- venv 解析到 **Python 3.11.13 + shioaji 1.5.3**（系統原為 3.10 + shioaji 1.3.2），因 requirements 用 `>=` 未鎖版。風險為「新版/新 Python 破壞既有行為」→ 以全測試驗證收斂。
+- 依賴分兩檔（核心 vs web）：優點是只跑交易核心者可略過 web stack；缺點是多一個檔。
+- 未鎖版（沿用專案既有 `>=` 風格）：優點維護簡單；缺點重建可能再漂版，日後可用 `uv pip compile` 產 lock。
+
+**優缺點**：優 — 環境隔離、uv 安裝快、順手揪出 pytz 宣告缺漏（潛在 Shioaji 同步炸點）。缺 — Python/套件版本較系統新，需持續以測試把關。
+
+**驗證**：`.venv` 下 `pytest` **109 passed**；`-m app portfolio reconcile` 通過。`.venv` 已在 `.gitignore`。
+
+---
+
 ## 2026-06-14 ｜ Web/CLI UI 架構與技術選型（討論定案中）
 
 **背景／觸發**：使用者要為系統做長期使用的 UI（單人、區網主機、手機經內網查看、SSH/本機操作），且需要寫入操作（設定手動成交結果、拒絕訊號等）。主機已有 nginx 並接了其他服務。未來想套用 neumorphism 風格（https://github.com/joshhu/uitest 02-neumorphism），但非現在。
