@@ -1336,13 +1336,14 @@ def cmd_portfolio_reconcile(args):
     
     account_id = resolve_account_id(conn, args.account)
     print(f"Reconciling account {account_id}...")
-    errors = projection.reconcile(account_id)
-    if not errors:
+    result = projection.reconcile(account_id)
+    # reconcile() 成功回傳 {"status": "RECONCILE_OK"}，失敗回傳含具體不一致欄位的 dict。
+    # （舊版誤用 `if not errors:` 判斷，非空的成功 dict 恆為真而永遠誤報失敗。）
+    if not result or (isinstance(result, dict) and result.get("status") == "RECONCILE_OK"):
         print("Reconciliation successful: cash ledger balances match projections.")
     else:
         print("Reconciliation failed! Errors found:")
-        for err in errors:
-            print(f"  - {err}")
+        print(f"  - {result}")
         sys.exit(1)
     conn.close()
 

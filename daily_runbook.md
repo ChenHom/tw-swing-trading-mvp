@@ -69,6 +69,22 @@ scripts/shadow_daily.sh simulation-main            # 日期預設今天
 scripts/shadow_daily.sh simulation-main 2026-06-12 # 指定日期
 ```
 
+**crontab 範例（影子先行，自 2026-06-15 週一起，交易日收盤後自動跑）：**
+
+> README §5 已記錄通用 cron 機制（包裝腳本 / 直接 crontab）；以下為**影子先行專用**的排程，
+> 與正式 `run_daily_sim.sh` 並存。非交易日（週末/國定假日）由 run-daily 內的交易日曆自動空轉，
+> 報告會記下當日無資料，不影響帳務。
+
+```cron
+# crontab -e 後貼入（請用絕對路徑）
+CRON_TZ=Asia/Taipei
+# 影子先行：週一~週五 14:00（收盤後 13:30 資料沉澱）跑 paper run-daily + 每日報告
+0 14 * * 1-5 /home/hom/services/stock/tw-day-trading/scripts/shadow_daily.sh simulation-main >> /home/hom/services/stock/tw-day-trading/logs/shadow_cron.log 2>&1
+```
+
+> * `shadow_daily.sh` 已在 run-daily 非 0 時於 stdout/log 輸出 `⚠ ALERT`；要真正收到通知，需把該鉤子接上 Telegram/mail（go-live gate #3）。
+> * 最新報告路徑隨時可由 `cat artifacts/reports/daily/LATEST.txt` 取得。
+
 **每日報告落檔位置（A2 產物）：**
 
 | 檔案 | 內容 |

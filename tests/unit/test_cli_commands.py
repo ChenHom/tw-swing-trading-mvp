@@ -2,11 +2,28 @@ import pytest
 from datetime import date
 from unittest.mock import MagicMock
 from src.portfolio.db import init_db, get_db_connection
-from src.cli import cmd_signal_list, cmd_simulation_reset, cmd_trade_plan, cmd_trade_record_fill, cmd_account_adjust_cash, cmd_report_pnl, resolve_account_id
+from src.cli import cmd_signal_list, cmd_simulation_reset, cmd_trade_plan, cmd_trade_record_fill, cmd_account_adjust_cash, cmd_report_pnl, cmd_portfolio_reconcile, resolve_account_id
 
 class MockArgs:
-    def __init__(self, date_str=None):
+    def __init__(self, date_str=None, account=None):
         self.date = date_str
+        self.account = account
+
+
+def test_cmd_portfolio_reconcile_reports_success_on_ok(temp_db_path, monkeypatch, capsys):
+    """回歸：reconcile() 成功回傳 {"status":"RECONCILE_OK"}（非空 dict），
+    CLI 不可再用 `if not errors` 而誤報失敗。"""
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    # 空且一致的帳戶（ledger 總額 0 == balance 0）→ RECONCILE_OK
+    args = MockArgs(account="recon-acct")
+    cmd_portfolio_reconcile(args)  # 不應 SystemExit
+
+    captured = capsys.readouterr()
+    assert "Reconciliation successful" in captured.out
+    assert "failed" not in captured.out.lower()
 
 @pytest.fixture
 def temp_db_path(tmp_path):
