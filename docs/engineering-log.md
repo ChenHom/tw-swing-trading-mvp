@@ -9,6 +9,32 @@
 
 ---
 
+## 2026-06-14 ｜ 唯讀 Web 儀表板 第一版（FastAPI + Jinja，分期 1）
+
+**背景／觸發**：UI 分期第一步 —— 唯讀儀表板，服務手機/區網查看與每日影子核對。使用者確認：子路徑 `ip/trading`、預設畫面、不認證、預設帳戶 `simulation-main`、頁面載入即時性。
+
+**怎麼動**：
+- `src/application/services/dashboard.py`：**service 層讀取側雛形**（純讀 projection/SQLite，回傳結構化 dict）。提供 `build_dashboard` / `list_accounts` / `list_reports` / `read_report`。
+- `src/web/server.py`：FastAPI app，`root_path` 由 `TRADING_WEB_ROOT_PATH`（預設 `/trading`）控制；路由 `/`（儀表板,可切帳戶/日期）、`/reports`、`/reports/{name}`(防目錄穿越)、`/healthz`。
+- 模板 `src/web/templates/*`（base/dashboard/reports）+ `static/style.css`（基本款、行動友善、單欄優先）。連結以 Jinja 全域 `base`=root_path 前綴，子路徑與本機直連皆正確。
+- `scripts/web_ui.sh`：uvicorn 啟動（綁 127.0.0.1:8800）。`docs/nginx-trading.conf.sample`：子路徑反代範例（proxy_pass 結尾斜線剝前綴 + X-Forwarded-Prefix）。
+- `tests/unit/test_web_server.py`：TestClient 冒煙（healthz、儀表板渲染、報告清單、404、目錄穿越阻擋）。
+
+**為什麼這樣動**：
+- 讀取邏輯先抽 service 層（不直接在路由查 DB），為日後寫入操作與 CLI TUI 共用鋪路；寫入暫不做（go-live 安全）。
+- 唯讀、不認證（信任區網、不對外）；DB 每請求開關。
+- 風格先基本款，neumorphism 之後再換（不影響資料層）。
+
+**過程中抓到的問題**：
+- 新版 Starlette `TemplateResponse` 簽名改為 `(request, name, context)`；舊式 `(name, {"request":...})` 會把 context dict 當成 template name → `unhashable type: dict`。已改新簽名。
+- 測試種子帳戶 balance 與 cash_ledger 不一致會被 reconcile 正確擋下（印證 reconcile 有效）；改種一致帳戶。
+
+**優缺點**：優 — 零寫入風險、service 層起步、手機/區網可用、報告可線上瀏覽。缺 — 尚無圖表（權益曲線待後續）、無自動刷新（需手動重整,符合一天一更新的資料節奏）。
+
+**驗證**：全套件 **114 passed**；對 live `data/app.db` TestClient 渲染 2026-06-12，現金 5,987、MANUAL 持倉、各區段皆正確輸出；`/healthz` ok、`/reports` 200。
+
+---
+
 ## 2026-06-14 ｜ 建立 uv venv + 修正依賴宣告缺漏（pytz）
 
 **背景／觸發**：UI/Web 需引入相依套件，使用者決定改用 venv 並偏好 uv。需先確認建 venv 對現行指令的影響。

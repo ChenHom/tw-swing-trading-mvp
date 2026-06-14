@@ -1,0 +1,52 @@
+/* 基本款樣式（之後可換 neumorphism）。行動裝置友善、單欄優先。 */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  background: #f4f5f7;
+  color: #222;
+  line-height: 1.5;
+}
+.topbar {
+  display: flex; align-items: center; gap: 1rem;
+  background: #1f2933; color: #fff; padding: .75rem 1rem;
+  position: sticky; top: 0; z-index: 10;
+}
+.topbar .brand { font-weight: 700; color: #fff; text-decoration: none; }
+.topbar nav { display: flex; gap: 1rem; }
+.topbar nav a { color: #cbd2d9; text-decoration: none; font-size: .95rem; }
+.topbar nav a:hover { color: #fff; }
+main { max-width: 1100px; margin: 0 auto; padding: 1rem; }
+.foot { text-align: center; color: #9aa5b1; padding: 1.5rem; font-size: .85rem; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 1rem; }
+.controls label { display: flex; flex-direction: column; font-size: .8rem; color: #616e7c; gap: .25rem; }
+.controls select, .controls input { padding: .4rem .5rem; border: 1px solid #cbd2d9; border-radius: 6px; font-size: 1rem; }
+.btn { padding: .45rem .8rem; background: #3e4c59; color: #fff; border-radius: 6px; text-decoration: none; font-size: .9rem; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+.card { background: #fff; border-radius: 10px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.card-label { font-size: .8rem; color: #7b8794; }
+.card-value { font-size: 1.6rem; font-weight: 700; margin-top: .25rem; }
+.card-value .unit { font-size: .9rem; font-weight: 400; color: #9aa5b1; }
+
+.badge { display: inline-block; padding: .15rem .6rem; border-radius: 999px; font-size: .9rem; font-weight: 600; }
+.badge.ok { background: #def7ec; color: #03543f; }
+.badge.bad { background: #fde8e8; color: #9b1c1c; }
+.badge.warn { background: #fdf6b2; color: #723b13; }
+.badge.muted { background: #e4e7eb; color: #616e7c; }
+
+.alert { background: #fde8e8; color: #9b1c1c; padding: .6rem 1rem; border-radius: 8px; }
+
+h2 { font-size: 1.1rem; margin: 1.25rem 0 .5rem; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+th, td { padding: .55rem .75rem; text-align: left; border-bottom: 1px solid #f0f2f5; font-size: .95rem; }
+th { background: #f8f9fb; color: #616e7c; font-weight: 600; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.pos { color: #03543f; }
+td.neg { color: #9b1c1c; }
+td.empty { text-align: center; color: #9aa5b1; }
+.tag { background: #e4e7eb; color: #52606d; padding: 0 .4rem; border-radius: 4px; font-size: .75rem; }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }

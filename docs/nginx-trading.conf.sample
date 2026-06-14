@@ -1,0 +1,24 @@
+# nginx 子路徑反向代理範例：http://<主機IP>/trading → 唯讀儀表板
+# 放進現有 server { } 區塊內（與其他服務並存）。
+# 服務以 scripts/web_ui.sh 啟動，預設綁 127.0.0.1:8800、root-path /trading。
+
+location /trading/ {
+    proxy_pass         http://127.0.0.1:8800/;   # 注意結尾斜線：剝除 /trading 前綴
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_set_header   X-Forwarded-Prefix /trading;   # 告知 app 子路徑
+}
+
+# 無斜線時導向有斜線版本，確保相對資源正確
+location = /trading {
+    return 301 /trading/;
+}
+
+# 單人區網、不對外。若想加最簡認證可解除以下註解（需先 htpasswd 建檔）：
+# location /trading/ {
+#     auth_basic           "trading";
+#     auth_basic_user_file /etc/nginx/.htpasswd-trading;
+#     ... （同上 proxy 設定）
+# }

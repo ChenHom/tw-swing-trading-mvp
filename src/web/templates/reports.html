@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}歷史報告 · tw-day-trading{% endblock %}
+{% block content %}
+<section>
+  <h2>歷史每日報告</h2>
+  <table>
+    <thead><tr><th>日期</th><th>帳戶</th><th>狀態</th><th></th></tr></thead>
+    <tbody>
+      {% for r in reports %}
+      <tr>
+        <td>{{ r.date }}</td>
+        <td>{{ r.account }}</td>
+        <td><span class="badge {{ 'ok' if r.status == 'COMPLETED' else 'warn' }}">{{ r.status }}</span></td>
+        <td><a href="{{ base }}/reports/{{ r.account }}_{{ r.date }}.txt" target="_blank">檢視</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="empty">尚無報告（跑 scripts/shadow_daily.sh 後產生）</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
