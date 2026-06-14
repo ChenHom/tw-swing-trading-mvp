@@ -1,0 +1,23 @@
+[Unit]
+Description=tw-day-trading 唯讀 Web 儀表板 (FastAPI/uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hom
+Group=hom
+WorkingDirectory=/home/hom/services/stock/tw-day-trading
+# 綁 127.0.0.1，僅由 nginx 子路徑 /trading 反向代理對外
+Environment=TRADING_WEB_HOST=127.0.0.1
+Environment=TRADING_WEB_PORT=8800
+Environment=TRADING_WEB_ROOT_PATH=/trading
+ExecStart=/home/hom/services/stock/tw-day-trading/.venv/bin/python -m uvicorn src.web.server:app --host 127.0.0.1 --port 8800 --root-path /trading
+Restart=on-failure
+RestartSec=3
+# 唯讀服務之最小安全強化
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

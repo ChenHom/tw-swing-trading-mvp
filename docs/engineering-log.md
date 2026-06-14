@@ -9,6 +9,23 @@
 
 ---
 
+## 2026-06-14 ｜ Web 儀表板常駐 (systemd) + 區網上線
+
+**背景／觸發**：phase 1 儀表板已用 nohup 跑起、手機經 `http://192.168.50.109/trading/`（nginx→127.0.0.1:8800）可見，但 nohup 重開機不會自啟。長期工具需常駐。
+
+**怎麼動**：新增 `deploy/trading-web.service`（systemd system unit，User=hom、用 `.venv` 執行 uvicorn、綁 127.0.0.1:8800、root_path=/trading、Restart=on-failure、開機自啟）+ `deploy/README.md` 安裝/管理說明。
+
+**為什麼這樣動**：
+- system unit（非 user unit）→ 不需登入即於開機啟動，符合區網常駐主機。安裝需一次 sudo。
+- 綁 127.0.0.1：8800 對外被防火牆擋，僅 nginx 反代，攻擊面最小。
+- 直接 ExecStart uvicorn（不經 shell）較易被 systemd 追蹤；`web_ui.sh` 保留供手動執行。
+
+**考慮點／取捨**：未開 `--reload`（正式服務不需熱載，改 code 後 `systemctl restart`）。最小安全強化（NoNewPrivileges/PrivateTmp）；未加 ProtectSystem 以免擋到 sqlite 檔存取。
+
+**驗證**：安裝由使用者以 sudo 執行（harness 的 `!` 無法輸入 sudo 密碼）；本機 `curl 127.0.0.1:8800/` 200、手機 `/trading/` 已確認可見。
+
+---
+
 ## 2026-06-14 ｜ 唯讀 Web 儀表板 第一版（FastAPI + Jinja，分期 1）
 
 **背景／觸發**：UI 分期第一步 —— 唯讀儀表板，服務手機/區網查看與每日影子核對。使用者確認：子路徑 `ip/trading`、預設畫面、不認證、預設帳戶 `simulation-main`、頁面載入即時性。
