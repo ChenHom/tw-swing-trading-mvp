@@ -1,6 +1,6 @@
 # UI 開發文件
 
-本文件說明 tw-day-trading 的使用者介面（Web 儀表板，未來含 CLI TUI）的**架構、資料流、執行/部署方式與擴充指南**，供後續開發者（含 AI 協作）依循。決策脈絡與變更歷史另見 [`engineering-log.md`](engineering-log.md)。
+本文件說明 tw-day-trading 的使用者介面（Web 儀表板，未來含 CLI TUI）的**架構、資料流、執行/部署方式與擴充指南**，供後續開發者（含 AI 協作）依循。決策脈絡與變更歷史另見 [`engineering-log.md`](engineering-log.md)；待辦/分期進度見 [`todo.md`](todo.md)。
 
 ---
 
@@ -160,5 +160,7 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 - 無認證（信任區網；如需，nginx basic-auth 一行）。
 - 持倉監控欄受 [`record-fill` 全歸 MANUAL](record-fill-strategy-attribution) 限制，待修。
 - 寫入操作、CLI TUI、neumorphism 風格為後續分期。
+
+完整待辦與分期進度見 [`todo.md`](todo.md)。
 
 相關記憶：`ui-requirements`、`record-fill-strategy-attribution`、`ceo-review-golive-2026-06-14`、`discord-alert-config`。
