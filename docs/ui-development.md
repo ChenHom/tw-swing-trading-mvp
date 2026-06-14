@@ -44,6 +44,7 @@
 | 路徑 | 角色 |
 |---|---|
 | `src/application/services/dashboard.py` | **讀取 service 層**：組儀表板資料、報告清單。純讀。 |
+| `src/application/services/trade_write.py` | **寫入 service 層**（C1/E1 骨架）：record_fill / reject_signal / un_reject_signal。純資料進出（不 print/exit/argparse），走既有 projection／signal_items SQL，不繞過。CLI 已為第一個薄消費者；**Web 路由 go-live 影子驗證通過前不接**。 |
 | `src/application/services/__init__.py` | services 套件 |
 | `src/web/server.py` | FastAPI app 與路由 |
 | `src/web/templates/base.html` | 版型骨架（topbar/nav，`{{ base }}` 連結前綴） |
@@ -55,6 +56,7 @@
 | `deploy/README.md` | 常駐安裝/管理說明 |
 | `docs/nginx-trading.conf.sample` | nginx 子路徑反代範例 |
 | `tests/unit/test_web_server.py` | TestClient 冒煙測試 |
+| `tests/unit/test_trade_write_service.py` | 寫入 service 直測（bucket 落點、monitor_status、TradeWriteError） |
 
 ---
 
@@ -136,8 +138,8 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 **加一個新頁面**：於 `server.py` 加 `@app.get(...)` 路由 → 呼叫 service → `templates.TemplateResponse(request, "x.html", {...})`（**注意新版 Starlette 簽名為 `(request, name, context)`**）。模板 extends `base.html`，連結用 `{{ base }}/...`。
 
 **加寫入操作（分期 3，需謹慎）**：
-1. 先抽 `services/<域>.py` 寫入 service，內部呼叫既有 engine/projection 邏輯（**不可繞過**）。
-2. 路由用 `POST`，搭配 `python-multipart` 表單；成功後 redirect 回儀表板（PRG 模式）。
+1. ~~先抽 `services/<域>.py` 寫入 service~~ → **已備（2026-06-15）**：`services/trade_write.py` 封裝 record_fill / reject_signal / un_reject_signal，內部走既有 projection／signal_items SQL（**不繞過**）；成功回結構化 dict、驗證錯誤拋 `TradeWriteError`，presentation 由呼叫端渲染。CLI 三個 handler 已改為薄消費者。
+2. 路由用 `POST`，搭配 `python-multipart` 表單；成功後 redirect 回儀表板（PRG 模式）。呼叫 `trade_write.*`，connection 生命週期由路由 own（比照讀取側）；`TradeWriteError` 渲染為表單錯誤、`ValueError`（SELL_WITHOUT_POSITION / LONG_TERM_PROTECTED）渲染為操作失敗。record_fill 的 `exit_strategy_ids` 由路由以 `load_exit_managed_definitions` 算出傳入（長期/MANUAL 免查），`monitor_status` 枚舉自行映射文案。
 3. ~~先處理 record-fill 策略歸屬待修項~~ → **已完成（2026-06-14）**：CLI `record-fill --strategy-id` 已可歸策略並驗證；Web「設定成交結果」表單應提供策略下拉（來源 `registry.PARAMS_MODELS`）並沿用同一驗證／監控語意。
 4. go-live 影子驗證通過前不啟用。
 

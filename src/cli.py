@@ -31,6 +31,7 @@ from src.trading.planner import OrderPlanner, PortfolioState
 from src.trading.allocator import GlobalLimits
 from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
+from src.application.services import trade_write
 
 def get_settings() -> AppSettings:
     return AppSettings()
@@ -1203,150 +1204,105 @@ def cmd_trade_reject_signal(args):
     """標記一個訊號為 REJECTED，trade plan 與 execute-pending 將跳過此訊號。"""
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
-    cursor = conn.cursor()
+    try:
+        try:
+            result = trade_write.reject_signal(
+                conn, signal_id=args.signal_id, reason=getattr(args, "reason", None)
+            )
+        except trade_write.TradeWriteError as e:
+            print(e.message)
+            sys.exit(1)
 
-    # Verify signal_id exists
-    cursor.execute(
-        "SELECT signal_id, symbol, action, user_override FROM signal_items WHERE signal_id = ?",
-        (args.signal_id,)
-    )
-    row = cursor.fetchone()
-    if not row:
-        print(f"找不到訊號 ID：{args.signal_id}")
+        if result["status"] == "already_rejected":
+            print(f"訊號 {result['signal_id']} ({result['symbol']} {result['action']}) 已經是拒絕狀態，無需重複設定。")
+            return
+        action_label = "買入" if result["action"] == "BUY" else "賣出"
+        print(f"已拒絕訊號：{result['signal_id']}  ({result['symbol']} {action_label})  原因：{result['reason']}")
+    finally:
         conn.close()
-        sys.exit(1)
-
-    if row["user_override"] == "REJECTED":
-        print(f"訊號 {args.signal_id} ({row['symbol']} {row['action']}) 已經是拒絕狀態，無需重複設定。")
-        conn.close()
-        return
-
-    reason = getattr(args, "reason", None) or "手動拒絕"
-    now_str = datetime.now(timezone.utc).isoformat()
-    cursor.execute(
-        """
-        UPDATE signal_items
-        SET user_override = 'REJECTED', override_reason = ?, overridden_at = ?
-        WHERE signal_id = ?
-        """,
-        (reason, now_str, args.signal_id)
-    )
-    conn.commit()
-    action_label = "買入" if row["action"] == "BUY" else "賣出"
-    print(f"已拒絕訊號：{args.signal_id}  ({row['symbol']} {action_label})  原因：{reason}")
-    conn.close()
 
 
 def cmd_trade_un_reject_signal(args):
     """取消訊號的 REJECTED 標記，恢復為正常待執行狀態。"""
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
-    cursor = conn.cursor()
+    try:
+        try:
+            result = trade_write.un_reject_signal(conn, signal_id=args.signal_id)
+        except trade_write.TradeWriteError as e:
+            print(e.message)
+            sys.exit(1)
 
-    cursor.execute(
-        "SELECT signal_id, symbol, action, user_override FROM signal_items WHERE signal_id = ?",
-        (args.signal_id,)
-    )
-    row = cursor.fetchone()
-    if not row:
-        print(f"找不到訊號 ID：{args.signal_id}")
+        if result["status"] == "not_rejected":
+            print(f"訊號 {result['signal_id']} 目前並非拒絕狀態 (user_override={result['user_override']})，無需操作。")
+            return
+        action_label = "買入" if result["action"] == "BUY" else "賣出"
+        print(f"已恢復訊號：{result['signal_id']}  ({result['symbol']} {action_label})  → 恢復為待執行狀態")
+    finally:
         conn.close()
-        sys.exit(1)
 
-    if row["user_override"] != "REJECTED":
-        print(f"訊號 {args.signal_id} 目前並非拒絕狀態 (user_override={row['user_override']})，無需操作。")
-        conn.close()
-        return
 
-    cursor.execute(
-        "UPDATE signal_items SET user_override = NULL, override_reason = NULL, overridden_at = NULL WHERE signal_id = ?",
-        (args.signal_id,)
-    )
-    conn.commit()
-    action_label = "買入" if row["action"] == "BUY" else "賣出"
-    print(f"已恢復訊號：{args.signal_id}  ({row['symbol']} {action_label})  → 恢復為待執行狀態")
-    conn.close()
+# record-fill 監控狀態枚舉 → CLI 中文提示（presentation 留在 CLI；service 只回狀態）。
+_MONITOR_NOTES = {
+    "long_term_excluded": "（長期持有，結構性排除於 risk_exit 監控）",
+    "manual_excluded": "（MANUAL，結構性排除於 risk_exit 監控）",
+    "monitored": "（已納入 risk_exit 停損監控）",
+    "not_monitored": "（此策略無 exit 區塊，不受 risk_exit 監控）",
+    "indeterminate": "（策略 exit 設定載入失敗，無法判定監控狀態，請以 strategy inspect 確認）",
+}
 
 
 def cmd_trade_record_fill(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)
-    projection = PortfolioProjection(conn)
-    
-    symbol = args.symbol
-    side = args.side.upper()
-    qty = args.quantity
-    price = args.price
-    account_id = resolve_account_id(conn, args.account)
-    
-    price_scaled = int(round(price * 10000))
-
-    is_long_term = 1 if getattr(args, "long_term", False) else 0
-
-    # 策略歸屬：未指定 → MANUAL（沿用舊行為）。指定則須為已登錄策略，
-    # 使依策略訊號手動下的單能落在對應 bucket、納入 risk_exit 與策略別損益。
-    strategy_id = getattr(args, "strategy_id", None) or MANUAL_STRATEGY_ID
-    known_strategies = set(strategy_registry.PARAMS_MODELS) | {MANUAL_STRATEGY_ID}
-    if strategy_id not in known_strategies:
-        valid = ", ".join(sorted(strategy_registry.PARAMS_MODELS))
-        print(
-            f"錯誤：未知策略 strategy_id='{strategy_id}'。"
-            f"可用策略：{valid}；或省略改用 {MANUAL_STRATEGY_ID}（預設，不受 risk_exit 監控）。"
-        )
-        conn.close()
-        sys.exit(1)
-
-    fill_payload = {
-        "fill_id": f"fill-manual-{uuid_like()}",
-        "account_id": account_id,
-        "run_id": f"manual-{date.today().strftime('%Y%m%d')}",
-        "order_id": f"ord-manual-{uuid_like()}",
-        "execution_key": f"manual-fill-{symbol}-{uuid_like()}",
-        "symbol": symbol,
-        "side": side,
-        "quantity": qty,
-        "price": price_scaled,
-        "filled_at": datetime.now().isoformat(),
-        "is_long_term": is_long_term,
-        "source": "MANUAL_IMPORT",
-        "strategy_id": strategy_id
-    }
-    
     try:
-        projection.apply_fill_transaction(fill_payload)
-        
-        # No auto-addition to universe.yaml anymore to prevent configuration pollution and keep backtest reproducibility
-        
-        trade_value = int(round(qty * price_scaled / 10000.0))
-        broker_fee = max(20, int(round(trade_value * 0.001425)))
-        tax = int(round(trade_value * 0.003)) if side == "SELL" else 0
+        account_id = resolve_account_id(conn, args.account)
+        side = args.side.upper()
+        is_long_term = bool(getattr(args, "long_term", False))
+        strategy_id = getattr(args, "strategy_id", None) or MANUAL_STRATEGY_ID
 
-        # risk_exit 監控資格：長期持有與 MANUAL 結構性排除；其餘策略須具 exit 區塊。
-        if is_long_term:
-            monitor_note = "（長期持有，結構性排除於 risk_exit 監控）"
-        elif strategy_id == MANUAL_STRATEGY_ID:
-            monitor_note = "（MANUAL，結構性排除於 risk_exit 監控）"
+        # 監控資格的 exit 集合由 CLI 決定後傳入（service 保持為純函式輸入）。
+        # 長期/MANUAL 結構性排除，無需查 exit 定義（亦避免不必要的 YAML IO）；
+        # 其餘策略才載入，失敗則退 None → service 回報 indeterminate（不誤報錄入失敗）。
+        if is_long_term or strategy_id == MANUAL_STRATEGY_ID:
+            exit_strategy_ids = None
         else:
-            # 監控資格為顯示用；fill 已 commit，查詢失敗時不可拋出（會誤報錄入失敗），
-            # 但也不可斷言「無 exit 區塊」——改回不確定語氣，避免與引擎事實相反。
             try:
-                exit_managed = strategy_registry.load_exit_managed_definitions(settings)
+                exit_strategy_ids = set(strategy_registry.load_exit_managed_definitions(settings))
             except Exception:
-                exit_managed = None
-            if exit_managed is None:
-                monitor_note = "（策略 exit 設定載入失敗，無法判定監控狀態，請以 strategy inspect 確認）"
-            elif strategy_id in exit_managed:
-                monitor_note = "（已納入 risk_exit 停損監控）"
-            else:
-                monitor_note = "（此策略無 exit 區塊，不受 risk_exit 監控）"
+                exit_strategy_ids = None
+
+        try:
+            result = trade_write.record_fill(
+                conn,
+                account_id=account_id,
+                symbol=args.symbol,
+                side=side,
+                quantity=args.quantity,
+                price=args.price,
+                strategy_id=strategy_id,
+                is_long_term=is_long_term,
+                exit_strategy_ids=exit_strategy_ids,
+            )
+        except trade_write.TradeWriteError as e:
+            print(e.message)
+            sys.exit(1)
+        except Exception as e:
+            print(f"錄入成交資料失敗: {e}")
+            sys.exit(1)
+
+        monitor_note = _MONITOR_NOTES[result["monitor_status"]]
+        trade_value = result["trade_value"]
+        broker_fee = result["broker_fee"]
+        tax = result["tax"]
 
         print("成功錄入成交資料：")
-        print(f"  - 帳戶：{account_id}")
-        print(f"  - 標的：{symbol}")
-        print(f"  - 策略歸屬：{strategy_id} {monitor_note}")
-        print(f"  - 動作：{side}")
-        print(f"  - 數量：{qty} 股")
-        print(f"  - 成交單價：{price:.2f} 元 (資料庫整數值: {price_scaled})")
+        print(f"  - 帳戶：{result['account_id']}")
+        print(f"  - 標的：{result['symbol']}")
+        print(f"  - 策略歸屬：{result['strategy_id']} {monitor_note}")
+        print(f"  - 動作：{result['side']}")
+        print(f"  - 數量：{result['quantity']} 股")
+        print(f"  - 成交單價：{args.price:.2f} 元 (資料庫整數值: {result['price_scaled']})")
         print(f"  - 成交總額：{trade_value:,} TWD (單價 x 數量)")
         print(f"  - 估計手續費：{broker_fee:,} TWD")
         if tax > 0:
@@ -1356,12 +1312,9 @@ def cmd_trade_record_fill(args):
         else:
             total_cost = trade_value + broker_fee
             print(f"  - 估計總付出成本：{total_cost:,} TWD")
-    except Exception as e:
-        print(f"錄入成交資料失敗: {e}")
-        sys.exit(1)
     finally:
         conn.close()
-        
+
 def cmd_portfolio_reconcile(args):
     settings = get_settings()
     conn = get_db_connection(settings.trading.database_path)

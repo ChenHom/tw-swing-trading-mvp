@@ -9,6 +9,32 @@
 
 ---
 
+## 2026-06-15 ｜ 寫入側 service 骨架 + trade 域抽取（C1 前置／E1 第一刀）
+
+**背景／觸發**：UI 分期 C1「寫入操作」依安全鐵律（ui-development §2/§9）必須走「與 CLI 相同、已驗證的 engine/projection 邏輯」，UI 不得直接 `INSERT/UPDATE` 事實表。但這些寫入邏輯原本內嵌在 `cli.py` 的三個 handler（`cmd_trade_record_fill` / `cmd_trade_reject_signal` / `cmd_trade_un_reject_signal`），混雜 argparse／DB／print／`sys.exit`，無法被未來 Web POST 直接重用，也是 E1（cli.py 1853 行技術債）的一部分。
+
+**怎麼動**：
+- 新增 `src/application/services/trade_write.py`，比照讀取側 `dashboard.py` 風格：module-level 函式、接 `conn`、無副作用式輸出（不 print／exit／argparse）。封裝 `record_fill` / `reject_signal` / `un_reject_signal`。成功回結構化 dict；使用者層級驗證錯誤拋 `TradeWriteError(code, message)`。
+- `record_fill` 走既有 `PortfolioProjection.apply_fill_transaction`（沿用 FIFO/cash/PnL，不繞過）；未知 strategy_id 於寫入前拋 `UNKNOWN_STRATEGY`（不寫入任何 fill）；監控資格回 `monitor_status` 枚舉（`long_term_excluded` / `manual_excluded` / `monitored` / `not_monitored` / `indeterminate`），exit 集合由呼叫端傳入（保持純函式輸入）。
+- `cli.py` 三個 handler 改為薄消費者：解析 args → 算 `exit_strategy_ids`（長期/MANUAL 免查；其餘 try/except 載入失敗退 None）→ 呼叫 service → 依回傳 dict／`monitor_status` 映射**現有中文輸出字串（逐字保留）** → `except TradeWriteError` print+`exit(1)`、`finally: conn.close()`。
+- 新增 `tests/unit/test_trade_write_service.py`（14 直測）。
+
+**為什麼這樣動**：寫入路徑的 invariant（FIFO 隔離、冪等、授權閘門、原子提交）全在 projection／既有 SQL，service 只搬「資料進出」這層、不重寫邏輯，故風險最小。presentation（中文提示文案、`買入/賣出` 標籤、monitor_status→文字）留在 CLI，service 只回狀態枚舉，未來 Web 自行渲染——一份 service、兩個前端。
+
+**考慮的替代方案與取捨**：
+- 曾考慮 service 直接回中文提示字串：否決，會把 presentation 綁死於 CLI，Web 無法重用語意；改回枚舉。
+- 曾考慮 service 內部自行 `load_exit_managed_definitions`：否決，會讓監控判定耦合 settings／YAML IO，且破壞既有測試「長期持有不查 exit 定義」的斷言；改為 exit 集合由呼叫端決定、service 純函式判定（`None`→indeterminate）。
+- 本計畫**不接任何 Web POST 路由**（C1 啟用受 go-live 影子驗證 gate），`git diff src/web/server.py` 為空，只備骨架。
+- E1 僅抽 trade 域三操作，其餘域（signal/report/market/approval/portfolio）列為後續，避免一次大改。
+
+**邊界提醒**：`apply_fill_transaction` 的 `ValueError`（SELL_WITHOUT_POSITION / LONG_TERM_PROTECTED）由 service 往外傳、CLI 渲染為「錄入成交資料失敗」；reject/un-reject 由 service 自行 commit（沿用現行行為）。connection 生命週期由呼叫端 own（service 不 close，比照 dashboard）。
+
+**驗證**：全套件 136 passed（122 + 14 新 service 直測）；既有 CLI 輸出斷言不變；`git diff src/web/server.py` 空；`app.py trade record-fill -h` 參數不變。
+
+**關聯**：todo C1（service 骨架已備、Web 路由待 go-live）／E1（第一刀）、UI 分期 C1 前置、計畫 `drifting-spinning-cerf`。
+
+---
+
 ## 2026-06-14 ｜ record-fill 可歸策略（A1／資料正確性）
 
 **背景／觸發**：手動補錄成交 `trade record-fill` 一律寫死 `strategy_id='MANUAL'`，而 MANUAL 結構性排除於 risk_exit 監控與策略別損益。但使用者實際流程是「看策略訊號→自行到券商手動下單→事後補錄」，這類成交意圖上屬某策略，全歸 MANUAL 會導致 (a) 不受停損監控、(b) 策略別損益失真，亦使儀表板「監控」欄恆為 0（待修項 [[record-fill-strategy-attribution]]）。

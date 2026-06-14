@@ -28,7 +28,7 @@
 
 - ✅ 分期 1：唯讀 Web 儀表板（commit 2dd94cd）＋常駐 unit（0d7dc04）＋預設日期/移除底部（2ad8aed）
 - ✅ service 層讀取側雛形（`services/dashboard.py`）
-- ⬜ **C1 分期 2：service 層寫入側 + 寫入操作**：設定成交結果（含策略歸屬，A1 ✅ 已備妥 `--strategy-id`，Web 表單沿用）、拒絕訊號（`reject-signal`）。寫入必走既有 engine/projection 邏輯（不可繞過）。**go-live 影子驗證通過前不啟用。**
+- 🔄 **C1 分期 2：service 層寫入側 + 寫入操作**：**寫入 service 骨架已備（2026-06-15，`services/trade_write.py`：record_fill / reject_signal / un_reject_signal，CLI 已改薄消費者、14 直測綠燈）**；**Web POST 路由待 go-live**。設定成交結果（含策略歸屬，A1 ✅ `--strategy-id`，Web 表單沿用）、拒絕訊號（`reject-signal`）。寫入必走既有 engine/projection 邏輯（不可繞過）。**go-live 影子驗證通過前不啟用。**
 - ⬜ **C2 分期 4：CLI TUI（Textual）**：SSH/本機操作中心，與 Web 共用 service 層。
 - ⬜ **C3 圖表**：權益曲線等視覺化。
 - ⬜ **C4 neumorphism 風格**：套用指定設計稿（只動 `static/style.css` 與模板 class，不動資料層）。非現在。
@@ -42,7 +42,7 @@
 
 ## E. 技術債
 
-- ⬜ **E1 拆 `src/cli.py`**：1853 行 / 62 指令、churn 之冠（CEO review 第一順位債）。建議按領域（signal/trade/report/market）拆子模組；與 C1 的 service 層抽取可一併進行。
+- 🔄 **E1 拆 `src/cli.py`**：1853 行 / 62 指令、churn 之冠（CEO review 第一順位債）。建議按領域（signal/trade/report/market）拆子模組；與 C1 的 service 層抽取可一併進行。**第一刀已下（2026-06-15）**：trade 域三個寫入操作抽至 `services/trade_write.py`，CLI handler 變薄。其餘域（signal/report/market/approval/portfolio）續抽，dispatch 表改 import 各域 handler。
 
 ## F. 流程 / 工具
 
