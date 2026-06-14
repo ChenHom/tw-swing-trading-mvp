@@ -469,6 +469,214 @@ def test_record_fill_sets_source_manual_import(temp_db_path, monkeypatch, capsys
     conn.close()
 
 
+def test_record_fill_default_strategy_is_manual(temp_db_path, monkeypatch, capsys):
+    """未指定 --strategy-id 時應沿用舊行為，歸 MANUAL 且註明排除於監控。"""
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    class MockRecordFillArgs:
+        symbol = "2330"
+        side = "BUY"
+        quantity = 10
+        price = 100.0
+        account = "acc-manual-default"
+        long_term = False
+        strategy_id = None
+
+    cmd_trade_record_fill(MockRecordFillArgs())
+
+    captured = capsys.readouterr()
+    assert "策略歸屬：MANUAL" in captured.out
+    assert "結構性排除於 risk_exit 監控" in captured.out
+
+    conn = get_db_connection(temp_db_path)
+    row = conn.execute(
+        "SELECT strategy_id FROM fills WHERE account_id = 'acc-manual-default'"
+    ).fetchone()
+    assert row["strategy_id"] == "MANUAL"
+    lot = conn.execute(
+        "SELECT strategy_id FROM position_lots WHERE account_id = 'acc-manual-default'"
+    ).fetchone()
+    assert lot["strategy_id"] == "MANUAL"
+    conn.close()
+
+
+def test_record_fill_attributes_to_strategy_and_is_monitored(temp_db_path, monkeypatch, capsys):
+    """指定一個具 exit 區塊的策略：fill / lot 落在該 bucket，且提示已納入監控。"""
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    # 隔離 YAML 載入：聲明 trend_breakout 具 exit 區塊（受監控）。
+    monkeypatch.setattr(
+        "src.cli.strategy_registry.load_exit_managed_definitions",
+        lambda settings: {"trend_breakout": object()},
+    )
+
+    class MockRecordFillArgs:
+        symbol = "2317"
+        side = "BUY"
+        quantity = 100
+        price = 50.0
+        account = "acc-strat"
+        long_term = False
+        strategy_id = "trend_breakout"
+
+    cmd_trade_record_fill(MockRecordFillArgs())
+
+    captured = capsys.readouterr()
+    assert "策略歸屬：trend_breakout" in captured.out
+    assert "已納入 risk_exit 停損監控" in captured.out
+
+    conn = get_db_connection(temp_db_path)
+    fill = conn.execute(
+        "SELECT strategy_id FROM fills WHERE account_id = 'acc-strat'"
+    ).fetchone()
+    assert fill["strategy_id"] == "trend_breakout"
+    lot = conn.execute(
+        "SELECT strategy_id FROM position_lots WHERE account_id = 'acc-strat'"
+    ).fetchone()
+    assert lot["strategy_id"] == "trend_breakout"
+
+    # get_strategy_positions（非長期）應將其視為受監控的策略部位。
+    from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
+    proj = PortfolioProjection(conn)
+    positions = proj.get_strategy_positions("acc-strat", include_long_term=False)
+    assert ("trend_breakout", "2317") in positions
+    assert all(sid != MANUAL_STRATEGY_ID for (sid, _s) in positions)
+    conn.close()
+
+
+def test_record_fill_strategy_without_exit_block_not_monitored(temp_db_path, monkeypatch, capsys):
+    """歸入已登錄但無 exit 區塊的策略：仍寫入該 bucket，但提示不受監控。"""
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr(
+        "src.cli.strategy_registry.load_exit_managed_definitions",
+        lambda settings: {},  # 無任何受監控策略
+    )
+
+    class MockRecordFillArgs:
+        symbol = "2317"
+        side = "BUY"
+        quantity = 100
+        price = 50.0
+        account = "acc-noexit"
+        long_term = False
+        strategy_id = "trend_pullback"
+
+    cmd_trade_record_fill(MockRecordFillArgs())
+
+    captured = capsys.readouterr()
+    assert "策略歸屬：trend_pullback" in captured.out
+    assert "此策略無 exit 區塊，不受 risk_exit 監控" in captured.out
+
+
+def test_record_fill_long_term_with_strategy_excluded(temp_db_path, monkeypatch, capsys):
+    """長期持有即使指定策略亦結構性排除於監控（且不觸發 exit 定義查詢）。"""
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    def _boom(settings):
+        raise AssertionError("長期持有路徑不應查詢 exit 定義")
+
+    monkeypatch.setattr(
+        "src.cli.strategy_registry.load_exit_managed_definitions", _boom
+    )
+
+    class MockRecordFillArgs:
+        symbol = "2317"
+        side = "BUY"
+        quantity = 100
+        price = 50.0
+        account = "acc-lt-strat"
+        long_term = True
+        strategy_id = "trend_breakout"
+
+    cmd_trade_record_fill(MockRecordFillArgs())
+
+    captured = capsys.readouterr()
+    assert "策略歸屬：trend_breakout" in captured.out
+    assert "長期持有，結構性排除於 risk_exit 監控" in captured.out
+
+    conn = get_db_connection(temp_db_path)
+    lot = conn.execute(
+        "SELECT strategy_id, is_long_term FROM position_lots WHERE account_id = 'acc-lt-strat'"
+    ).fetchone()
+    assert lot["strategy_id"] == "trend_breakout"
+    assert lot["is_long_term"] == 1
+    conn.close()
+
+
+def test_record_fill_exit_config_load_failure_is_indeterminate(temp_db_path, monkeypatch, capsys):
+    """exit 設定載入失敗時：fill 仍寫入（不誤報失敗），且提示為不確定語氣而非斷言不受監控。"""
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    def _raise(settings):
+        raise ValueError("STRATEGY_ID_MISMATCH: 模擬設定錯誤")
+
+    monkeypatch.setattr(
+        "src.cli.strategy_registry.load_exit_managed_definitions", _raise
+    )
+
+    class MockRecordFillArgs:
+        symbol = "2317"
+        side = "BUY"
+        quantity = 100
+        price = 50.0
+        account = "acc-cfgfail"
+        long_term = False
+        strategy_id = "trend_breakout"
+
+    cmd_trade_record_fill(MockRecordFillArgs())  # 不應 SystemExit
+
+    captured = capsys.readouterr()
+    assert "成功錄入成交資料" in captured.out
+    assert "無法判定監控狀態" in captured.out
+    # 不可出現與事實相反的「無 exit 區塊」斷言
+    assert "無 exit 區塊" not in captured.out
+
+    conn = get_db_connection(temp_db_path)
+    row = conn.execute(
+        "SELECT strategy_id FROM fills WHERE account_id = 'acc-cfgfail'"
+    ).fetchone()
+    assert row is not None and row["strategy_id"] == "trend_breakout"
+    conn.close()
+
+
+def test_record_fill_unknown_strategy_rejected(temp_db_path, monkeypatch, capsys):
+    """未登錄的 strategy_id 應被拒絕，且不寫入任何 fill。"""
+    mock_settings = MagicMock()
+    mock_settings.trading.database_path = temp_db_path
+    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+
+    class MockRecordFillArgs:
+        symbol = "2317"
+        side = "BUY"
+        quantity = 100
+        price = 50.0
+        account = "acc-bogus"
+        long_term = False
+        strategy_id = "not_a_real_strategy"
+
+    with pytest.raises(SystemExit):
+        cmd_trade_record_fill(MockRecordFillArgs())
+
+    captured = capsys.readouterr()
+    assert "未知策略" in captured.out
+
+    conn = get_db_connection(temp_db_path)
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM fills WHERE account_id = 'acc-bogus'"
+    ).fetchone()
+    assert row["c"] == 0
+    conn.close()
+
+
 def test_simulation_run_daily_locked(temp_db_path, monkeypatch, capsys):
     """Second concurrent simulation run-daily should exit with SIMULATION_ALREADY_RUNNING."""
     import fcntl

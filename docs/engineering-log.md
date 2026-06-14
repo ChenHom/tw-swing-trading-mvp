@@ -9,6 +9,38 @@
 
 ---
 
+## 2026-06-14 ｜ record-fill 可歸策略（A1／資料正確性）
+
+**背景／觸發**：手動補錄成交 `trade record-fill` 一律寫死 `strategy_id='MANUAL'`，而 MANUAL 結構性排除於 risk_exit 監控與策略別損益。但使用者實際流程是「看策略訊號→自行到券商手動下單→事後補錄」，這類成交意圖上屬某策略，全歸 MANUAL 會導致 (a) 不受停損監控、(b) 策略別損益失真，亦使儀表板「監控」欄恆為 0（待修項 [[record-fill-strategy-attribution]]）。
+
+**怎麼動**：
+- `cli.py` `record-fill` 新增 `--strategy-id`（預設仍 `MANUAL`，向後相容）。
+- 驗證：strategy_id 須屬 `registry.PARAMS_MODELS` 或 `MANUAL`，否則印錯誤訊息（列出可用策略）並 `exit(1)`，不寫入任何 fill。
+- 成功輸出新增「策略歸屬」行並標示監控資格：長期持有／MANUAL → 結構性排除；具 exit 區塊策略 → 已納入監控；無 exit 區塊策略 → 不受監控。監控資格查詢以 `load_exit_managed_definitions` try/except 包覆（防 settings mock 或 YAML 缺檔時噴錯）。
+- 新增 5 個 CLI 測試（預設 MANUAL、歸策略受監控、無 exit 區塊、長期+策略排除、未知策略拒絕）。
+
+**為什麼這樣動**：下游機制（per-(strategy_id,symbol) FIFO 隔離、策略別 PnL、`update_high_watermarks`、`RiskExitEngine`）原本就以 strategy bucket 運作，唯一缺口是 record-fill 寫死 MANUAL。故最小且正確的修法只是「讓 record-fill 能指定 bucket」，不動 projection／engine。歸入具 exit 的策略後，當日起 daily run 的 `update_high_watermarks` 會自動納入該部位、risk_exit 即監控之；建倉首日無 watermark 時 risk_exit 以 `max(買入均價, 當日收盤)` 保守初始化，行為正確。
+
+**考慮的替代方案與取捨**：
+- 曾考慮加 `--from-signal` 由來源訊號帶出歸屬（更貼近使用者流程），但需處理 symbol/side 一致性與更多狀態，耦合 signals 表；屬 C1 Web 寫入 UI（go-live 影子驗證前不啟用）一併設計較妥，本次不納入，先把資料側 `--strategy-id` 做穩。
+- 驗證來源用 `PARAMS_MODELS`（registry 真實常數、免檔案 IO），而非 `load_strategy_definition`（需讀 YAML）。
+- record-fill 仍為 Manifest 授權的例外路徑：補錄的是「外部券商已發生的事實」，BUY 不查授權閘門、SELL 本就不受授權閘門——歸入策略不改變此性質。
+
+**邊界提醒**：SELL 的 FIFO 扣減是 per-bucket，補錄 SELL 須與當初 BUY 歸同一 strategy_id，否則 `SELL_WITHOUT_POSITION`（錯誤訊息已含 strategy_id）。長期持有即使指定策略仍排除於監控（is_long_term 優先）。
+
+**驗證**：全套件 120 passed；`app.py trade record-fill -h` 顯示新參數；新測試涵蓋四種監控提示與未知策略拒絕（不寫入 fill）。
+
+**審查後修正（同日，對抗性多視角審查確認 3 項真實問題）**：
+1. *CLI 監控提示誤導（low）*：`load_exit_managed_definitions` 的 broad `except` 失敗時退回空 dict，會對實際具 exit 區塊的策略誤印「無 exit 區塊，不受監控」。改為失敗時退 `None` 並印不確定語氣（「exit 設定載入失敗，無法判定…」）；fill 已 commit，故仍不可拋出（會誤報錄入失敗）。新增測試 `test_record_fill_exit_config_load_failure_is_indeterminate`。
+2. *儀表板監控判定不一致（medium，先前既存、被本次新語意凸顯）*：`dashboard._positions` 原為 `monitored = 非MANUAL and 非長期`，未檢查 exit 區塊，與 `RiskExitEngine`／新 CLI 提示／`daily_report` 三方矛盾（無 exit 區塊的策略會被誤標監控）。改為接受 `exit_strategy_ids`，`monitored = 非MANUAL and 非長期 and sid∈exit_strategy_ids`；`server.py` 新增 `_exit_strategy_ids()`（載入失敗回 None→不 500）注入 `build_dashboard`。新增測試 `test_dashboard_monitored_requires_exit_block`。目前三策略皆有 exit 區塊，故為潛伏不一致，但與本任務「監控欄正確」目標直接相關，故一併修正。
+3. *文件語意過強（nit）*：`ui-development.md §6` 補上「須具 exit 區塊」限定，與引擎/CLI 對齊。
+
+**修正後驗證**：全套件 122 passed（+2 新測試）。
+
+**關聯**：todo A1／D1、[[record-fill-strategy-attribution]]、UI 分期 C1 前置。
+
+---
+
 ## 2026-06-14 ｜ 儀表板預設日期改最近 run 日 + 移除底部字串
 
 **背景／觸發**：使用者反映明日訊號、執行事件、risk_exit 監控、持倉監控欄皆空。診斷 live DB 後確認**非 bug**：(1) 預設日期是今天（週日 06-14 無 run）→ 全空；(2) 8 筆訊號全屬已退役 `trend_pullback`，分布於 06-10/06-11，06-12 無訊號、僅 1 筆 APPROVAL_INVALID 事件；(3) 9 筆持倉全 MANUAL → risk_exit 監控結構性為 0。

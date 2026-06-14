@@ -22,6 +22,7 @@ from src.config import AppSettings
 from src.portfolio.db import get_db_connection
 from src.portfolio.projection import PortfolioProjection
 from src.application.services import dashboard as dash
+from src.strategy import registry as strategy_registry
 
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_PATH = os.environ.get("TRADING_WEB_ROOT_PATH", "/trading")
@@ -35,6 +36,17 @@ templates.env.globals["base"] = ROOT_PATH.rstrip("/")
 
 def _conn():
     return get_db_connection(AppSettings().trading.database_path)
+
+
+def _exit_strategy_ids():
+    """具 exit 區塊（受 risk_exit 監控）的 strategy_id 集合，與引擎/CLI 一致。
+
+    載入失敗時回 None（沿用寬鬆判定，不讓唯讀儀表板因設定問題 500）。
+    """
+    try:
+        return set(strategy_registry.load_exit_managed_definitions(AppSettings()))
+    except Exception:
+        return None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -52,7 +64,7 @@ def index(request: Request,
             latest = dash.latest_run_date(conn, account_id)
             d = date.fromisoformat(latest) if latest else date.today()
         projection = PortfolioProjection(conn)
-        data = dash.build_dashboard(conn, projection, account_id, d)
+        data = dash.build_dashboard(conn, projection, account_id, d, _exit_strategy_ids())
         return templates.TemplateResponse(
             request, "dashboard.html",
             {"d": data, "accounts": accounts, "view_date": d.isoformat()},

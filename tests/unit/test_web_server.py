@@ -85,3 +85,33 @@ def test_report_detail_path_traversal_blocked(client):
     # 嘗試目錄穿越應被擋（read_report 只取檔名）
     r = client.get("/reports/..%2f..%2f..%2fetc%2fpasswd")
     assert r.status_code == 404
+
+
+def test_dashboard_monitored_requires_exit_block(tmp_path):
+    """監控判定須與 risk_exit 一致：歸入無 exit 區塊的策略不得計入監控。"""
+    from src.application.services import dashboard as dash
+    from src.portfolio.projection import PortfolioProjection
+
+    db = tmp_path / "mon.db"
+    init_db(str(db))
+    conn = get_db_connection(str(db))
+    projection = PortfolioProjection(conn)
+    # 兩筆策略持倉：一支具 exit 區塊（trend_breakout）、一支無（fake_noexit）。
+    for sid in ("trend_breakout", "fake_noexit"):
+        projection.apply_fill_transaction({
+            "fill_id": f"f-{sid}", "account_id": "acc-mon", "run_id": "r1",
+            "order_id": f"o-{sid}", "execution_key": f"k-{sid}",
+            "symbol": "2317" if sid == "trend_breakout" else "2330",
+            "side": "BUY", "quantity": 100, "price": 500000,
+            "filled_at": "2026-06-12T09:00:00+08:00", "is_long_term": 0,
+            "source": "MANUAL_IMPORT", "strategy_id": sid,
+        })
+
+    # 只有 trend_breakout 屬具 exit 區塊集合。
+    data = dash.build_dashboard(conn, projection, "acc-mon", "2026-06-12",
+                               exit_strategy_ids={"trend_breakout"})
+    by_sid = {p["strategy_id"]: p for p in data["positions"]}
+    assert by_sid["trend_breakout"]["monitored"] is True
+    assert by_sid["fake_noexit"]["monitored"] is False
+    assert data["monitored_count"] == 1
+    conn.close()

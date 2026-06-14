@@ -1280,9 +1280,22 @@ def cmd_trade_record_fill(args):
     account_id = resolve_account_id(conn, args.account)
     
     price_scaled = int(round(price * 10000))
-    
+
     is_long_term = 1 if getattr(args, "long_term", False) else 0
-    
+
+    # 策略歸屬：未指定 → MANUAL（沿用舊行為）。指定則須為已登錄策略，
+    # 使依策略訊號手動下的單能落在對應 bucket、納入 risk_exit 與策略別損益。
+    strategy_id = getattr(args, "strategy_id", None) or MANUAL_STRATEGY_ID
+    known_strategies = set(strategy_registry.PARAMS_MODELS) | {MANUAL_STRATEGY_ID}
+    if strategy_id not in known_strategies:
+        valid = ", ".join(sorted(strategy_registry.PARAMS_MODELS))
+        print(
+            f"錯誤：未知策略 strategy_id='{strategy_id}'。"
+            f"可用策略：{valid}；或省略改用 {MANUAL_STRATEGY_ID}（預設，不受 risk_exit 監控）。"
+        )
+        conn.close()
+        sys.exit(1)
+
     fill_payload = {
         "fill_id": f"fill-manual-{uuid_like()}",
         "account_id": account_id,
@@ -1296,7 +1309,7 @@ def cmd_trade_record_fill(args):
         "filled_at": datetime.now().isoformat(),
         "is_long_term": is_long_term,
         "source": "MANUAL_IMPORT",
-        "strategy_id": MANUAL_STRATEGY_ID
+        "strategy_id": strategy_id
     }
     
     try:
@@ -1307,10 +1320,30 @@ def cmd_trade_record_fill(args):
         trade_value = int(round(qty * price_scaled / 10000.0))
         broker_fee = max(20, int(round(trade_value * 0.001425)))
         tax = int(round(trade_value * 0.003)) if side == "SELL" else 0
-        
+
+        # risk_exit 監控資格：長期持有與 MANUAL 結構性排除；其餘策略須具 exit 區塊。
+        if is_long_term:
+            monitor_note = "（長期持有，結構性排除於 risk_exit 監控）"
+        elif strategy_id == MANUAL_STRATEGY_ID:
+            monitor_note = "（MANUAL，結構性排除於 risk_exit 監控）"
+        else:
+            # 監控資格為顯示用；fill 已 commit，查詢失敗時不可拋出（會誤報錄入失敗），
+            # 但也不可斷言「無 exit 區塊」——改回不確定語氣，避免與引擎事實相反。
+            try:
+                exit_managed = strategy_registry.load_exit_managed_definitions(settings)
+            except Exception:
+                exit_managed = None
+            if exit_managed is None:
+                monitor_note = "（策略 exit 設定載入失敗，無法判定監控狀態，請以 strategy inspect 確認）"
+            elif strategy_id in exit_managed:
+                monitor_note = "（已納入 risk_exit 停損監控）"
+            else:
+                monitor_note = "（此策略無 exit 區塊，不受 risk_exit 監控）"
+
         print("成功錄入成交資料：")
         print(f"  - 帳戶：{account_id}")
         print(f"  - 標的：{symbol}")
+        print(f"  - 策略歸屬：{strategy_id} {monitor_note}")
         print(f"  - 動作：{side}")
         print(f"  - 數量：{qty} 股")
         print(f"  - 成交單價：{price:.2f} 元 (資料庫整數值: {price_scaled})")
@@ -1767,6 +1800,11 @@ def main():
     parser_trade_record.add_argument("--quantity", type=int, required=True, help="交易股數")
     parser_trade_record.add_argument("--price", type=float, required=True, help="每股成交價格")
     parser_trade_record.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
+    parser_trade_record.add_argument(
+        "--strategy-id", type=str, default=None,
+        help="策略歸屬 ID（如 trend_breakout / pullback_rebound）。預設 MANUAL（結構性排除於 risk_exit 監控）。"
+             "依策略訊號自行手動下單者應指定，使該部位納入 risk_exit 停損監控與策略別損益歸因。"
+    )
     parser_trade_record.add_argument("--long-term", action="store_true", help="設定此成交為長期持有部位，免受策略自動出場訊號影響")
 
     parser_trade_reject = trade_subs.add_parser(

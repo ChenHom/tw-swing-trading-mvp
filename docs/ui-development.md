@@ -91,7 +91,7 @@
 
 - **預設日期 = 最近一個有 `daily_run` 的日期**（非今天）。避免假日/收盤前開啟整頁空白。週一起每日 run 後會自動前進。
 - **`next_signals`**：以 `signal_bundles.signal_date == view_date` 取當日**收盤產生、target 為次一交易日**的訊號（語意為「明日將執行」）。
-- **`monitored_count` / 持倉「監控」欄**：僅計**非 MANUAL 且非長期**的策略持倉（risk_exit 監控對象）。MANUAL 部位結構性排除，故顯示 `—`。go-live 前持倉多為 MANUAL → 監控常為 0，屬正常；待 [`record-fill` 可歸策略](record-fill-strategy-attribution 的修正) 後手動成交方可納入監控。
+- **`monitored_count` / 持倉「監控」欄**：監控對象 = **非長期、且 strategy_id 屬具 exit 區塊的策略**（即 `load_exit_managed_definitions` 範圍，與 `RiskExitEngine`／CLI 一致）；MANUAL 與無 exit 區塊的策略皆排除，顯示 `—`。server 會把該集合（`_exit_strategy_ids()`）注入 `build_dashboard`，`dashboard._positions` 據以判定（非僅排除 MANUAL/長期）。go-live 前既有持倉多為 MANUAL → 監控常為 0，屬正常。**（2026-06-14 已修）** `record-fill --strategy-id` 可將手動成交歸入策略 bucket，**歸入具 exit 區塊的策略後**該部位即納入 risk_exit 監控、於此欄打勾；既有 MANUAL 部位若要納入須以正確 strategy_id 重新補錄（或日後提供轉歸工具）。
 - **`reconcile_ok`**：`projection.reconcile()` 回 `{"status":"RECONCILE_OK"}` 視為通過（注意此契約，勿用真值判斷）。
 
 ---
@@ -138,7 +138,7 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 **加寫入操作（分期 3，需謹慎）**：
 1. 先抽 `services/<域>.py` 寫入 service，內部呼叫既有 engine/projection 邏輯（**不可繞過**）。
 2. 路由用 `POST`，搭配 `python-multipart` 表單；成功後 redirect 回儀表板（PRG 模式）。
-3. 先處理 [`record-fill` 策略歸屬](record-fill-strategy-attribution) 待修項。
+3. ~~先處理 record-fill 策略歸屬待修項~~ → **已完成（2026-06-14）**：CLI `record-fill --strategy-id` 已可歸策略並驗證；Web「設定成交結果」表單應提供策略下拉（來源 `registry.PARAMS_MODELS`）並沿用同一驗證／監控語意。
 4. go-live 影子驗證通過前不啟用。
 
 **換樣式（neumorphism）**：只動 `static/style.css` 與模板 class，資料/路由層不變。
@@ -158,7 +158,7 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 - 無圖表（權益曲線待後續）。
 - 無自動刷新（資料一天一更新，手動重整即可）。
 - 無認證（信任區網；如需，nginx basic-auth 一行）。
-- 持倉監控欄受 [`record-fill` 全歸 MANUAL](record-fill-strategy-attribution) 限制，待修。
+- ~~持倉監控欄受 record-fill 全歸 MANUAL 限制，待修。~~ → **已修（2026-06-14）**：`record-fill --strategy-id` 可歸策略並納入監控；既有 MANUAL 部位需重新補錄方納入。
 - 寫入操作、CLI TUI、neumorphism 風格為後續分期。
 
 完整待辦與分期進度見 [`todo.md`](todo.md)。

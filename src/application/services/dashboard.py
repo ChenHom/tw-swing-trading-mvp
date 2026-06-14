@@ -49,12 +49,21 @@ def _run_status(conn, account_id, d) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def _positions(projection, account_id):
-    """全部策略持倉（含長期/MANUAL），標記是否受 risk_exit 監控。"""
+def _positions(projection, account_id, exit_strategy_ids=None):
+    """全部策略持倉（含長期/MANUAL），標記是否受 risk_exit 監控。
+
+    監控資格須與 RiskExitEngine 一致：非 MANUAL、非長期、且 strategy_id 屬具
+    exit 區塊的策略（exit_strategy_ids）。exit_strategy_ids=None 表示呼叫端未提供
+    （沿用寬鬆判定，僅排除 MANUAL/長期），正式 server 會帶入實際集合。
+    """
     positions = projection.get_strategy_positions(account_id, include_long_term=True)
     out = []
     for (sid, symbol), pos in sorted(positions.items()):
-        monitored = (sid != MANUAL_STRATEGY_ID) and not pos["is_long_term"]
+        monitored = (
+            sid != MANUAL_STRATEGY_ID
+            and not pos["is_long_term"]
+            and (exit_strategy_ids is None or sid in exit_strategy_ids)
+        )
         out.append({
             "strategy_id": sid,
             "symbol": symbol,
@@ -149,10 +158,10 @@ def read_report(name: str, base_dir: str = REPORT_DIR) -> Optional[str]:
 
 
 def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
-                    account_id: str, view_date) -> dict:
+                    account_id: str, view_date, exit_strategy_ids=None) -> dict:
     d = view_date.isoformat() if isinstance(view_date, date) else str(view_date)
     cash = projection.get_cash_balance(account_id)
-    positions = _positions(projection, account_id)
+    positions = _positions(projection, account_id, exit_strategy_ids)
     monitored = [p for p in positions if p["monitored"]]
     recon = projection.reconcile(account_id)
     recon_ok = isinstance(recon, dict) and recon.get("status") == "RECONCILE_OK"
