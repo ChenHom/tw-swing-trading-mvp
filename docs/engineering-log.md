@@ -9,6 +9,21 @@
 
 ---
 
+## 2026-06-14 ｜ 儀表板預設日期改最近 run 日 + 移除底部字串
+
+**背景／觸發**：使用者反映明日訊號、執行事件、risk_exit 監控、持倉監控欄皆空。診斷 live DB 後確認**非 bug**：(1) 預設日期是今天（週日 06-14 無 run）→ 全空；(2) 8 筆訊號全屬已退役 `trend_pullback`，分布於 06-10/06-11，06-12 無訊號、僅 1 筆 APPROVAL_INVALID 事件；(3) 9 筆持倉全 MANUAL → risk_exit 監控結構性為 0。
+
+**怎麼動**：
+- `dashboard.latest_run_date()`：取最近有 daily_run 的日期；`server.index` 無 `view_date` 時預設落於此（避免假日/未跑日全空）。
+- 移除 `base.html` 底部「唯讀儀表板 · 區網單人使用」字串與對應 `.foot` CSS。
+- 新增測試 `test_dashboard_defaults_to_latest_run_date`。
+
+**為什麼這樣動**：不捏造資料；以「預設落在最近有資料的日期」改善空白觀感，其餘空段為 go-live 前的真實狀態（策略尚未實際交易、持倉全 MANUAL）。MANUAL 不受監控連動 [[record-fill-strategy-attribution]] 待修項——修好後手動成交可歸策略、納入 risk_exit。
+
+**驗證**：115 passed；live 預設日期落 2026-06-12，APPROVAL_INVALID 事件顯示、底部字串移除；歷史訊號可由日期選 06-11 檢視（4 筆 trend_pullback）。
+
+---
+
 ## 2026-06-14 ｜ Web 儀表板常駐 (systemd) + 區網上線
 
 **背景／觸發**：phase 1 儀表板已用 nohup 跑起、手機經 `http://192.168.50.109/trading/`（nginx→127.0.0.1:8800）可見，但 nohup 重開機不會自啟。長期工具需常駐。

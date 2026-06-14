@@ -17,7 +17,6 @@ body {
 .topbar nav a { color: #cbd2d9; text-decoration: none; font-size: .95rem; }
 .topbar nav a:hover { color: #fff; }
 main { max-width: 1100px; margin: 0 auto; padding: 1rem; }
-.foot { text-align: center; color: #9aa5b1; padding: 1.5rem; font-size: .85rem; }
 
 .controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 1rem; }
 .controls label { display: flex; flex-direction: column; font-size: .8rem; color: #616e7c; gap: .25rem; }

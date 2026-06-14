@@ -25,6 +25,17 @@ def list_accounts(conn: sqlite3.Connection) -> list[str]:
     return [r["account_id"] for r in rows]
 
 
+def latest_run_date(conn: sqlite3.Connection, account_id: Optional[str] = None) -> Optional[str]:
+    """最近一個有 daily_run 的日期（預設儀表板日期用，避免落在無資料的假日）。"""
+    if account_id:
+        row = conn.execute(
+            "SELECT MAX(run_date) AS d FROM daily_runs WHERE account_id = ?", (account_id,)
+        ).fetchone()
+    else:
+        row = conn.execute("SELECT MAX(run_date) AS d FROM daily_runs").fetchone()
+    return row["d"] if row and row["d"] else None
+
+
 def _run_status(conn, account_id, d) -> Optional[dict]:
     row = conn.execute(
         """

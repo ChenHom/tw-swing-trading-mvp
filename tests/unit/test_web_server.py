@@ -46,6 +46,28 @@ def test_dashboard_renders(client):
     assert "通過" in body
 
 
+def test_dashboard_defaults_to_latest_run_date(client, monkeypatch, tmp_path):
+    """無 view_date 時，預設日期應落在最近一個有 daily_run 的日期，而非今天。"""
+    # 取得 client 用的 DB 路徑並種一筆 06-12 的 run
+    db_path = server.AppSettings().trading.database_path
+    from src.portfolio.db import get_db_connection
+    c = get_db_connection(db_path)
+    c.execute(
+        """
+        INSERT INTO daily_runs (run_id, run_date, account_id, strategy_id, status,
+            market_sync_status, execution_status, signal_generation_status,
+            report_status, started_at, completed_at, last_error_code)
+        VALUES ('sim-x','2026-06-12','simulation-main','MULTI','COMPLETED',
+            'COMPLETED','COMPLETED','COMPLETED','COMPLETED','2026-06-12','2026-06-12',NULL)
+        """
+    )
+    c.commit(); c.close()
+
+    r = client.get("/")  # 不帶日期
+    assert r.status_code == 200
+    assert 'name="view_date" value="2026-06-12"' in r.text
+
+
 def test_reports_list_empty(client, monkeypatch):
     # 指向一個不存在的報告目錄 → 空清單
     monkeypatch.setattr("src.application.services.dashboard.REPORT_DIR", "/nonexistent/xyz")

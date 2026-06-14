@@ -45,7 +45,12 @@ def index(request: Request,
     try:
         accounts = dash.list_accounts(conn)
         account_id = account or (accounts[0] if accounts else "simulation-main")
-        d = date.fromisoformat(view_date) if view_date else date.today()
+        if view_date:
+            d = date.fromisoformat(view_date)
+        else:
+            # 預設落在最近有 run 的日期，避免假日/未跑日全空
+            latest = dash.latest_run_date(conn, account_id)
+            d = date.fromisoformat(latest) if latest else date.today()
         projection = PortfolioProjection(conn)
         data = dash.build_dashboard(conn, projection, account_id, d)
         return templates.TemplateResponse(
