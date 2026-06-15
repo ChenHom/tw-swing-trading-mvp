@@ -2,7 +2,7 @@
 
 `run-daily` 本身即 paper-trading（FakeBroker，永不串實盤），其 Stage 4「Reporting」
 原為空殼。本模組補上實際的文字報告：把當日 run 結果、risk_exit 監控部位數、成交、
-明日訊號、執行事件、策略別損益與對帳結果落成一份文字檔，供 cron 影子先行與人工核對。
+下次執行訊號、執行事件、策略別損益與對帳結果落成一份文字檔，供 cron 影子先行與人工核對。
 
 設計刻意獨立於 1853 行的 src/cli.py（CEO review 2026-06-14 列其為 churn 之冠），
 純讀資料庫 + projection，無副作用、可單元測試。
@@ -131,8 +131,8 @@ def build_daily_report(
             f"{f['price'] / 10000.0:.2f} [{f['strategy_id'] or '-'}/{f['source']}]"
         )
 
-    # ── 5. 明日將執行訊號（當日收盤產生，target = 次一交易日）──────────
-    w("\n[5] 明日將執行訊號")
+    # ── 5. 下次執行（當日收盤產生，target = 次一交易日）──────────
+    w("\n[5] 下次執行")
     # signal_bundles 無帳戶欄位（依 run_id 關聯），以 signal_date 取當日產生的訊號。
     cur.execute(
         """
