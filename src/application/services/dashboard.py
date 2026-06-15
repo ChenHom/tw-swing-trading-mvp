@@ -15,6 +15,16 @@ from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
 ORCHESTRATOR_STRATEGY_ID = "MULTI"
 REPORT_DIR = "artifacts/reports/daily"
 
+# execution_events.event_type 代碼 → 使用者可讀中文（來源：engine._validate_buy_gate
+# 的 block_reason 前綴）。未收錄者於 _events 退回顯示原碼。
+EVENT_TYPE_LABELS = {
+    "APPROVAL_NOT_FOUND": "查無有效授權",
+    "APPROVAL_INVALID": "授權無效（過期/模式不符）",
+    "APPROVAL_ID_MISMATCH": "授權 ID 不符",
+    "PARAMS_HASH_MISMATCH": "策略參數與授權不符",
+    "NETTING_SUPPRESSED": "同標反向訊號互抵，未送單",
+}
+
 
 def _p(price: int) -> float:
     return price / 10000.0
@@ -112,14 +122,18 @@ def _fills_today(conn, account_id, d):
              "price": _p(r["price"]), "strategy_id": r["strategy_id"], "source": r["source"]} for r in rows]
 
 
-def _next_signals(conn, d):
+def _next_execution_signals(conn):
+    """下次執行的待執行訊號：**與檢視日期解耦**，永遠取最新一批產生的訊號
+    （`MAX(signal_date)`）。其 target_execution_date 即下一個交易日的執行計畫，
+    故使用者在交易日盤前也看得到「今天開盤要執行什麼」，不因日期欄停在他日而變空。
+    """
     rows = conn.execute(
         """
         SELECT si.action, si.symbol, si.reason_code, sb.strategy_id, sb.bundle_id, sb.target_execution_date
         FROM signal_items si JOIN signal_bundles sb ON si.bundle_id = sb.bundle_id
-        WHERE sb.signal_date = ?
+        WHERE sb.signal_date = (SELECT MAX(signal_date) FROM signal_bundles)
         ORDER BY sb.target_execution_date, sb.strategy_id, si.action, si.symbol
-        """, (d,)).fetchall()
+        """).fetchall()
     return [{"action": r["action"], "symbol": r["symbol"], "reason_code": r["reason_code"],
              "strategy_id": r["strategy_id"], "is_exit": str(r["bundle_id"]).endswith("-exit"),
              "target_date": r["target_execution_date"]} for r in rows]
@@ -131,7 +145,35 @@ def _events(conn, account_id, d):
         SELECT event_type, strategy_id, symbol, detail FROM execution_events
         WHERE account_id = ? AND occurred_at = ? ORDER BY event_type
         """, (account_id, d)).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        e = dict(r)
+        e["event_label"] = EVENT_TYPE_LABELS.get(e["event_type"], e["event_type"])
+        out.append(e)
+    return out
+
+
+def _reconcile_summary(recon) -> dict:
+    """把 projection.reconcile() 的 dict 轉成使用者可讀摘要。
+
+    回 {ok, code, detail_zh}：ok=是否通過；detail_zh 為通過/失敗的中文說明
+    （失敗時含具體差異數字，對應 reconcile() 的三層檢查）。
+    """
+    code = recon.get("status") if isinstance(recon, dict) else None
+    if code == "RECONCILE_OK":
+        return {"ok": True, "code": code, "detail_zh": "帳本流水、持倉數量、策略桶均與投影一致。"}
+    if code == "CASH_BALANCE_MISMATCH":
+        detail = (f"現金：帳本流水合計 {recon.get('ledger_total'):,} "
+                  f"≠ 餘額快照 {recon.get('balance_snapshot'):,}")
+    elif code == "POSITION_QUANTITY_MISMATCH":
+        detail = (f"持倉 {recon.get('symbol')}：成交淨額 {recon.get('expected'):,} "
+                  f"≠ 庫存 {recon.get('actual'):,}")
+    elif code == "STRATEGY_POSITION_MISMATCH":
+        detail = (f"策略桶 {recon.get('symbol')}/{recon.get('strategy_id')}："
+                  f"成交淨額 {recon.get('expected'):,} ≠ 庫存 {recon.get('actual'):,}")
+    else:
+        detail = str(recon)
+    return {"ok": False, "code": code, "detail_zh": detail}
 
 
 def list_reports(base_dir: str = REPORT_DIR, limit: int = 30) -> list[dict]:
@@ -163,8 +205,7 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
     cash = projection.get_cash_balance(account_id)
     positions = _positions(projection, account_id, exit_strategy_ids)
     monitored = [p for p in positions if p["monitored"]]
-    recon = projection.reconcile(account_id)
-    recon_ok = isinstance(recon, dict) and recon.get("status") == "RECONCILE_OK"
+    reconcile = _reconcile_summary(projection.reconcile(account_id))
     return {
         "account_id": account_id,
         "date": d,
@@ -174,8 +215,9 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
         "monitored_count": len(monitored),
         "pnl": _pnl_by_strategy(conn, projection, account_id),
         "fills_today": _fills_today(conn, account_id, d),
-        "next_signals": _next_signals(conn, d),
+        "next_execution": _next_execution_signals(conn),
         "events": _events(conn, account_id, d),
-        "reconcile_ok": recon_ok,
-        "reconcile_detail": None if recon_ok else recon,
+        "reconcile": reconcile,
+        # 向後相容：保留舊鍵供既有測試/消費者（reconcile_ok 布林）。
+        "reconcile_ok": reconcile["ok"],
     }

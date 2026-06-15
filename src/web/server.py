@@ -57,17 +57,20 @@ def index(request: Request,
     try:
         accounts = dash.list_accounts(conn)
         account_id = account or (accounts[0] if accounts else "simulation-main")
+        today = date.today()
         if view_date:
             d = date.fromisoformat(view_date)
         else:
-            # 預設落在最近有 run 的日期，避免假日/未跑日全空
-            latest = dash.latest_run_date(conn, account_id)
-            d = date.fromisoformat(latest) if latest else date.today()
+            # 預設今天：日期欄反映當下。日期只影響「當日 RUN 狀態 / 今日成交 /
+            # 執行事件」三塊，交易日盤前自然為空（正確）；現金/持倉/損益/對帳為即時
+            # 狀態不受影響；「下次執行」面板已與日期解耦，仍顯示最近一批待執行訊號。
+            d = today
         projection = PortfolioProjection(conn)
         data = dash.build_dashboard(conn, projection, account_id, d, _exit_strategy_ids())
         return templates.TemplateResponse(
             request, "dashboard.html",
-            {"d": data, "accounts": accounts, "view_date": d.isoformat()},
+            {"d": data, "accounts": accounts,
+             "view_date": d.isoformat(), "today": today.isoformat()},
         )
     finally:
         conn.close()

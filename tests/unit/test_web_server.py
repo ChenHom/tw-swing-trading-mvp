@@ -46,26 +46,12 @@ def test_dashboard_renders(client):
     assert "通過" in body
 
 
-def test_dashboard_defaults_to_latest_run_date(client, monkeypatch, tmp_path):
-    """無 view_date 時，預設日期應落在最近一個有 daily_run 的日期，而非今天。"""
-    # 取得 client 用的 DB 路徑並種一筆 06-12 的 run
-    db_path = server.AppSettings().trading.database_path
-    from src.portfolio.db import get_db_connection
-    c = get_db_connection(db_path)
-    c.execute(
-        """
-        INSERT INTO daily_runs (run_id, run_date, account_id, strategy_id, status,
-            market_sync_status, execution_status, signal_generation_status,
-            report_status, started_at, completed_at, last_error_code)
-        VALUES ('sim-x','2026-06-12','simulation-main','MULTI','COMPLETED',
-            'COMPLETED','COMPLETED','COMPLETED','COMPLETED','2026-06-12','2026-06-12',NULL)
-        """
-    )
-    c.commit(); c.close()
-
+def test_dashboard_defaults_to_today(client):
+    """無 view_date 時，預設日期應為今天（讓日期欄反映當下）。"""
+    from datetime import date
     r = client.get("/")  # 不帶日期
     assert r.status_code == 200
-    assert 'name="view_date" value="2026-06-12"' in r.text
+    assert f'name="view_date" value="{date.today().isoformat()}"' in r.text
 
 
 def test_reports_list_empty(client, monkeypatch):
@@ -114,4 +100,99 @@ def test_dashboard_monitored_requires_exit_block(tmp_path):
     assert by_sid["trend_breakout"]["monitored"] is True
     assert by_sid["fake_noexit"]["monitored"] is False
     assert data["monitored_count"] == 1
+    conn.close()
+
+
+def _seed_bundle(conn, *, bundle_id, signal_date, target_date, action="BUY", symbol="2330",
+                 strategy_id="trend_breakout"):
+    conn.execute(
+        """
+        INSERT INTO signal_bundles (bundle_id, run_id, approval_id, strategy_id,
+            strategy_version, params_hash, signal_date, target_execution_date,
+            market_data_cutoff, created_at)
+        VALUES (?, 'r1', 'ap1', ?, 'v1', 'h1', ?, ?, ?, ?)
+        """,
+        (bundle_id, strategy_id, signal_date, target_date, signal_date, signal_date),
+    )
+    conn.execute(
+        """
+        INSERT INTO signal_items (item_id, bundle_id, signal_id, symbol, action,
+            reference_price, reason_code, created_at)
+        VALUES (?, ?, ?, ?, ?, 5000000, 'ENTRY', ?)
+        """,
+        (f"it-{bundle_id}", bundle_id, f"sig-{bundle_id}", symbol, action, signal_date),
+    )
+    conn.commit()
+
+
+def test_next_execution_decoupled_from_view_date(tmp_path):
+    """下次執行取最新 signal_date 批次，與 view_date 無關（解耦）。"""
+    from src.application.services import dashboard as dash
+    from src.portfolio.projection import PortfolioProjection
+
+    db = tmp_path / "nx.db"
+    init_db(str(db))
+    conn = get_db_connection(str(db))
+    # 舊批次（6/10 產生、target 6/11）與最新批次（6/12 產生、target 6/15）。
+    _seed_bundle(conn, bundle_id="b-old", signal_date="2026-06-10", target_date="2026-06-11", symbol="1111")
+    _seed_bundle(conn, bundle_id="b-new", signal_date="2026-06-12", target_date="2026-06-15", symbol="2330")
+
+    # 即使檢視一個與兩批都不同的日期，下次執行仍應只含最新批次（6/12）。
+    data = dash.build_dashboard(conn, PortfolioProjection(conn), "acc", "2026-06-15")
+    symbols = {s["symbol"] for s in data["next_execution"]}
+    assert symbols == {"2330"}
+    assert data["next_execution"][0]["target_date"] == "2026-06-15"
+    conn.close()
+
+
+def test_reconcile_summary_ok_and_mismatch(tmp_path):
+    """對帳摘要：一致回 ok+說明；現金不符回中文差異明細。"""
+    from src.application.services import dashboard as dash
+    from src.portfolio.projection import PortfolioProjection
+
+    db = tmp_path / "rec.db"
+    init_db(str(db))
+    conn = get_db_connection(str(db))
+    # 一致帳戶：無流水、餘額 0。
+    conn.execute(
+        "INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('ok-acc', 0, 'TWD', '2026-06-12')"
+    )
+    # 不一致帳戶：餘額快照 100 但無對應 ledger 流水（合計 0）。
+    conn.execute(
+        "INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('bad-acc', 100, 'TWD', '2026-06-12')"
+    )
+    conn.commit()
+    proj = PortfolioProjection(conn)
+
+    ok = dash.build_dashboard(conn, proj, "ok-acc", "2026-06-12")["reconcile"]
+    assert ok["ok"] is True and ok["code"] == "RECONCILE_OK"
+
+    bad = dash.build_dashboard(conn, proj, "bad-acc", "2026-06-12")["reconcile"]
+    assert bad["ok"] is False and bad["code"] == "CASH_BALANCE_MISMATCH"
+    assert "餘額快照" in bad["detail_zh"] and "100" in bad["detail_zh"]
+    conn.close()
+
+
+def test_event_label_localized(tmp_path):
+    """執行事件帶中文 event_label；未知代碼退回原碼。"""
+    from src.application.services import dashboard as dash
+    from src.portfolio.projection import PortfolioProjection
+
+    db = tmp_path / "ev.db"
+    init_db(str(db))
+    conn = get_db_connection(str(db))
+    for eid, etype in (("e1", "APPROVAL_INVALID"), ("e2", "SOME_UNKNOWN_CODE")):
+        conn.execute(
+            """
+            INSERT INTO execution_events (event_id, run_id, account_id, event_type,
+                strategy_id, symbol, detail, occurred_at, created_at)
+            VALUES (?, 'r1', 'ev-acc', ?, 'trend_breakout', '2330', 'bundle x', '2026-06-12', '2026-06-12')
+            """,
+            (eid, etype),
+        )
+    conn.commit()
+    data = dash.build_dashboard(conn, PortfolioProjection(conn), "ev-acc", "2026-06-12")
+    labels = {e["event_type"]: e["event_label"] for e in data["events"]}
+    assert labels["APPROVAL_INVALID"] == "授權無效（過期/模式不符）"
+    assert labels["SOME_UNKNOWN_CODE"] == "SOME_UNKNOWN_CODE"  # 未知退回原碼
     conn.close()

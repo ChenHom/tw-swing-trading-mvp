@@ -9,6 +9,30 @@
 
 ---
 
+## 2026-06-15 ｜ 儀表板日期語意 + 「下次執行」解耦 + 審計在地化（UI UX）
+
+**背景／觸發**：使用者 6/15（週一交易日）手機開唯讀儀表板，三個 UX 問題：(1) 看不到「今天開盤可執行的計畫」——資料其實在（週五收盤產生、target 6/15 的訊號），但預設日期落在最近 run 日 6/12、面板又叫「明日將執行訊號」，讀不出來；(2) 想讓日期顯示今天、面板改名「下次執行」；(3) 底部「審計」看不懂——頂部「對帳」只有通過/失敗 badge，底部「執行事件（審計）」是 `execution_events`，`event_type` 英文代碼、`detail` 一串 sha256/bundle id。
+
+**怎麼動**（全 presentation 層，read-only，未動 schema／未接寫入路由）：
+- **日期預設改今天**（`server.py`，原為 `latest_run_date`）。釐清：`view_date` 只驅動 `run_status`／`fills_today`／`events` 三塊；cash/positions/pnl/monitored/reconcile 為即時狀態。模板加 hint 說明、傳 `today` 供「檢視非今天」提示。
+- **「下次執行」與日期解耦**：新增 `dashboard._next_execution_signals(conn)`，查 `signal_date == MAX(signal_date)`（最近一批），不接 view_date；`build_dashboard` 鍵 `next_signals`→`next_execution`；模板改名「下次執行」+ 副標。
+- **對帳在地化**：新增 `_reconcile_summary()` 把 reconcile dict 轉 `{ok, code, detail_zh}`，失敗含具體差異數字；卡片顯示 badge + 明細 + 一行說明。
+- **事件在地化**：`EVENT_TYPE_LABELS` 對照（4 個授權閘門代碼 + legacy），`_events` 每列加 `event_label`；模板「中文（原碼小字 tag）」呈現，`detail` 留技術明細。
+- CSS 加 `.hint`/`.caption` 小字；測試更新（預設今天、解耦、對帳明細、事件 label，全套件 139 passed）。
+
+**為什麼這樣動**：關鍵根因是「明日將執行」面板被 `signal_date == view_date` 綁死——單純把預設改今天反而讓它變空（6/15 尚未產生訊號）。解耦改查最新批次才同時滿足「顯示今天」與「看得到下次執行計畫」。在地化只在 presentation 層轉文案，`projection.reconcile()`／`engine` 契約不變。
+
+**考慮的替代方案與取捨**：
+- 「下次執行」曾考慮以 `target_execution_date >= 今天` 查；否決：資料相依、且退役策略的過期 target 會混入。改用「最新 signal_date 批次」語義單純、空批次顯示「無」即真實狀態（如 06-12 收盤未產生訊號）。
+- 日期預設今天的代價：交易日盤前 run_status/fills/events 三塊為空，但這是真實狀態，且即時面板與下次執行仍有內容，不再是先前「整頁空白」問題（解耦後計畫面板恆有資料）。此為對先前 commit 2ad8aed（預設最近 run）的有意調整，經使用者確認。
+- daily_report.py 文字報告維持「明日將執行訊號」字樣（範圍外，避免擴大）。
+
+**驗證**：全套件 139 passed；playwright 手機尺寸截圖確認今天視圖（日期=今天、面板正確為空、對帳/下次執行帶說明）與 06-12 視圖（事件「授權無效（過期/模式不符）」中文化 + 原碼 tag）。`git diff` 僅含 read-only 檔案。
+
+**關聯**：todo C（UI 分期）、UI 需求（手機可看、即時可讀）；計畫 `system-reminder-message-sent-at-sun-dreamy-pebble`。
+
+---
+
 ## 2026-06-15 ｜ 寫入側 service 骨架 + trade 域抽取（C1 前置／E1 第一刀）
 
 **背景／觸發**：UI 分期 C1「寫入操作」依安全鐵律（ui-development §2/§9）必須走「與 CLI 相同、已驗證的 engine/projection 邏輯」，UI 不得直接 `INSERT/UPDATE` 事實表。但這些寫入邏輯原本內嵌在 `cli.py` 的三個 handler（`cmd_trade_record_fill` / `cmd_trade_reject_signal` / `cmd_trade_un_reject_signal`），混雜 argparse／DB／print／`sys.exit`，無法被未來 Web POST 直接重用，也是 E1（cli.py 1853 行技術債）的一部分。

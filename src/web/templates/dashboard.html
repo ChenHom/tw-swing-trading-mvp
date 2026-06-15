@@ -14,6 +14,7 @@
   </label>
   <a class="btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}">重新整理</a>
 </form>
+<p class="hint">日期只影響「當日 RUN 狀態 / 今日成交 / 執行事件（審計）」三塊；現金、持倉、損益、對帳為即時狀態，「下次執行」永遠顯示最近一批待執行訊號，皆不隨日期變動。{% if today and view_date != today %} 目前檢視 {{ view_date }}，今天是 {{ today }}。{% endif %}</p>
 
 <section class="cards">
   <div class="card">
@@ -37,11 +38,13 @@
   <div class="card">
     <div class="card-label">對帳</div>
     <div class="card-value">
-      {% if d.reconcile_ok %}<span class="badge ok">通過</span>
+      {% if d.reconcile.ok %}<span class="badge ok">通過</span>
       {% else %}<span class="badge bad">失敗</span>{% endif %}
     </div>
+    <div class="hint">{{ d.reconcile.detail_zh }}</div>
   </div>
 </section>
+<p class="hint">對帳：比對現金帳本流水 vs 餘額快照、成交淨額 vs 庫存、各策略桶持倉一致性。通過＝帳實相符；失敗＝出現差異（上方顯示明細）。</p>
 
 {% if d.run_status and d.run_status.last_error_code %}
 <p class="alert">⚠ 當日 RUN 最後錯誤：{{ d.run_status.last_error_code }}</p>
@@ -102,11 +105,12 @@
   </section>
 
   <section>
-    <h2>明日將執行訊號</h2>
+    <h2>下次執行</h2>
+    <p class="caption">最近一批待執行訊號（不隨上方日期變動）；「執行日」為實際下單目標日。</p>
     <table>
       <thead><tr><th>動作</th><th>代號</th><th>策略</th><th>理由</th><th>執行日</th></tr></thead>
       <tbody>
-        {% for s in d.next_signals %}
+        {% for s in d.next_execution %}
         <tr><td>{{ s.action }}{% if s.is_exit %} <span class="tag">EXIT</span>{% endif %}</td>
             <td>{{ s.symbol }}</td><td>{{ s.strategy_id }}</td><td>{{ s.reason_code }}</td><td>{{ s.target_date }}</td></tr>
         {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
@@ -117,11 +121,13 @@
 
 <section>
   <h2>執行事件（審計）</h2>
+  <p class="caption">所選日期當天交易流程的審計軌跡：記錄授權閘門攔截、訊號被擋等；無事件＝流程順利。</p>
   <table>
     <thead><tr><th>類型</th><th>策略</th><th>代號</th><th>明細</th></tr></thead>
     <tbody>
       {% for e in d.events %}
-      <tr><td>{{ e.event_type }}</td><td>{{ e.strategy_id or '-' }}</td><td>{{ e.symbol or '-' }}</td><td>{{ e.detail or '' }}</td></tr>
+      <tr><td>{{ e.event_label }}{% if e.event_label != e.event_type %} <span class="tag">{{ e.event_type }}</span>{% endif %}</td>
+          <td>{{ e.strategy_id or '-' }}</td><td>{{ e.symbol or '-' }}</td><td>{{ e.detail or '' }}</td></tr>
       {% else %}<tr><td colspan="4" class="empty">無</td></tr>{% endfor %}
     </tbody>
   </table>

@@ -91,10 +91,11 @@
 
 ## 6. 重要行為與資料語意
 
-- **預設日期 = 最近一個有 `daily_run` 的日期**（非今天）。避免假日/收盤前開啟整頁空白。週一起每日 run 後會自動前進。
-- **`next_signals`**：以 `signal_bundles.signal_date == view_date` 取當日**收盤產生、target 為次一交易日**的訊號（語意為「明日將執行」）。
+- **預設日期 = 今天**（2026-06-15 改）。日期欄反映當下；**只影響三塊日期範圍面板**——`run_status`、`fills_today`、`events`（交易日盤前自然為空，屬正確）。cash/positions/pnl/monitored/reconcile 為即時狀態、`next_execution` 已與日期解耦，皆不隨日期變動。模板另傳 `today`，檢視非今天時於頂部 hint 標示「目前檢視 X，今天是 Y」。
+- **`next_execution`（下次執行）**：**與 `view_date` 解耦**，查 `signal_date == (SELECT MAX(signal_date) FROM signal_bundles)`，即**最近一批產生的訊號**（其 target 為下一交易日的執行計畫）。故交易日盤前也看得到「下次開盤要執行什麼」，不因日期欄停在他日而變空。最新批次若無 item（如 06-12 收盤未產生訊號）則顯示「無」，屬真實狀態。（取代舊 `next_signals`／標題「明日將執行訊號」。）
+- **`events` 中文化**：`_events` 每列附 `event_label`，由 `EVENT_TYPE_LABELS` 將 `execution_events.event_type`（授權閘門代碼，來源 `engine._validate_buy_gate`）譯為中文，未收錄者退回原碼；模板以「中文（原碼小字 tag）」呈現，`detail`（含 bundle id／sha256）留為技術明細。
 - **`monitored_count` / 持倉「監控」欄**：監控對象 = **非長期、且 strategy_id 屬具 exit 區塊的策略**（即 `load_exit_managed_definitions` 範圍，與 `RiskExitEngine`／CLI 一致）；MANUAL 與無 exit 區塊的策略皆排除，顯示 `—`。server 會把該集合（`_exit_strategy_ids()`）注入 `build_dashboard`，`dashboard._positions` 據以判定（非僅排除 MANUAL/長期）。go-live 前既有持倉多為 MANUAL → 監控常為 0，屬正常。**（2026-06-14 已修）** `record-fill --strategy-id` 可將手動成交歸入策略 bucket，**歸入具 exit 區塊的策略後**該部位即納入 risk_exit 監控、於此欄打勾；既有 MANUAL 部位若要納入須以正確 strategy_id 重新補錄（或日後提供轉歸工具）。
-- **`reconcile_ok`**：`projection.reconcile()` 回 `{"status":"RECONCILE_OK"}` 視為通過（注意此契約，勿用真值判斷）。
+- **`reconcile`（對帳）**：`build_dashboard` 以 `_reconcile_summary()` 把 `projection.reconcile()` 的 dict 轉 `{ok, code, detail_zh}`；通過/失敗皆有中文說明，失敗時 `detail_zh` 含具體差異數字（現金帳本 vs 餘額、成交淨額 vs 庫存、策略桶）。模板卡片顯示 badge + `detail_zh`，並附一行「對帳在比對什麼」。（仍保留 `reconcile_ok` 布林鍵向後相容；`projection.reconcile()` 契約為 `{"status":"RECONCILE_OK"}`，勿用真值判斷。）
 
 ---
 
