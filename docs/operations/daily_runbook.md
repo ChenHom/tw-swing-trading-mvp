@@ -57,7 +57,7 @@ python3 -m app approval list
 |---|---|---|---|
 | 0 | 回滾錨點 | `git tag` 已釘 `v0.1.0-pre-golive`；任何壞日 `git checkout v0.1.0-pre-golive` | ✅ 已完成 |
 | 1 | 殘留授權清理 | 已移除指向退役 trend_pullback 的 legacy `active-approval.json` | ✅ 已完成 |
-| 2 | **影子先行 ≥3 個交易日** | cron 已掛（15:10），逐日核對報告 §3〜§8（見下）並填 `docs/shadow-signoff.md` | 🔄 進行中 |
+| 2 | **影子先行 ≥3 個交易日** | cron 已掛（15:10），逐日核對報告 §3〜§8（見下）並填 `shadow-signoff.md` | 🔄 進行中 |
 | 3 | cron 失敗告警 | `shadow_daily.sh` 已在 run-daily 非 0 時透過 Discord 發送 `⚠ ALERT` | ✅ 已完成 |
 | 4 | 開實單起步 | 全綠後建議先單策略小額（路徑 C），再放第二支 | ⬜ |
 
@@ -133,8 +133,8 @@ git status   # 不應出現 config/alert.local.yaml
 ```
 
 **3. B1 簽核（影子先行 ≥3 交易日）**
-- 每交易日盤後核對報告 §1–§9，把結果填 [`docs/shadow-signoff.md`](docs/shadow-signoff.md)。
+- 每交易日盤後核對報告 §1–§9，把結果填 [`shadow-signoff.md`](shadow-signoff.md)。
 - 集滿 3 個交易日全綠 → gate #2 通過，推進 B3 開實單（先單策略 `trend_breakout` 小額）。
 
-詳細的初始化、訊號查詢、重置與 cron 排程說明見 [README.md](README.md) 第 4、5 節。
+詳細的初始化、訊號查詢、重置與 cron 排程說明見 [README.md](../../README.md) 第 4、5 節。
 go-live review 全文與兩個 🔴 見記憶 `ceo-review-golive-2026-06-14`。

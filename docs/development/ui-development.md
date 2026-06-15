@@ -54,7 +54,7 @@
 | `scripts/web_ui.sh` | 手動啟動（uvicorn） |
 | `deploy/trading-web.service` | systemd 常駐 unit |
 | `deploy/README.md` | 常駐安裝/管理說明 |
-| `docs/nginx-trading.conf.sample` | nginx 子路徑反代範例 |
+| `docs/operations/nginx-trading.conf.sample` | nginx 子路徑反代範例 |
 | `tests/unit/test_web_server.py` | TestClient 冒煙測試 |
 | `tests/unit/test_trade_write_service.py` | 寫入 service 直測（bucket 落點、monitor_status、TradeWriteError） |
 
@@ -120,9 +120,9 @@ scripts/web_ui.sh                       # 預設 127.0.0.1:8800, root_path /trad
 TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http://<IP>:8800/
 ```
 
-**常駐（正式）**：systemd，見 [`deploy/README.md`](../deploy/README.md)。改 code 後 `sudo systemctl restart trading-web`（uvicorn 未開 `--reload`）。
+**常駐（正式）**：systemd，見 [`deploy/README.md`](../../deploy/README.md)。改 code 後 `sudo systemctl restart trading-web`（uvicorn 未開 `--reload`）。
 
-**nginx 子路徑**：見 [`docs/nginx-trading.conf.sample`](nginx-trading.conf.sample)。`proxy_pass` 結尾斜線剝掉 `/trading` 前綴 → app 於 `/` 接收；手機網址 `http://<主機IP>/trading/`。
+**nginx 子路徑**：見 [`docs/operations/nginx-trading.conf.sample`](../operations/nginx-trading.conf.sample)。`proxy_pass` 結尾斜線剝掉 `/trading` 前綴 → app 於 `/` 接收；手機網址 `http://<主機IP>/trading/`。
 
 **前置**：專案 `.venv`（`uv venv && uv pip install -r requirements.txt -r requirements-web.txt`）。Web 額外依賴在 `requirements-web.txt`。
 

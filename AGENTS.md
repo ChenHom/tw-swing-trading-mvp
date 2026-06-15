@@ -76,8 +76,8 @@ MVP 核心功能、首批架構缺陷修正、排程安全強化、與多策略�
 
 ## Important Docs (重要文件)
 
-- [tw-swing-trading-mvp-implementation-plan.md](file:///home/hom/services/stock/tw-day-trading/tw-swing-trading-mvp-implementation-plan.md) - 核心業務規則與決策記錄。
-- [multi_strategy_plan.md](file:///home/hom/services/stock/tw-day-trading/multi_strategy_plan.md) - 多策略架構設計與風險評估規劃書 (v3，含四項拍板決策與程式碼審查修正)。
+- [tw-swing-trading-mvp-implementation-plan.md](file:///home/hom/services/stock/tw-day-trading/docs/planning/tw-swing-trading-mvp-implementation-plan.md) - 核心業務規則與決策記錄。
+- [multi_strategy_plan.md](file:///home/hom/services/stock/tw-day-trading/docs/planning/multi_strategy_plan.md) - 多策略架構設計與風險評估規劃書 (v3，含四項拍板決策與程式碼審查修正)。
 - [implementation_plan.md](file:///home/hom/.gemini/antigravity-cli/brain/51d942a2-225b-433a-913f-6889f769c880/implementation_plan.md) - 具體實作里程碑與程式結構規劃。
 
 ---
