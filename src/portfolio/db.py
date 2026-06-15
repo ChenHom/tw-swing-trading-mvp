@@ -250,6 +250,40 @@ def init_db(db_path: str) -> None:
     );
     """)
 
+    # 14. corporate_actions (append-only fact table for dividend/split/etc)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS corporate_actions (
+        action_id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        ex_date TEXT NOT NULL,
+        cash_per_share INTEGER,
+        stock_ratio REAL,
+        source TEXT NOT NULL,
+        memo TEXT,
+        created_at TEXT NOT NULL
+    );
+    """)
+
+    # 15. position_cost_adjustments (audit trail for corporate action adjustments)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS position_cost_adjustments (
+        adjustment_id TEXT PRIMARY KEY,
+        action_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        strategy_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        lot_id TEXT,
+        field TEXT NOT NULL,
+        before_value INTEGER,
+        after_value INTEGER,
+        before_text TEXT,
+        after_text TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (action_id) REFERENCES corporate_actions(action_id)
+    );
+    """)
+
     # Migration: Add is_long_term column to fills if it doesn't exist
     cursor.execute("PRAGMA table_info(fills);")
     fill_columns = [row["name"] for row in cursor.fetchall()]

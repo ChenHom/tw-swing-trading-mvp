@@ -39,7 +39,21 @@ echo "報告路徑: ${REPORT_PATH:-<未產出>}" | tee -a "$LOG_FILE"
 
 # 3) cron 告警鉤子：run-daily 非 0 即明確標示失敗
 if [ "$RUN_RC" -ne 0 ]; then
-  echo "⚠ ALERT: run-daily FAILED ($ACCOUNT $RUN_DATE)，請查 $LOG_FILE 與報告 $REPORT_PATH" | tee -a "$LOG_FILE"
+  ALERT_MSG="⚠ ALERT: run-daily FAILED ($ACCOUNT $RUN_DATE)
+請查 $LOG_FILE 與報告 $REPORT_PATH"
+  echo "$ALERT_MSG" | tee -a "$LOG_FILE"
+
+  # 嘗試發送 Discord 通知（失敗不阻擋主流程）
+  $PYTHON_EXEC -c "
+import sys
+sys.path.insert(0, '$PROJECT_DIR')
+from src.notification.discord_alert import DiscordNotifier
+msg = '''⚠ shadow_daily FAILED: $ACCOUNT $RUN_DATE
+
+請查日誌與報告。'''
+notifier = DiscordNotifier()
+notifier.send_alert(msg, 'shadow_daily 失敗告警')
+" 2>/dev/null || true
 fi
 
 exit "$RUN_RC"

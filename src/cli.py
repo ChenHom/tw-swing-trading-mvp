@@ -1629,6 +1629,117 @@ def cmd_trade_close_all(args):
 
     conn.close()
 
+def cmd_corporate_action_record(args):
+    """記錄公司行動（除息、配股等）。"""
+    import uuid
+    from datetime import datetime
+
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+
+    cursor = conn.cursor()
+
+    action_id = args.action_id or uuid.uuid4().hex
+    action_type = args.type.upper()
+
+    if action_type == "CASH_DIVIDEND":
+        if not args.cash_per_share:
+            print("Error: --cash-per-share 必須指定現金股利")
+            conn.close()
+            return
+        cash_per_share = int(float(args.cash_per_share) * 10000)
+        cursor.execute(
+            """
+            INSERT INTO corporate_actions
+            (action_id, symbol, action_type, ex_date, cash_per_share, source, memo, created_at)
+            VALUES (?, ?, ?, ?, ?, 'MANUAL', ?, datetime('now'))
+            """,
+            (action_id, args.symbol, action_type, args.ex_date, cash_per_share, args.memo or "")
+        )
+    elif action_type == "STOCK_DIVIDEND":
+        if not args.stock_ratio:
+            print("Error: --stock-ratio 必須指定配股比率")
+            conn.close()
+            return
+        stock_ratio = float(args.stock_ratio)
+        cursor.execute(
+            """
+            INSERT INTO corporate_actions
+            (action_id, symbol, action_type, ex_date, stock_ratio, source, memo, created_at)
+            VALUES (?, ?, ?, ?, ?, 'MANUAL', ?, datetime('now'))
+            """,
+            (action_id, args.symbol, action_type, args.ex_date, stock_ratio, args.memo or "")
+        )
+
+    conn.commit()
+    print(f"✅ 已記錄 {action_type} 事件 ({args.symbol}, ex_date={args.ex_date})")
+    print(f"   action_id: {action_id}")
+    conn.close()
+
+def cmd_corporate_action_apply(args):
+    """套用公司行動調整（更新均價、水位、現金）。"""
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+
+    cursor = conn.cursor()
+
+    # 查詢要套用的公司行動
+    if args.action_id:
+        cursor.execute("SELECT * FROM corporate_actions WHERE action_id = ?", (args.action_id,))
+    else:
+        cursor.execute(
+            "SELECT * FROM corporate_actions WHERE symbol = ? AND ex_date = ?",
+            (args.symbol, args.ex_date)
+        )
+
+    row = cursor.fetchone()
+    if not row:
+        print("Error: 未找到該公司行動事件")
+        conn.close()
+        return
+
+    action = dict(row)
+    projection = PortfolioProjection(conn)
+
+    # 套用調整（冪等）
+    projection.apply_corporate_action(args.account_id, action)
+
+    print(f"✅ 已套用 {action['action_type']} 調整 ({action['symbol']}, {args.account_id})")
+    print(f"   ex_date: {action['ex_date']}")
+    conn.close()
+
+def cmd_corporate_action_list(args):
+    """列出已記錄的公司行動事件。"""
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT action_id, symbol, action_type, ex_date, cash_per_share, stock_ratio, created_at
+        FROM corporate_actions
+        ORDER BY ex_date DESC
+        """
+    )
+
+    rows = cursor.fetchall()
+    if not rows:
+        print("無已記錄的公司行動事件")
+        conn.close()
+        return
+
+    print("已記錄的公司行動事件：")
+    for row in rows:
+        row = dict(row)
+        detail = ""
+        if row["action_type"] == "CASH_DIVIDEND":
+            detail = f"現金股利 {row['cash_per_share']/10000:.2f} 元"
+        elif row["action_type"] == "STOCK_DIVIDEND":
+            detail = f"配股 {row['stock_ratio']:.2%}"
+        print(f"  [{row['ex_date']}] {row['symbol']}: {detail} (ID: {row['action_id'][:8]}...)")
+
+    conn.close()
+
 def uuid_like() -> str:
     import uuid
     return uuid.uuid4().hex[:8]
@@ -1797,6 +1908,27 @@ def main():
     parser_rep_pnl.add_argument("--source", type=str, choices=["all", "strategy", "manual"], default="all", help="篩選成交來源：all (全部), strategy (僅策略), manual (僅手動錄入)")
     parser_rep_pnl.add_argument("--by-strategy", action="store_true", dest="by_strategy", help="依策略 (strategy_id) 分組顯示損益歸因報表")
 
+    # 11. corporate-action group
+    parser_corpact = subparsers.add_parser("corporate-action", help="公司行動（除息、配股）管理")
+    corpact_subs = parser_corpact.add_subparsers(dest="subcommand", required=True)
+
+    parser_corp_record = corpact_subs.add_parser("record", help="記錄公司行動事件")
+    parser_corp_record.add_argument("--symbol", type=str, required=True, help="標的代號")
+    parser_corp_record.add_argument("--type", type=str, required=True, choices=["CASH_DIVIDEND", "STOCK_DIVIDEND"], help="公司行動類型")
+    parser_corp_record.add_argument("--ex-date", type=str, required=True, help="除息/除權日期 (YYYY-MM-DD)")
+    parser_corp_record.add_argument("--cash-per-share", type=str, help="現金股利（元）")
+    parser_corp_record.add_argument("--stock-ratio", type=str, help="配股比率（如 0.1 表示每股配 0.1 股）")
+    parser_corp_record.add_argument("--action-id", type=str, help="自訂 action_id（不指定時自動生成）")
+    parser_corp_record.add_argument("--memo", type=str, help="備註")
+
+    parser_corp_apply = corpact_subs.add_parser("apply", help="套用公司行動調整（更新均價、水位、現金）")
+    parser_corp_apply.add_argument("--account-id", type=str, default="simulation-main", help="帳戶 ID")
+    parser_corp_apply.add_argument("--action-id", type=str, help="action_id（--action-id 或 --symbol + --ex-date 二選一）")
+    parser_corp_apply.add_argument("--symbol", type=str, help="標的代號")
+    parser_corp_apply.add_argument("--ex-date", type=str, help="除息/除權日期 (YYYY-MM-DD)")
+
+    parser_corp_list = corpact_subs.add_parser("list", help="列出已記錄的公司行動事件")
+
     # Dispatching commands
     args = parser.parse_args()
 
@@ -1827,6 +1959,9 @@ def main():
         ("portfolio", "reconcile"): cmd_portfolio_reconcile,
         ("portfolio", "rebuild-projections"): cmd_portfolio_rebuild_projections,
         ("report", "pnl"): cmd_report_pnl,
+        ("corporate-action", "record"): cmd_corporate_action_record,
+        ("corporate-action", "apply"): cmd_corporate_action_apply,
+        ("corporate-action", "list"): cmd_corporate_action_list,
     }
     
     key = (args.command, args.subcommand) if hasattr(args, "subcommand") else (args.command, None)

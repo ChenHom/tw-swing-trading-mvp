@@ -1,0 +1,9 @@
+# 本機 Discord 告警設定（gitignored，勿入版控）
+# 複製為 config/alert.local.yaml 並填入實際 channel_id
+
+# 方式 1: Bot API（推薦）
+discord:
+  channel_id: "YOUR_DISCORD_CHANNEL_ID"
+
+# 註：token 改走環境變數 DISCORD_BOT_TOKEN（在 ~/.openclaw/.env 或 cron EnvironmentFile）
+# 原因：密鑰不應在任何 .yaml 檔，會有誤提交風險

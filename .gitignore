@@ -91,3 +91,6 @@ Thumbs.db
 # 每日影子報告（執行時生成的產物，不入版控）
 artifacts/reports/daily/
 
+# 本機告警設定（包含敏感 channel_id，絕不入版控）
+config/alert.local.yaml
+

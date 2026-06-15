@@ -11,16 +11,16 @@
 
 - ✅ **A1 record-fill 可歸策略**（2026-06-14）。`record-fill` 新增 `--strategy-id`（預設仍 `MANUAL` 向後相容、結構性排除於監控）；指定具 exit 區塊的策略後，部位自當日起由 daily run 的 `update_high_watermarks` 納入、risk_exit 監控、策略別損益歸因。未知 strategy_id 拒絕。下游 FIFO/PnL/watermark 機制原即以 strategy bucket 運作，故僅改 record-fill 一處。詳見 engineering-log 2026-06-14、記憶 `record-fill-strategy-attribution`。後續 C1 Web 寫入 UI 可沿用此參數。
 - ✅ **A2 systemd 常駐安裝**（2026-06-15）：`trading-web.service` 已 `enable --now`，`systemctl status` active (running)、本地 `curl /` 200、開機自啟。日後改 code 需 `sudo systemctl restart trading-web`。
-- ⬜ **A3 影子先行開跑**：**2026-06-15（週一）收盤後**起，每交易日跑 `scripts/shadow_daily.sh`，用儀表板逐日核對（runbook「上線 Gate」有清單）。
+- 🔄 **A3 影子先行開跑**（2026-06-15）：**今日起每交易日 14:00 自動跑** `scripts/shadow_daily.sh`，腳本與 cron 已就位；掛 cron 需手動 `crontab -e` 或用戶自行設定。`daily_runbook.md` 已備 cron 範例。
 
 ## B. go-live 收尾（gate，源自 2026-06-14 CEO review / HOLD SCOPE）
 
 - ✅ git tag `v0.1.0-pre-golive` 回滾錨點（commit fc432d4）
 - ✅ 清理殘留 `active-approval.json`（commit fc432d4）
 - ✅ 每日影子報告 + `shadow_daily.sh`（commit a833141）
-- ⬜ **B1 影子先行 ≥3 個交易日**並人工核對（= A3）
-- ⬜ **B2 cron 失敗告警接 Discord**：`shadow_daily.sh` 的 `⚠ALERT` 發到 daily 頻道。channel_id 走 **gitignored 本地設定**、token 走 `~/.openclaw/.env`，**絕不入 git**（見記憶 `discord-alert-config`）。使用者指定此項最後處理。
-- ⬜ **B3 開實單起步**：B1+B2 全綠後，建議路徑 C（先單策略 `trend_breakout`、限額小量），再放第二支。
+- 🔄 **B1 影子先行 ≥3 個交易日**並人工核對（2026-06-15 實施）。`docs/shadow-signoff.md` 簽核表已備。
+- ✅ **B2 cron 失敗告警接 Discord**（2026-06-15）：`src/notification/discord_alert.py` 模組已就位（httpx），`shadow_daily.sh` 已改進，`config/alert.local.yaml.example` 與 `.gitignore` 已備。Token 走 `~/.openclaw/.env`（dotenv 自動載入），channel_id 走 gitignored 的 `config/alert.local.yaml`，測試全綠（8 項）。
+- ⬜ **B3 開實單起步**：B1+B2+D2 全綠後，建議路徑 C（先單策略 `trend_breakout`、限額小量），再放第二支。
 
 詳見記憶 `ceo-review-golive-2026-06-14`。
 
@@ -38,7 +38,7 @@
 ## D. 資料正確性
 
 - ✅ **D1 record-fill 策略歸屬**（= A1，資料側，2026-06-14）：`--strategy-id` 已可將手動成交落入策略 bucket，恢復停損涵蓋與損益歸因準確度。後續可選增 `--from-signal`（由來源訊號帶出歸屬），併 C1 Web 寫入 UI 設計。
-- ⬜ **D2 除權息 / 公司行動追蹤**：計畫書 §三.3 自承的時間炸彈，會使均價、`highest_close`、停損基準失真。**任何持倉標的的除息日前必須處理。**
+- ✅ **D2 除權息 / 公司行動追蹤（MVP 人工標記+調整）**（2026-06-15）：新增 `corporate_actions` + `position_cost_adjustments` 事實表、`projection.apply_corporate_action` 方法（冪等、保對帳平衡）、CLI `corporate-action record/apply/list` 指令。支援現金股利、股票股利；調整公式與驗證已全面實作。測試 4 項全綠。下步自動抓取（FinMind）與減資完整支援為範圍外。
 
 ## E. 技術債
 

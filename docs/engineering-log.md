@@ -9,7 +9,30 @@
 
 ---
 
-## 2026-06-15 ｜ 儀表板日期語意 + 「下次執行」解耦 + 審計在地化（UI UX）
+## 2026-06-15（下午）｜ A3/B2/D2 實作與測試（影子先行、Discord 告警、除權息）
+
+**背景／觸發**：go-live 卡在 CEO review 的兩個 🔴（影子先行未跑、cron 告警未接線），外加資料正確性時間炸彈（除權息在 6-8 月旺季會引爆）。計畫書已備、決策已定，需實作落地。
+
+**怎麼動**：
+1. **A3 影子先行上線**：`scripts/shadow_daily.sh` 驗證可用（paper-trading，FakeBroker），手動跑一次後掛 cron（`daily_runbook.md` 範例照貼）。無需改變腳本本身（已於 a833141 完成），只需 cron 接線（用戶自行 `crontab -e`）。
+2. **B2 cron 失敗告警接 Discord（Bot API）**：新增 `src/notification/discord_alert.py`（httpx 版、極端穩定、例外不外拋），改 `shadow_daily.sh` 在 `⚠ALERT` 後調用子進程發送（尾接 `|| true`），新增 `config/alert.local.yaml.example`，`.gitignore` 加 `config/alert.local.yaml`（gitignored）。token 走 `~/.openclaw/.env`（dotenv），channel_id 走本地設定，單元測試 8 項全綠（configured-from-env/yaml、send 成功回 True、未設定回 False、HTTP 非 2xx 回 False、逾時與例外不外拋）。
+3. **D2 除權息 MVP（人工標記+調整）**：新增 `corporate_actions` + `position_cost_adjustments` 事實表（append-only），`projection.apply_corporate_action` 方法（冪等、保對帳平衡），支援現金股利（price/watermark-=cash、現金入帳）與股票股利（price/watermark/=1+ratio、qty*=1+ratio、新增配股 lot）。CLI `corporate-action record/apply/list` 三指令。單元測試 4 項全綠（現金股利、股票股利、冪等、reconcile 仍通過）。
+
+**為什麼這樣動**：A3 腳本已備，只需掛 cron 讓其自動化（gate 時鐘今天就開始走）。B2 用 Bot API 對應記憶 `discord-alert-config` 所述慣例（token env、channel_id gitignored），httpx 相依已有（requirements-web.txt），不新增依賴。D2 採 MVP 人工標記+調整而非自動抓取（FinMind），因為第一筆監控 BUY 時間不確定（影子才在跑），應急方案要快；自動化可後續迭代。公司行動調整公式確保price/watermark/qty一致性、現金分錄對衝股價下修、冪等性防重複套用。
+
+**考慮的替代方案與取捨**：
+- **A3**：是否該 shadow_daily.sh 改進？否決，腳本已夠好，cron 接線是 infra 層用戶決定，不該代勞。
+- **B2 密鑰存放**：token env（過期刷新靈活）vs bot token 本地檔（簡單但安全隱患）。選 env 沿用既有 dotenv 慣例；channel_id 本地檔因不必重換、gitignored。
+- **D2 手動 vs 自動**：自動需 API 對接（FinMind / 證交所），測試成本高、回測重現性問題。手動簡單、用戶掌控，且除息事件每月就幾個，不是高頻操作。若有兩筆監控 BUY 卡在除息日前，再升級自動也來得及。
+- **D2 調整策略**：「改 price」vs「記錄係數後查詢時套用」。選前者因現有 risk_exit 直讀 price 欄、watermark 主鍵難加係數列，改 schema 成本高。改 price 的代價是歷史 fills 事實不變（正確）、衍生的持倉成本與風控基準皆調（完整）。
+
+**驗證**：全套件 151 passed（新增 12 test：8 Discord + 4 公司行動）；A3 手動跑成功（exit 0、報告產出、`daily_runbook.md` gate 清單與 `docs/shadow-signoff.md` 簽核表備妥）；B2 測試覆蓋 configured、send、timeout、例外、未配置；D2 測試覆蓋現金股利、股票股利、冪等、reconcile。`git diff` 含 notification 模組、CLI 指令、schema/migration、測試、文檔。
+
+**遺留與後續**（本次不含）：B1 需連跑 3 日核對（起於今日，預期 6/17 完成）；D2 自動抓取與減資完整支援；daily_report.py 「明日將執行訊號」是否同步改「下次執行」（當前維持現狀，避免擴大範圍）；C1 寫入操作。
+
+---
+
+## 2026-06-15（上午）｜ 儀表板日期語意 + 「下次執行」解耦 + 審計在地化（UI UX）
 
 **背景／觸發**：使用者 6/15（週一交易日）手機開唯讀儀表板，三個 UX 問題：(1) 看不到「今天開盤可執行的計畫」——資料其實在（週五收盤產生、target 6/15 的訊號），但預設日期落在最近 run 日 6/12、面板又叫「明日將執行訊號」，讀不出來；(2) 想讓日期顯示今天、面板改名「下次執行」；(3) 底部「審計」看不懂——頂部「對帳」只有通過/失敗 badge，底部「執行事件（審計）」是 `execution_events`，`event_type` 英文代碼、`detail` 一串 sha256/bundle id。
 

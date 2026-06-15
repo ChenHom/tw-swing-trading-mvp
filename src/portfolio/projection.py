@@ -449,3 +449,257 @@ class PortfolioProjection:
             """,
             (account_id, new_balance)
         )
+
+    def apply_corporate_action(self, account_id: str, action: dict) -> None:
+        """套用公司行動調整（除息、配股、分割等）。
+
+        Args:
+            account_id: 帳戶 ID
+            action: {
+                "action_id": "uuid",
+                "symbol": "2330",
+                "action_type": "CASH_DIVIDEND" | "STOCK_DIVIDEND",
+                "cash_per_share": 100000 (for CASH_DIVIDEND, 整數×10000),
+                "stock_ratio": 0.1 (for STOCK_DIVIDEND),
+                "ex_date": "2026-06-20"
+            }
+
+        冪等性：同 action_id 套用多次只套用一次。
+        """
+        with self.conn:
+            cursor = self.conn.cursor()
+
+            # 1. 檢查是否已套用（冪等）
+            cursor.execute(
+                "SELECT COUNT(*) as cnt FROM position_cost_adjustments WHERE action_id = ?",
+                (action["action_id"],)
+            )
+            if cursor.fetchone()["cnt"] > 0:
+                return  # 已套用過，直接返回
+
+            # 2. 寫 corporate_actions 事實表
+            cursor.execute(
+                """
+                INSERT INTO corporate_actions
+                (action_id, symbol, action_type, ex_date, cash_per_share, stock_ratio, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'MANUAL', datetime('now'))
+                """,
+                (
+                    action["action_id"],
+                    action["symbol"],
+                    action["action_type"],
+                    action["ex_date"],
+                    action.get("cash_per_share"),
+                    action.get("stock_ratio"),
+                )
+            )
+
+            # 3. 根據 action_type 調整
+            if action["action_type"] == "CASH_DIVIDEND":
+                self._apply_cash_dividend(cursor, account_id, action)
+            elif action["action_type"] == "STOCK_DIVIDEND":
+                self._apply_stock_dividend(cursor, account_id, action)
+
+    def _apply_cash_dividend(self, cursor, account_id: str, action: dict) -> None:
+        """套用現金股利：price -= cash_per_share，watermark -= cash_per_share，現金 += qty * cash_per_share。"""
+        symbol = action["symbol"]
+        cash_per_share = action["cash_per_share"]  # 整數×10000
+        action_id = action["action_id"]
+
+        # 查詢該帳戶該標的所有持倉 lots
+        cursor.execute(
+            "SELECT lot_id, quantity, price, strategy_id FROM position_lots WHERE account_id = ? AND symbol = ?",
+            (account_id, symbol)
+        )
+        lots = [dict(row) for row in cursor.fetchall()]
+
+        for lot in lots:
+            lot_id = lot["lot_id"]
+            qty = lot["quantity"]
+            old_price = lot["price"]
+            new_price = old_price - cash_per_share
+            strategy_id = lot["strategy_id"]
+
+            # 3a. 更新 position_lots.price
+            cursor.execute(
+                "UPDATE position_lots SET price = ? WHERE lot_id = ?",
+                (new_price, lot_id)
+            )
+
+            # 記錄調整
+            cursor.execute(
+                """
+                INSERT INTO position_cost_adjustments
+                (adjustment_id, action_id, account_id, strategy_id, symbol, lot_id, field,
+                 before_value, after_value, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'LOT_PRICE', ?, ?, datetime('now'))
+                """,
+                (uuid.uuid4().hex, action_id, account_id, strategy_id, symbol, lot_id, old_price, new_price)
+            )
+
+        # 3b. 更新 position_high_watermarks（該 symbol 所有記錄）
+        cursor.execute(
+            """
+            SELECT account_id, strategy_id, symbol, trade_date, highest_close
+            FROM position_high_watermarks
+            WHERE account_id = ? AND symbol = ?
+            """,
+            (account_id, symbol)
+        )
+        watermarks = [dict(row) for row in cursor.fetchall()]
+
+        for wm in watermarks:
+            old_close = wm["highest_close"]
+            new_close = old_close - cash_per_share
+            cursor.execute(
+                """
+                UPDATE position_high_watermarks
+                SET highest_close = ?
+                WHERE account_id = ? AND strategy_id = ? AND symbol = ? AND trade_date = ?
+                """,
+                (new_close, wm["account_id"], wm["strategy_id"], wm["symbol"], wm["trade_date"])
+            )
+            cursor.execute(
+                """
+                INSERT INTO position_cost_adjustments
+                (adjustment_id, action_id, account_id, strategy_id, symbol, field,
+                 before_value, after_value, created_at)
+                VALUES (?, ?, ?, ?, ?, 'WATERMARK', ?, ?, datetime('now'))
+                """,
+                (
+                    uuid.uuid4().hex,
+                    action_id,
+                    wm["account_id"],
+                    wm["strategy_id"],
+                    symbol,
+                    old_close,
+                    new_close,
+                )
+            )
+
+        # 3c. 新增現金分錄（配息入帳）
+        if lots:
+            total_dividend = sum(lot["quantity"] * cash_per_share for lot in lots)
+            if total_dividend > 0:
+                ledger_id = uuid.uuid4().hex
+                cursor.execute(
+                    """
+                    INSERT INTO cash_ledger
+                    (ledger_id, account_id, run_id, event_type, amount, currency,
+                     source_type, source_id, occurred_at, idempotency_key, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    """,
+                    (
+                        ledger_id,
+                        account_id,
+                        "CORP_ACTION",
+                        "DIVIDEND",
+                        total_dividend,
+                        "TWD",
+                        "CORPORATE_ACTION",
+                        action_id,
+                        action["ex_date"],
+                        f"{action_id}:{symbol}:{account_id}",
+                    )
+                )
+
+    def _apply_stock_dividend(self, cursor, account_id: str, action: dict) -> None:
+        """套用股票股利：price /= (1+ratio)，qty *= (1+ratio)，watermark /= (1+ratio)。"""
+        symbol = action["symbol"]
+        ratio = action["stock_ratio"]  # 例 0.1
+        action_id = action["action_id"]
+        factor = 1 + ratio
+
+        # 查詢該帳戶該標的所有持倉 lots
+        cursor.execute(
+            "SELECT lot_id, quantity, price, strategy_id, is_long_term FROM position_lots WHERE account_id = ? AND symbol = ?",
+            (account_id, symbol)
+        )
+        lots = [dict(row) for row in cursor.fetchall()]
+
+        for lot in lots:
+            lot_id = lot["lot_id"]
+            old_qty = lot["quantity"]
+            old_price = lot["price"]
+            new_price = int(old_price / factor)
+            new_qty = int(old_qty * factor)
+            strategy_id = lot["strategy_id"]
+            is_long_term = lot["is_long_term"]
+
+            # 3a. 新增無償配股 lot（而非直接修改）
+            new_lot_id = uuid.uuid4().hex
+            cursor.execute(
+                """
+                INSERT INTO position_lots
+                (lot_id, account_id, symbol, quantity, price, acquired_at, fill_id,
+                 is_long_term, strategy_id, created_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, datetime('now'))
+                """,
+                (
+                    new_lot_id,
+                    account_id,
+                    symbol,
+                    int(old_qty * ratio),  # 新增的配股數量
+                    old_price,  # 配股價格同原 price
+                    f"STOCK_DIVIDEND_{action_id}",
+                    is_long_term,
+                    strategy_id,
+                )
+            )
+
+            # 3b. 原 lot 的價格調整（分割調整價格以維持市值）
+            cursor.execute(
+                "UPDATE position_lots SET price = ? WHERE lot_id = ?",
+                (new_price, lot_id)
+            )
+
+            # 記錄調整
+            cursor.execute(
+                """
+                INSERT INTO position_cost_adjustments
+                (adjustment_id, action_id, account_id, strategy_id, symbol, lot_id, field,
+                 before_value, after_value, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'LOT_PRICE', ?, ?, datetime('now'))
+                """,
+                (uuid.uuid4().hex, action_id, account_id, strategy_id, symbol, lot_id, old_price, new_price)
+            )
+
+        # 3c. 更新 position_high_watermarks
+        cursor.execute(
+            """
+            SELECT account_id, strategy_id, symbol, trade_date, highest_close
+            FROM position_high_watermarks
+            WHERE account_id = ? AND symbol = ?
+            """,
+            (account_id, symbol)
+        )
+        watermarks = [dict(row) for row in cursor.fetchall()]
+
+        for wm in watermarks:
+            old_close = wm["highest_close"]
+            new_close = int(old_close / factor)
+            cursor.execute(
+                """
+                UPDATE position_high_watermarks
+                SET highest_close = ?
+                WHERE account_id = ? AND strategy_id = ? AND symbol = ? AND trade_date = ?
+                """,
+                (new_close, wm["account_id"], wm["strategy_id"], wm["symbol"], wm["trade_date"])
+            )
+            cursor.execute(
+                """
+                INSERT INTO position_cost_adjustments
+                (adjustment_id, action_id, account_id, strategy_id, symbol, field,
+                 before_value, after_value, created_at)
+                VALUES (?, ?, ?, ?, ?, 'WATERMARK', ?, ?, datetime('now'))
+                """,
+                (
+                    uuid.uuid4().hex,
+                    action_id,
+                    wm["account_id"],
+                    wm["strategy_id"],
+                    symbol,
+                    old_close,
+                    new_close,
+                )
+            )
