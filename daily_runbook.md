@@ -57,8 +57,8 @@ python3 -m app approval list
 |---|---|---|---|
 | 0 | 回滾錨點 | `git tag` 已釘 `v0.1.0-pre-golive`；任何壞日 `git checkout v0.1.0-pre-golive` | ✅ 已完成 |
 | 1 | 殘留授權清理 | 已移除指向退役 trend_pullback 的 legacy `active-approval.json` | ✅ 已完成 |
-| 2 | **影子先行 ≥3 個交易日** | 連跑 `scripts/shadow_daily.sh`，逐日核對報告 §3〜§8（見下） | ⬜ 待執行 |
-| 3 | cron 失敗告警 | `shadow_daily.sh` 已在 run-daily 非 0 時輸出 `⚠ ALERT`；接上你的告警管道（Telegram/mail） | ⬜ 待接線 |
+| 2 | **影子先行 ≥3 個交易日** | cron 已掛（15:10），逐日核對報告 §3〜§8（見下）並填 `docs/shadow-signoff.md` | 🔄 進行中 |
+| 3 | cron 失敗告警 | `shadow_daily.sh` 已在 run-daily 非 0 時透過 Discord 發送 `⚠ ALERT` | ✅ 已完成 |
 | 4 | 開實單起步 | 全綠後建議先單策略小額（路徑 C），再放第二支 | ⬜ |
 
 **影子先行每日跑法（cron 可掛）：**
@@ -78,8 +78,8 @@ scripts/shadow_daily.sh simulation-main 2026-06-12 # 指定日期
 ```cron
 # crontab -e 後貼入（請用絕對路徑）
 CRON_TZ=Asia/Taipei
-# 影子先行：週一~週五 14:00（收盤後 13:30 資料沉澱）跑 paper run-daily + 每日報告
-0 14 * * 1-5 /home/hom/services/stock/tw-day-trading/scripts/shadow_daily.sh simulation-main >> /home/hom/services/stock/tw-day-trading/logs/shadow_cron.log 2>&1
+# 影子先行：週一~週五 15:10（收盤後 13:30 資料沉澱）跑 paper run-daily + 每日報告
+10 15 * * 1-5 /home/hom/services/stock/tw-day-trading/scripts/shadow_daily.sh simulation-main >> /home/hom/services/stock/tw-day-trading/logs/shadow_cron.log 2>&1
 ```
 
 > * `shadow_daily.sh` 已在 run-daily 非 0 時於 stdout/log 輸出 `⚠ ALERT`；要真正收到通知，需把該鉤子接上 Telegram/mail（go-live gate #3）。
@@ -109,15 +109,14 @@ CRON_TZ=Asia/Taipei
 
 ## go-live 啟用步驟（使用者操作，2026-06-15 備）
 
-> 程式面（A3 腳本 / B2 Discord 模組 / D2 除權息）已就緒；以下三步需使用者親自執行（涉及 crontab 與真實密鑰）。
+> 程式面（A3 腳本 / B2 Discord 模組 / D2 除權息）已就緒；以下為使用者親自執行步驟（涉及 crontab 與真實密鑰）。
 
-**1. 掛 cron（A3，今天就掛——明天 6/16 影子才會自動跑出第一筆監控 BUY）**
+**1. 掛 cron（A3，已完成 2026-06-15）**
 ```bash
-crontab -e   # 貼入下列兩行（已在上方「crontab 範例」）
-# CRON_TZ=Asia/Taipei
-# 0 14 * * 1-5 /home/hom/services/stock/tw-day-trading/scripts/shadow_daily.sh simulation-main >> /home/hom/services/stock/tw-day-trading/logs/shadow_cron.log 2>&1
-crontab -l   # 驗證已寫入
+crontab -l   # 確認已有以下這行（原 run_daily_sim.sh 已替換為 shadow_daily.sh）：
+# 10 15 * * 1-5 /home/hom/services/stock/tw-day-trading/scripts/shadow_daily.sh simulation-main >> /home/hom/services/stock/tw-day-trading/logs/shadow_cron.log 2>&1
 ```
+明日 6/16 15:10 起自動跑出第一筆監控 BUY（00994A）並產報告。
 
 **2. 接通 Discord 失敗告警（B2，Bot API）**
 ```bash

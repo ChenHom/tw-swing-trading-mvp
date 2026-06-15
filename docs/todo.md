@@ -11,7 +11,7 @@
 
 - ✅ **A1 record-fill 可歸策略**（2026-06-14）。`record-fill` 新增 `--strategy-id`（預設仍 `MANUAL` 向後相容、結構性排除於監控）；指定具 exit 區塊的策略後，部位自當日起由 daily run 的 `update_high_watermarks` 納入、risk_exit 監控、策略別損益歸因。未知 strategy_id 拒絕。下游 FIFO/PnL/watermark 機制原即以 strategy bucket 運作，故僅改 record-fill 一處。詳見 engineering-log 2026-06-14、記憶 `record-fill-strategy-attribution`。後續 C1 Web 寫入 UI 可沿用此參數。
 - ✅ **A2 systemd 常駐安裝**（2026-06-15）：`trading-web.service` 已 `enable --now`，`systemctl status` active (running)、本地 `curl /` 200、開機自啟。日後改 code 需 `sudo systemctl restart trading-web`。
-- 🔄 **A3 影子先行開跑**（2026-06-15）：**今日起每交易日 14:00 自動跑** `scripts/shadow_daily.sh`，腳本與 cron 已就位；掛 cron 需手動 `crontab -e` 或用戶自行設定。`daily_runbook.md` 已備 cron 範例。
+- ✅ **A3 影子先行開跑**（2026-06-15）：crontab 原有 `run_daily_sim.sh`（每交易日 15:10、只跑 run-daily 不產報告/告警）已**替換**為 `scripts/shadow_daily.sh simulation-main`（同一時點 15:10，13:30 收盤後資料沉澱；其餘排程未動）。明日 6/16 15:10 起自動跑 run-daily + 每日報告 + 失敗告警。
 
 ## B. go-live 收尾（gate，源自 2026-06-14 CEO review / HOLD SCOPE）
 
