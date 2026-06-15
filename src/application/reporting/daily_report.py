@@ -211,6 +211,34 @@ def build_daily_report(
     else:
         w(f"  ❌ 失敗：{result}")
 
+    # ── 9. 公司行動 / 除權息提醒（近窗 ±7 日；未套用以 ⚠ 標示）──────────
+    w("\n[9] 公司行動 / 除權息提醒")
+    held_symbols = {sym for (_sid, sym) in positions}
+    try:
+        cur.execute(
+            """
+            SELECT ca.symbol, ca.action_type, ca.ex_date, ca.cash_per_share, ca.stock_ratio,
+                   (SELECT COUNT(*) FROM position_cost_adjustments pca WHERE pca.action_id = ca.action_id) AS applied_cnt
+            FROM corporate_actions ca
+            WHERE ca.ex_date BETWEEN date(?, '-7 day') AND date(?, '+7 day')
+            ORDER BY ca.ex_date
+            """,
+            (rdate, rdate),
+        )
+        ca_rows = cur.fetchall()
+    except Exception:
+        ca_rows = []  # 舊 DB 未 migration 時容錯
+    if not ca_rows:
+        w("  （無登錄之公司行動）")
+    for r in ca_rows:
+        if r["action_type"] == "CASH_DIVIDEND":
+            detail = f"現金股利 {(r['cash_per_share'] or 0) / 10000:.2f} 元/股"
+        else:
+            detail = f"配股 {(r['stock_ratio'] or 0):.2%}"
+        status = "已套用" if r["applied_cnt"] > 0 else "⚠未套用"
+        held = "（持倉中）" if r["symbol"] in held_symbols else ""
+        w(f"  [{r['ex_date']}] {r['symbol']}: {detail} — {status} {held}")
+
     w("\n" + "=" * 64)
     w(f"  END — {account_id} {rdate}")
     w("=" * 64)

@@ -1740,6 +1740,75 @@ def cmd_corporate_action_list(args):
 
     conn.close()
 
+def cmd_corporate_action_check(args):
+    """盤點持倉並比對公司行動登錄狀態（純讀，供除息日前自查）。"""
+    from datetime import date as _date
+    settings = get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    projection = PortfolioProjection(conn)
+
+    account_id = args.account or "simulation-main"
+    today = _date.today().isoformat()
+
+    # 監控資格集合（具 exit 區塊的策略）
+    try:
+        exit_ids = set(strategy_registry.load_exit_managed_definitions(settings))
+    except Exception:
+        exit_ids = set()
+
+    # 持倉（含長期）
+    positions = projection.get_strategy_positions(account_id, include_long_term=True)
+    held_symbols = sorted({sym for (_sid, sym) in positions})
+
+    if not held_symbols:
+        print(f"帳戶 {account_id} 無持倉。")
+        conn.close()
+        return
+
+    cursor = conn.cursor()
+    # 各標的「未來除息事件」與「是否已套用」
+    print(f"=== 公司行動盤點：{account_id}（今天 {today}）===\n")
+    print(f"持倉標的 {len(held_symbols)} 檔：")
+    for (sid, sym), pos in sorted(positions.items()):
+        monitored = (sid != "MANUAL") and (sid in exit_ids) and not pos["is_long_term"]
+        mark = "✓監控" if monitored else "—"
+        print(f"  {sym} [{sid}] {pos['quantity']} 股 @ {pos['wavg_price']/10000:.2f} 元  {mark}")
+
+    print("\n登錄之除息/除權事件（ex_date >= 今天）：")
+    cursor.execute(
+        """
+        SELECT ca.action_id, ca.symbol, ca.action_type, ca.ex_date, ca.cash_per_share, ca.stock_ratio,
+               (SELECT COUNT(*) FROM position_cost_adjustments pca WHERE pca.action_id = ca.action_id) AS applied_cnt
+        FROM corporate_actions ca
+        WHERE ca.ex_date >= ?
+        ORDER BY ca.ex_date
+        """,
+        (today,)
+    )
+    upcoming = cursor.fetchall()
+    registered_symbols = set()
+    if not upcoming:
+        print("  （無）")
+    for r in upcoming:
+        r = dict(r)
+        registered_symbols.add(r["symbol"])
+        if r["action_type"] == "CASH_DIVIDEND":
+            detail = f"現金股利 {r['cash_per_share']/10000:.2f} 元/股"
+        else:
+            detail = f"配股 {r['stock_ratio']:.2%}"
+        status = "已套用" if r["applied_cnt"] > 0 else "⚠未套用"
+        held = "（持倉中）" if r["symbol"] in held_symbols else ""
+        print(f"  [{r['ex_date']}] {r['symbol']}: {detail} — {status} {held}")
+
+    # 持倉但無任何登錄事件 → 提醒自查
+    unregistered = [s for s in held_symbols if s not in registered_symbols]
+    if unregistered:
+        print("\n⚠ 下列持倉標的無登錄之除息事件，請自公開資訊觀測站 / 證交所查 6–8 月除息日：")
+        print(f"  {', '.join(unregistered)}")
+        print("  （除息日前未登錄並套用調整，watermark / 停損基準會失真。）")
+
+    conn.close()
+
 def uuid_like() -> str:
     import uuid
     return uuid.uuid4().hex[:8]
@@ -1929,6 +1998,9 @@ def main():
 
     parser_corp_list = corpact_subs.add_parser("list", help="列出已記錄的公司行動事件")
 
+    parser_corp_check = corpact_subs.add_parser("check", help="盤點持倉並比對公司行動登錄狀態")
+    parser_corp_check.add_argument("--account", type=str, default="simulation-main", help="帳戶 ID")
+
     # Dispatching commands
     args = parser.parse_args()
 
@@ -1962,6 +2034,7 @@ def main():
         ("corporate-action", "record"): cmd_corporate_action_record,
         ("corporate-action", "apply"): cmd_corporate_action_apply,
         ("corporate-action", "list"): cmd_corporate_action_list,
+        ("corporate-action", "check"): cmd_corporate_action_check,
     }
     
     key = (args.command, args.subcommand) if hasattr(args, "subcommand") else (args.command, None)

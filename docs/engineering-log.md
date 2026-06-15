@@ -9,6 +9,27 @@
 
 ---
 
+## 2026-06-15（傍晚）｜ D2 對帳/單位 bug 修正 + 公司行動可視性（顧明天里程碑）
+
+**背景／觸發**：今天影子跑產生 `BUY 00994A [pullback_rebound] target=6/16` → **明天影子跑會執行它，產生閉環首筆策略 BUY、首個 risk_exit 監控部位**（CEO review 等待的里程碑），且首個監控標的恰是會配息 ETF（00994A），D2 立即相關。規劃期間使用者追問單位，連帶查出昨日 D2 三個潛伏 bug。
+
+**修了什麼（Part 0，最關鍵）**：
+- **單位錯配**（使用者抓出）：系統 `quantity`=股、`price`/`highest_close`=元×10000、但 **`cash_ledger`/`cash_balances`=整數元**。現金股利入帳原寫 `Σ(股×cash_per_share)` 直塞 cash 欄 → 大 10000 倍。改為 `… ÷ 10000`。記憶 `unit-conventions` 已存此慣例（00400A=9000股×13.67元=123,030元為驗證基準）。
+- **reconcile 破壞**：現金股利沒更新 `cash_balances`（破第一關 `SUM(ledger)==balance`）→ 補同步 upsert；股票股利新增 lot 沒寫對應 `fills`（破 `SUM(fills)==SUM(lots)` 總量與策略桶兩層）→ 補合成 `fills`（source=CORP_ACTION、raw insert 不動現金）。
+- **測試造假**：舊 `test_cash_dividend_adjustment` 用錯單位斷言（1500 萬而非 1500 元），fixture 對帳不乾淨只弱檢查 → 重寫 fixture 以 `apply_fill_transaction` 建對帳乾淨倉、以整數元斷言、加 **RECONCILE_OK 強斷言**（現金/股票股利各一）。
+
+**新增可視性（Part 1–3）**：`corporate-action check` 盤點持倉與除息登錄狀態（持倉中無登錄 → ⚠提醒自查）；daily_report 新增 §9「公司行動／除權息提醒」（近窗 ±7 日、未套用標 ⚠）；dashboard `_corporate_actions` + 模板「公司行動」表（近一個月、已/未套用 badge）。皆對舊 DB（未 migration）容錯回空。
+
+**Part 4 文件**：`daily_runbook.md` 補「go-live 啟用步驟（使用者操作）」——掛 cron、接 Discord（建 bot/token 走 env/channel_id 走 gitignored 本地檔/實測）、B1 簽核。
+
+**為什麼這樣動**：除權息只調 price/watermark 不調 fills，會破壞系統最核心的「fills 為事實源、lots/cash 為投影」不變式。修法選「補齊投影面缺的列」（cash_balances 同步、合成 fill）而非「放寬 reconcile」，維持不變式即真相。可視性讓明天首筆監控 BUY 與潛在除息風險在報表/儀表板看得到。
+
+**驗證**：全套件 **154 passed**；live DB 以 `init_db`（CREATE IF NOT EXISTS，冪等）補上兩張新表；端到端 temp DB：00994A 5000股配 1.5 元 → reconcile 配息前後皆 OK、現金 +7500 元（非 7500 萬）、均價 17.30→15.80。`corporate-action check` 對 live 9 筆持倉正確列出並提醒。
+
+**遺留**：D2 FinMind 自動抓取、減資、配股碎股殘值→零股款；B1 連跑 3 日（起於今日）；B3 待 gate 齊全。
+
+---
+
 ## 2026-06-15（下午）｜ A3/B2/D2 實作與測試（影子先行、Discord 告警、除權息）
 
 **背景／觸發**：go-live 卡在 CEO review 的兩個 🔴（影子先行未跑、cron 告警未接線），外加資料正確性時間炸彈（除權息在 6-8 月旺季會引爆）。計畫書已備、決策已定，需實作落地。

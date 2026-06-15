@@ -100,9 +100,42 @@ CRON_TZ=Asia/Taipei
 
 1. **§1 RUN 狀態** 全 `COMPLETED`，無 `last_error`。
 2. **§3 RISK_EXIT 監控中部位**：一旦有策略 BUY，監控數應 > 0，且**每檔都有移動停利水位**（若顯示「移動停利失效」＝ §2.2 水位 upsert 沒觸發，停損從第一天就壞）。
-3. **§4 今日成交 / §5 明日訊號**：BUY/SELL 標的與理由合理、無異常重複。
+3. **§4 今日成交 / §5 下次執行**：BUY/SELL 標的與理由合理、無異常重複。
 4. **§6 執行事件**：`NETTING_SUPPRESSED` / `APPROVAL_*` 是否符合預期（退役 trend_pullback 的舊 `APPROVAL_INVALID` 屬已知無害）。
 5. **§8 對帳** 顯示 `✅ 通過`。
+6. **§9 公司行動 / 除權息**：持倉標的若有「⚠未套用」的近期除息，**除息日前**須 `corporate-action record` + `apply`（否則 watermark/停損基準失真）。
+
+---
+
+## go-live 啟用步驟（使用者操作，2026-06-15 備）
+
+> 程式面（A3 腳本 / B2 Discord 模組 / D2 除權息）已就緒；以下三步需使用者親自執行（涉及 crontab 與真實密鑰）。
+
+**1. 掛 cron（A3，今天就掛——明天 6/16 影子才會自動跑出第一筆監控 BUY）**
+```bash
+crontab -e   # 貼入下列兩行（已在上方「crontab 範例」）
+# CRON_TZ=Asia/Taipei
+# 0 14 * * 1-5 /home/hom/services/stock/tw-day-trading/scripts/shadow_daily.sh simulation-main >> /home/hom/services/stock/tw-day-trading/logs/shadow_cron.log 2>&1
+crontab -l   # 驗證已寫入
+```
+
+**2. 接通 Discord 失敗告警（B2，Bot API）**
+```bash
+# (a) 建 Discord bot、取 token 與目標頻道 channel_id（頻道右鍵→複製頻道 ID，需開開發者模式）
+# (b) token 放 ~/.openclaw/.env（dotenv 自動載入），絕不入 git：
+#     DISCORD_BOT_TOKEN=...
+# (c) channel_id 放本機設定（gitignored）：
+cp config/alert.local.yaml.example config/alert.local.yaml
+#     編輯填入 channel_id
+# (d) 實測（應在 Discord 頻道收到訊息）：
+.venv/bin/python -m src.notification.discord_alert "go-live 告警測試"
+# (e) 確認密鑰未入 git：
+git status   # 不應出現 config/alert.local.yaml
+```
+
+**3. B1 簽核（影子先行 ≥3 交易日）**
+- 每交易日盤後核對報告 §1–§9，把結果填 [`docs/shadow-signoff.md`](docs/shadow-signoff.md)。
+- 集滿 3 個交易日全綠 → gate #2 通過，推進 B3 開實單（先單策略 `trend_breakout` 小額）。
 
 詳細的初始化、訊號查詢、重置與 cron 排程說明見 [README.md](README.md) 第 4、5 節。
 go-live review 全文與兩個 🔴 見記憶 `ceo-review-golive-2026-06-14`。

@@ -196,3 +196,29 @@ def test_event_label_localized(tmp_path):
     assert labels["APPROVAL_INVALID"] == "授權無效（過期/模式不符）"
     assert labels["SOME_UNKNOWN_CODE"] == "SOME_UNKNOWN_CODE"  # 未知退回原碼
     conn.close()
+
+
+def test_corporate_actions_surfaced(tmp_path):
+    """登錄近期除息事件 → build_dashboard 回傳並標未套用。"""
+    from src.application.services import dashboard as dash
+    from src.portfolio.projection import PortfolioProjection
+
+    db = tmp_path / "ca.db"
+    init_db(str(db))
+    conn = get_db_connection(str(db))
+    # 登錄一筆與檢視日相近的現金股利事件（未套用）
+    conn.execute(
+        """
+        INSERT INTO corporate_actions
+        (action_id, symbol, action_type, ex_date, cash_per_share, source, created_at)
+        VALUES ('ca1', '00994A', 'CASH_DIVIDEND', '2026-06-18', 15000, 'MANUAL', '2026-06-15')
+        """
+    )
+    conn.commit()
+    data = dash.build_dashboard(conn, PortfolioProjection(conn), "ca-acc", "2026-06-15")
+    cas = data["corporate_actions"]
+    assert len(cas) == 1
+    assert cas[0]["symbol"] == "00994A"
+    assert cas[0]["applied"] is False
+    assert "1.50" in cas[0]["detail_zh"]  # 15000 / 10000 = 1.50 元/股
+    conn.close()

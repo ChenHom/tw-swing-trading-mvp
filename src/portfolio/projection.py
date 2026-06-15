@@ -577,9 +577,11 @@ class PortfolioProjection:
                 )
             )
 
-        # 3c. 新增現金分錄（配息入帳）
+        # 3c. 新增現金分錄（配息入帳）+ 同步餘額快照
+        # 單位換算：quantity=股、cash_per_share=元×10000、cash_ledger/cash_balances=整數元。
+        # 配息(元) = Σ(股數 × 每股股利×10000) ÷ 10000。
         if lots:
-            total_dividend = sum(lot["quantity"] * cash_per_share for lot in lots)
+            total_dividend = sum(lot["quantity"] * cash_per_share for lot in lots) // 10000
             if total_dividend > 0:
                 ledger_id = uuid.uuid4().hex
                 cursor.execute(
@@ -601,6 +603,28 @@ class PortfolioProjection:
                         action["ex_date"],
                         f"{action_id}:{symbol}:{account_id}",
                     )
+                )
+
+                # 同步更新 cash_balances，使 reconcile 第一關 (SUM(ledger)==balance) 維持平衡
+                cursor.execute(
+                    """
+                    INSERT INTO cash_balances (account_id, balance, currency, updated_at)
+                    VALUES (?, ?, 'TWD', datetime('now'))
+                    ON CONFLICT(account_id) DO UPDATE SET
+                        balance = balance + ?, updated_at = datetime('now')
+                    """,
+                    (account_id, total_dividend, total_dividend)
+                )
+
+                # 記錄現金調整稽核
+                cursor.execute(
+                    """
+                    INSERT INTO position_cost_adjustments
+                    (adjustment_id, action_id, account_id, strategy_id, symbol, field,
+                     before_value, after_value, created_at)
+                    VALUES (?, ?, ?, '', ?, 'CASH', 0, ?, datetime('now'))
+                    """,
+                    (uuid.uuid4().hex, action_id, account_id, symbol, total_dividend)
                 )
 
     def _apply_stock_dividend(self, cursor, account_id: str, action: dict) -> None:
@@ -626,8 +650,36 @@ class PortfolioProjection:
             strategy_id = lot["strategy_id"]
             is_long_term = lot["is_long_term"]
 
-            # 3a. 新增無償配股 lot（而非直接修改）
+            # 3a. 新增無償配股 lot（而非直接修改）+ 對應合成 fill
+            # 配股數量（股，取整；碎股殘值→零股款屬 MVP 已知小缺口）
+            bonus_qty = int(old_qty * ratio)
             new_lot_id = uuid.uuid4().hex
+            synth_fill_id = f"STOCK_DIVIDEND_{action_id}_{lot_id}"
+
+            # 合成 fill：使 reconcile 的 fills 淨額 ↔ position_lots 數量在總量與策略桶兩層平衡。
+            # raw insert（不走 apply_fill_transaction）故不動現金；price 用調整後價，PnL 基準延續。
+            cursor.execute(
+                """
+                INSERT INTO fills
+                (fill_id, account_id, run_id, order_id, execution_key, symbol, side,
+                 quantity, price, filled_at, created_at, is_long_term, source, strategy_id)
+                VALUES (?, ?, ?, ?, ?, ?, 'BUY', ?, ?, ?, datetime('now'), ?, 'CORP_ACTION', ?)
+                """,
+                (
+                    synth_fill_id,
+                    account_id,
+                    f"corp-{action_id}",
+                    f"corp-order-{action_id}-{lot_id}",
+                    synth_fill_id,
+                    symbol,
+                    bonus_qty,
+                    new_price,
+                    action["ex_date"],
+                    is_long_term,
+                    strategy_id,
+                )
+            )
+
             cursor.execute(
                 """
                 INSERT INTO position_lots
@@ -639,9 +691,9 @@ class PortfolioProjection:
                     new_lot_id,
                     account_id,
                     symbol,
-                    int(old_qty * ratio),  # 新增的配股數量
-                    old_price,  # 配股價格同原 price
-                    f"STOCK_DIVIDEND_{action_id}",
+                    bonus_qty,  # 新增的配股數量
+                    new_price,  # 配股 lot 價格採調整後價，與原 lot 一致
+                    synth_fill_id,
                     is_long_term,
                     strategy_id,
                 )

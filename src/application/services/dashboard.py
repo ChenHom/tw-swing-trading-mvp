@@ -153,6 +153,41 @@ def _events(conn, account_id, d):
     return out
 
 
+def _corporate_actions(conn, account_id, positions, d) -> list:
+    """近窗（檢視日 ±30 日）的公司行動事件，標已套用/未套用、是否持倉中。
+
+    供儀表板提醒除息日前登錄並套用調整（否則 watermark/停損基準失真）。
+    舊 DB 未 migration 時容錯回空。
+    """
+    held = {p["symbol"] for p in positions}
+    try:
+        rows = conn.execute(
+            """
+            SELECT ca.symbol, ca.action_type, ca.ex_date, ca.cash_per_share, ca.stock_ratio,
+                   (SELECT COUNT(*) FROM position_cost_adjustments pca WHERE pca.action_id = ca.action_id) AS applied_cnt
+            FROM corporate_actions ca
+            WHERE ca.ex_date BETWEEN date(?, '-30 day') AND date(?, '+30 day')
+            ORDER BY ca.ex_date
+            """, (d, d)).fetchall()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        r = dict(r)
+        if r["action_type"] == "CASH_DIVIDEND":
+            detail = f"現金股利 {(r['cash_per_share'] or 0) / 10000:.2f} 元/股"
+        else:
+            detail = f"配股 {(r['stock_ratio'] or 0):.2%}"
+        out.append({
+            "symbol": r["symbol"],
+            "ex_date": r["ex_date"],
+            "detail_zh": detail,
+            "applied": r["applied_cnt"] > 0,
+            "held": r["symbol"] in held,
+        })
+    return out
+
+
 def _reconcile_summary(recon) -> dict:
     """把 projection.reconcile() 的 dict 轉成使用者可讀摘要。
 
@@ -218,6 +253,7 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
         "next_execution": _next_execution_signals(conn),
         "events": _events(conn, account_id, d),
         "reconcile": reconcile,
+        "corporate_actions": _corporate_actions(conn, account_id, positions, d),
         # 向後相容：保留舊鍵供既有測試/消費者（reconcile_ok 布林）。
         "reconcile_ok": reconcile["ok"],
     }

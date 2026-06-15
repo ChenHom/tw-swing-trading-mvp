@@ -38,7 +38,7 @@
 ## D. 資料正確性
 
 - ✅ **D1 record-fill 策略歸屬**（= A1，資料側，2026-06-14）：`--strategy-id` 已可將手動成交落入策略 bucket，恢復停損涵蓋與損益歸因準確度。後續可選增 `--from-signal`（由來源訊號帶出歸屬），併 C1 Web 寫入 UI 設計。
-- ✅ **D2 除權息 / 公司行動追蹤（MVP 人工標記+調整）**（2026-06-15）：新增 `corporate_actions` + `position_cost_adjustments` 事實表、`projection.apply_corporate_action` 方法（冪等、保對帳平衡）、CLI `corporate-action record/apply/list` 指令。支援現金股利、股票股利；調整公式與驗證已全面實作。測試 4 項全綠。下步自動抓取（FinMind）與減資完整支援為範圍外。
+- ✅ **D2 除權息 / 公司行動追蹤（MVP 人工標記+調整）**（2026-06-15）：新增 `corporate_actions` + `position_cost_adjustments` 事實表、`projection.apply_corporate_action` 方法（冪等、保對帳平衡）、CLI `corporate-action record/apply/list/check` 指令。支援現金股利、股票股利。**下午修正三個潛伏 bug**：現金股利單位錯配（cash 是整數元、price 是×10000，配息入帳須 ÷10000，否則大 10000 倍）、現金股利未更新 cash_balances（破 reconcile）、股票股利未寫合成 fill（破 fills↔lots 數量不變式）。新增 `corporate-action check` 盤點持倉/除息登錄狀態、daily_report §9 與儀表板「公司行動」區塊露出（未套用以 ⚠ 標示）。測試 6 項全綠（含 RECONCILE_OK 強斷言）；端到端驗證 00994A 配息 1.5 元 → 現金 +7500、均價 17.30→15.80、reconcile 仍 OK。單位慣例見記憶 `unit-conventions`。自動抓取（FinMind）與減資完整支援為範圍外。
 
 ## E. 技術債
 

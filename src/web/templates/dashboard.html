@@ -120,6 +120,24 @@
 </div>
 
 <section>
+  <h2>公司行動 / 除權息</h2>
+  <p class="caption">近一個月除息/除權事件；「未套用」表示尚未以 corporate-action apply 調整均價與停利水位（除息日前未套用會使停損基準失真）。</p>
+  <table>
+    <thead><tr><th>除息日</th><th>代號</th><th>內容</th><th>狀態</th></tr></thead>
+    <tbody>
+      {% for c in d.corporate_actions %}
+      <tr>
+        <td>{{ c.ex_date }}</td>
+        <td>{{ c.symbol }}{% if c.held %} <span class="tag">持倉中</span>{% endif %}</td>
+        <td>{{ c.detail_zh }}</td>
+        <td>{% if c.applied %}<span class="badge ok">已套用</span>{% else %}<span class="badge warn">未套用</span>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="4" class="empty">無登錄之公司行動</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
   <h2>執行事件（審計）</h2>
   <p class="caption">所選日期當天交易流程的審計軌跡：記錄授權閘門攔截、訊號被擋等；無事件＝流程順利。</p>
   <table>
