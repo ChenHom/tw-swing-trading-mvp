@@ -42,7 +42,7 @@
 
 ## E. 技術債
 
-- 🔄 **E1 拆 `src/cli.py`**：1853 行 / 62 指令、churn 之冠（CEO review 第一順位債）。建議按領域（signal/trade/report/market）拆子模組；與 C1 的 service 層抽取可一併進行。**第一刀已下（2026-06-15）**：trade 域三個寫入操作抽至 `services/trade_write.py`，CLI handler 變薄。其餘域（signal/report/market/approval/portfolio）續抽，dispatch 表改 import 各域 handler。
+- ✅ **E1 拆 `src/cli.py`**（2026-06-15）：2053 行單檔 → `src/cli/` 套件（11 域模組 + `common.py` + `main.py` + `__init__.py`），最大 409 行（trade）、多數 <300。共用 helper 集中 `common.py`，領域 handler 以 `common.X()` 模組限定呼叫（保住測試 monkeypatch）。`__init__.py` re-export 所有 `cmd_*` 與 `resolve_account_id`/`sign_manifest`（測試直接 import 不變）；`app.py` 的 `from src.cli import main` 不動。測試僅改 3 個 patch 目標（→ `src.cli.common.*`）。行為/參數/輸出零變動，全套件 154 綠、CLI 冒煙一致。**第一刀**（trade_write 寫入 service，2026-06-15）已先行。
 
 ## F. 流程 / 工具
 

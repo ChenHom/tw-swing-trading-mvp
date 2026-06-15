@@ -9,6 +9,28 @@
 
 ---
 
+## 2026-06-15（夜）｜ 掛 cron（A3）+ E1 拆 src/cli.py（2053→cli 套件）
+
+**背景／觸發**：go-live 關鍵路徑已轉為使用者操作 + 時間（B1 三交易日），趁等影子空窗清 CEO review #1 技術債（cli.py churn 之冠）。使用者另指示：C1 Web 寫入**不加**（守唯讀 gate）、cron 交我掛。
+
+**A3 掛 cron**：crontab 原有 `10 15 * * 1-5 run_daily_sim.sh`（只跑 run-daily、不產報告/告警）。`shadow_daily.sh` 是其超集，故**替換**該行為 `shadow_daily.sh simulation-main`（保留 15:10 時點＝13:30 收盤資料沉澱；避免同帳戶一天雙跑），其餘 14 條他案排程原封不動。明天 6/16 15:10 自動跑出閉環首筆監控 BUY（00994A）並產報告。
+
+**E1 拆分**：`src/cli.py`(2053行) → `src/cli/` 套件：`common.py`（共用 helper + STOCK_NAMES + 再匯出 load_active_manifests/strategy_registry）、11 域模組（market/strategy/approval/account/backtest/simulation/signal/trade/portfolio/report/corporate_action）、`main.py`（argparse+dispatch）、`__init__.py`（re-export）。最大 trade.py 409 行。
+
+**為什麼這樣動 / 關鍵設計**：
+- 領域 handler 內共用名稱一律 `common.X()` **模組限定呼叫**——因測試 `monkeypatch.setattr("src.cli.common.get_settings", …)` 改的是 common 模組屬性，唯模組限定才在 call-time 讀到 patch（`from common import get_settings` 會在 import 時綁死、patch 不到）。
+- `__init__.py` re-export 所有 `cmd_*` + `resolve_account_id`/`sign_manifest`，使測試 `from src.cli import cmd_xxx` 與 `app.py` 的 `from src.cli import main` 零改動。
+- 實作以一次性 AST 抽取腳本（按 def 行範圍切、對白名單識別子做 `common.` 限定、函式體外的 import header 不動）產生，腳本用後即刪；漏抓的 trade 域常數 `_MONITOR_NOTES` 手動補回。
+- 測試僅改 3 個 patch 字串（→ `src.cli.common.*`），直接 import 行不改。
+
+**取捨**：每個域模組沿用完整 import header（部分未用 import），換取零 NameError 風險與簡單；可日後 lint 修剪。淨行數略增（2548）屬重複 header，邏輯不變。
+
+**驗證**：全套件 **154 passed**（含 test_cli_commands 24 全過）；CLI 冒煙 `--help`/`corporate-action check`/`report pnl --by-strategy`/`signal list` 輸出與拆前一致（signal list 非 tty 要 --account 屬正確防呆）；`app.py` 入口可跑。crontab `crontab -l` 確認替換正確、他條未動。
+
+**遺留**：import header 修剪（lint）、其餘 backlog（D2 FinMind、C 系列、B3）。C1 仍受 go-live gate。
+
+---
+
 ## 2026-06-15（傍晚）｜ D2 對帳/單位 bug 修正 + 公司行動可視性（顧明天里程碑）
 
 **背景／觸發**：今天影子跑產生 `BUY 00994A [pullback_rebound] target=6/16` → **明天影子跑會執行它，產生閉環首筆策略 BUY、首個 risk_exit 監控部位**（CEO review 等待的里程碑），且首個監控標的恰是會配息 ETF（00994A），D2 立即相關。規劃期間使用者追問單位，連帶查出昨日 D2 三個潛伏 bug。

@@ -15,7 +15,7 @@ def test_cmd_portfolio_reconcile_reports_success_on_ok(temp_db_path, monkeypatch
     CLI 不可再用 `if not errors` 而誤報失敗。"""
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     # 空且一致的帳戶（ledger 總額 0 == balance 0）→ RECONCILE_OK
     args = MockArgs(account="recon-acct")
@@ -35,7 +35,7 @@ def test_cmd_signal_list_empty(temp_db_path, monkeypatch, capsys):
     # Mock settings
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     
     # Run command with no signals
     args = MockArgs(date_str=None)
@@ -48,7 +48,7 @@ def test_cmd_signal_list_with_data(temp_db_path, monkeypatch, capsys):
     # Mock settings
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     
     # Insert mock signal data
     conn = get_db_connection(temp_db_path)
@@ -120,7 +120,7 @@ def test_cmd_simulation_reset(temp_db_path, monkeypatch, capsys):
     # Mock settings
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     
     # 1. Insert dummy records for 2026-06-10
     conn = get_db_connection(temp_db_path)
@@ -189,7 +189,7 @@ def test_cmd_trade_plan(temp_db_path, monkeypatch, capsys):
     # Mock settings
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     
     # 1. Setup account cash
     conn = get_db_connection(temp_db_path)
@@ -254,7 +254,7 @@ def test_cmd_trade_record_fill(temp_db_path, tmp_path, monkeypatch, capsys):
             self.code = code
             
     mock_settings.universe.symbols = [MockSymbol("2330")]
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     
     # Mock args for record-fill
     class MockRecordFillArgs:
@@ -310,7 +310,7 @@ def test_cmd_account_adjust_cash(temp_db_path, monkeypatch, capsys):
     # Mock settings
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     
     # 1. Initialize account with 300,000 cash first
     conn = get_db_connection(temp_db_path)
@@ -360,7 +360,7 @@ def test_cmd_account_adjust_cash(temp_db_path, monkeypatch, capsys):
 def test_cmd_report_pnl(temp_db_path, monkeypatch, capsys):
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     
     # Initialize database and account
     conn = get_db_connection(temp_db_path)
@@ -448,7 +448,7 @@ def test_record_fill_sets_source_manual_import(temp_db_path, monkeypatch, capsys
     """record-fill should persist source = 'MANUAL_IMPORT' in the fills table."""
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     class MockRecordFillArgs:
         symbol = "2330"
@@ -473,7 +473,7 @@ def test_record_fill_default_strategy_is_manual(temp_db_path, monkeypatch, capsy
     """未指定 --strategy-id 時應沿用舊行為，歸 MANUAL 且註明排除於監控。"""
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     class MockRecordFillArgs:
         symbol = "2330"
@@ -506,10 +506,10 @@ def test_record_fill_attributes_to_strategy_and_is_monitored(temp_db_path, monke
     """指定一個具 exit 區塊的策略：fill / lot 落在該 bucket，且提示已納入監控。"""
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     # 隔離 YAML 載入：聲明 trend_breakout 具 exit 區塊（受監控）。
     monkeypatch.setattr(
-        "src.cli.strategy_registry.load_exit_managed_definitions",
+        "src.cli.common.strategy_registry.load_exit_managed_definitions",
         lambda settings: {"trend_breakout": object()},
     )
 
@@ -551,9 +551,9 @@ def test_record_fill_strategy_without_exit_block_not_monitored(temp_db_path, mon
     """歸入已登錄但無 exit 區塊的策略：仍寫入該 bucket，但提示不受監控。"""
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     monkeypatch.setattr(
-        "src.cli.strategy_registry.load_exit_managed_definitions",
+        "src.cli.common.strategy_registry.load_exit_managed_definitions",
         lambda settings: {},  # 無任何受監控策略
     )
 
@@ -577,13 +577,13 @@ def test_record_fill_long_term_with_strategy_excluded(temp_db_path, monkeypatch,
     """長期持有即使指定策略亦結構性排除於監控（且不觸發 exit 定義查詢）。"""
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     def _boom(settings):
         raise AssertionError("長期持有路徑不應查詢 exit 定義")
 
     monkeypatch.setattr(
-        "src.cli.strategy_registry.load_exit_managed_definitions", _boom
+        "src.cli.common.strategy_registry.load_exit_managed_definitions", _boom
     )
 
     class MockRecordFillArgs:
@@ -614,13 +614,13 @@ def test_record_fill_exit_config_load_failure_is_indeterminate(temp_db_path, mon
     """exit 設定載入失敗時：fill 仍寫入（不誤報失敗），且提示為不確定語氣而非斷言不受監控。"""
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     def _raise(settings):
         raise ValueError("STRATEGY_ID_MISMATCH: 模擬設定錯誤")
 
     monkeypatch.setattr(
-        "src.cli.strategy_registry.load_exit_managed_definitions", _raise
+        "src.cli.common.strategy_registry.load_exit_managed_definitions", _raise
     )
 
     class MockRecordFillArgs:
@@ -652,7 +652,7 @@ def test_record_fill_unknown_strategy_rejected(temp_db_path, monkeypatch, capsys
     """未登錄的 strategy_id 應被拒絕，且不寫入任何 fill。"""
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     class MockRecordFillArgs:
         symbol = "2317"
@@ -685,7 +685,7 @@ def test_simulation_run_daily_locked(temp_db_path, monkeypatch, capsys):
 
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     lock_path = Path(temp_db_path).parent / "simulation_daily.lock"
     lock_file = open(lock_path, "w")
@@ -737,7 +737,7 @@ def test_reject_signal(temp_db_path, monkeypatch, capsys):
 
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     conn = get_db_connection(temp_db_path)
     _insert_signal_item(conn, signal_id="sig-rej1")
@@ -768,7 +768,7 @@ def test_reject_signal_idempotent(temp_db_path, monkeypatch, capsys):
 
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     conn = get_db_connection(temp_db_path)
     _insert_signal_item(conn, signal_id="sig-rej2")
@@ -794,7 +794,7 @@ def test_un_reject_signal(temp_db_path, monkeypatch, capsys):
 
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     conn = get_db_connection(temp_db_path)
     _insert_signal_item(conn, signal_id="sig-rej3")
@@ -825,7 +825,7 @@ def test_reject_signal_unknown_id(temp_db_path, monkeypatch, capsys):
 
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     class Args:
         signal_id = "does-not-exist"
@@ -840,7 +840,7 @@ def test_reject_signal_unknown_id(temp_db_path, monkeypatch, capsys):
 def test_cmd_report_pnl_source_split(temp_db_path, monkeypatch, capsys):
     mock_settings = MagicMock()
     mock_settings.trading.database_path = temp_db_path
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
     
     conn = get_db_connection(temp_db_path)
     cursor = conn.cursor()
@@ -937,7 +937,7 @@ def test_execute_pending_skips_rejected_signal(temp_db_path, monkeypatch, capsys
     mock_settings.trading.global_limits.max_open_positions = 8
     mock_settings.trading.global_limits.max_daily_buy_value = 200000
     mock_settings.trading.global_limits.max_new_positions_per_day = 2
-    monkeypatch.setattr("src.cli.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     conn = get_db_connection(temp_db_path)
     cursor = conn.cursor()
@@ -980,7 +980,7 @@ def test_execute_pending_skips_rejected_signal(temp_db_path, monkeypatch, capsys
     }
     signed_dict = sign_manifest(manifest_dict)
     dummy_manifest = StrategyApprovalManifest(**signed_dict)
-    monkeypatch.setattr("src.cli.load_active_manifests", lambda s: {"trend_pullback": dummy_manifest})
+    monkeypatch.setattr("src.cli.common.load_active_manifests", lambda s: {"trend_pullback": dummy_manifest})
 
     # 3. Create signal bundle targeting 2026-06-11
     cursor.execute(
