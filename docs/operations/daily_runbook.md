@@ -118,10 +118,10 @@ crontab -l   # 確認已有以下這行（原 run_daily_sim.sh 已替換為 shad
 ```
 明日 6/16 15:10 起自動跑出第一筆監控 BUY（00994A）並產報告。
 
-**2. 接通 Discord 失敗告警（B2，Bot API）**
+**2. 接通 Discord 失敗告警（B2，Bot API）— ✅ 已完成（2026-06-15）**
 ```bash
 # (a) 建 Discord bot、取 token 與目標頻道 channel_id（頻道右鍵→複製頻道 ID，需開開發者模式）
-# (b) token 放 ~/.openclaw/.env（dotenv 自動載入），絕不入 git：
+# (b) token 放 ~/.openclaw/.env（discord_alert.py 會在環境變數未設時讀取此檔），絕不入 git：
 #     DISCORD_BOT_TOKEN=...
 # (c) channel_id 放本機設定（gitignored）：
 cp config/alert.local.yaml.example config/alert.local.yaml
@@ -131,6 +131,7 @@ cp config/alert.local.yaml.example config/alert.local.yaml
 # (e) 確認密鑰未入 git：
 git status   # 不應出現 config/alert.local.yaml
 ```
+> 已完成：`config/alert.local.yaml` 已建立並實測成功（收到紅色 embed 告警）。`~/.openclaw/.env` 的 `DISCORD_BOT_TOKEN` 對目標頻道有發送權限。同步修正 `discord_alert.py` 的 dotenv 載入缺口（原先 `os.getenv` 讀不到 `~/.openclaw/.env`，現改用 `dotenv_values` 顯式讀取該檔）。
 
 **3. B1 簽核（影子先行 ≥3 交易日）**
 - 每交易日盤後核對報告 §1–§9，把結果填 [`shadow-signoff.md`](shadow-signoff.md)。

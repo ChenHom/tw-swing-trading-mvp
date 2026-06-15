@@ -32,34 +32,8 @@ from src.trading.allocator import GlobalLimits
 from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
-
-
-STOCK_NAMES = {
-    "2330": "台積電",
-    "2317": "鴻海",
-    "2454": "聯發科",
-    "2308": "台達電",
-    "2382": "廣達",
-    "2881": "富邦金",
-    "2882": "國泰金",
-    "2301": "光寶科",
-    "2324": "仁寶",
-    "3231": "緯創",
-    "2357": "華碩",
-    "2891": "中信金",
-    "2886": "兆豐金",
-    "2603": "長榮",
-    "2609": "陽明",
-    "00400A": "主動國泰動能高息",
-    "00981A": "主動統一台股增長",
-    "00994A": "主動第一金台股優",
-    "2327": "國巨",
-    "2360": "致茂",
-    "3090": "日電貿",
-    "3691": "碩禾",
-    "6805": "富世達",
-    "TSE": "加權指數"
-}
+# 股名對照已搬至 contracts 層共用；此處 re-export 維持既有 common.STOCK_NAMES 用法不變。
+from src.contracts.stock_names import STOCK_NAMES
 
 
 def get_settings() -> AppSettings:

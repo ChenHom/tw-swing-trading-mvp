@@ -100,7 +100,30 @@ class RiskExitEngine:
         exit_params: ExitParams,
         market_data: PointInTimeMarketData,
     ) -> str | None:
-        """Return the exit reason code if any condition triggers, else None."""
+        """Return the exit reason code if any condition triggers, else None.
+
+        單一真相來源：委派 explain_exit，取其 reason（保持原本「按優先序第一個觸發」語意）。
+        """
+        return self.explain_exit(as_of_date, account_id, pos, exit_params, market_data)["reason"]
+
+    def explain_exit(
+        self,
+        as_of_date: date,
+        account_id: str,
+        pos: dict,
+        exit_params: ExitParams,
+        market_data: PointInTimeMarketData,
+    ) -> dict:
+        """逐條評估四項出場條件並回傳完整明細（供 dry-run 試算與 _evaluate_position 共用）。
+
+        回傳 dict：
+          - evaluable: 是否有行情/有效成本可評估
+          - close, wavg（元）
+          - fixed_stop / trailing / ma_break / time_stop：各自 {..., hit: bool}
+          - reason: 按優先序（固定停損→移動停利→均線失效→時間停損）第一個觸發的 reason code；
+            皆未觸發為 None。
+        priority 與短路語意與舊 _evaluate_position 一致：reason 取第一個 hit 的條件。
+        """
         symbol = pos["symbol"]
         strategy_id = pos["strategy_id"]
         wavg_price = pos["wavg_price"]
@@ -108,27 +131,54 @@ class RiskExitEngine:
 
         latest = market_data.latest(symbol)
         if latest is None or wavg_price <= 0:
-            return None
+            return {
+                "evaluable": False,
+                "symbol": symbol,
+                "close": None,
+                "wavg": _scaled_to_yuan(wavg_price) if wavg_price else None,
+                "fixed_stop": None,
+                "trailing": None,
+                "ma_break": None,
+                "time_stop": None,
+                "reason": None,
+            }
         close = latest.close
 
         # 1. 固定停損：收盤跌破加權均價 × (1 - fixed_stop_loss_bps)
-        if close <= wavg_price * (1 - exit_params.fixed_stop_loss_bps / 10000.0):
-            return "FIXED_STOP_EXIT"
+        fixed_level = wavg_price * (1 - exit_params.fixed_stop_loss_bps / 10000.0)
+        fixed_hit = close <= fixed_level
+        fixed_stop = {
+            "stop_loss_bps": exit_params.fixed_stop_loss_bps,
+            "level": _scaled_to_yuan(fixed_level),
+            "hit": fixed_hit,
+        }
 
         # 2. 移動停利：自持有後最高收盤價回落 trailing_stop_bps
         #    最高價來自 position_high_watermarks 事實表（§2.2），視窗起點為現存
-        #    lot 的最早取得日；無 watermark（如建倉首日）以 max(買入均價, 當日收盤) 保守初始化。
+        #    lot 的最早取得日；無 watermark（如建倉首日或 MANUAL/長期未累積）以
+        #    max(買入均價, 當日收盤) 保守初始化。
         high = self.projection.get_position_high(account_id, strategy_id, symbol, first_date)
+        high_from_watermark = high is not None
         if high is None:
             high = max(wavg_price, close)
-        if close <= high * (1 - exit_params.trailing_stop_bps / 10000.0):
-            return "TRAILING_STOP_EXIT"
+        trailing_level = high * (1 - exit_params.trailing_stop_bps / 10000.0)
+        trailing_hit = close <= trailing_level
+        trailing = {
+            "trailing_stop_bps": exit_params.trailing_stop_bps,
+            "high": _scaled_to_yuan(high),
+            "high_from_watermark": high_from_watermark,
+            "level": _scaled_to_yuan(trailing_level),
+            "hit": trailing_hit,
+        }
 
         # 3. 均線失效：連續 N 日收盤低於 sma × (1 - buffer)
         period = exit_params.ma_break_period
         confirm = exit_params.ma_break_confirm_days
         history = market_data.history(symbol, limit=period + confirm - 1)
-        if len(history) >= period + confirm - 1:
+        ma_evaluable = len(history) >= period + confirm - 1
+        ma_hit = False
+        latest_sma = None
+        if ma_evaluable:
             closes = [bar.close for bar in history]
             broken_all = True
             for i in range(confirm):
@@ -136,18 +186,61 @@ class RiskExitEngine:
                 end = len(closes) - i
                 day_close = closes[end - 1]
                 sma = sum(closes[end - period:end]) / period
+                if i == 0:
+                    latest_sma = sma
                 if day_close >= sma * (1 - exit_params.ma_break_buffer_bps / 10000.0):
                     broken_all = False
                     break
-            if broken_all:
-                return "MA_BREAK_EXIT"
+            ma_hit = broken_all
+        ma_break = {
+            "period": period,
+            "confirm_days": confirm,
+            "buffer_bps": exit_params.ma_break_buffer_bps,
+            "sma": _scaled_to_yuan(latest_sma) if latest_sma is not None else None,
+            "evaluable": ma_evaluable,
+            "hit": ma_hit,
+        }
 
         # 4. 時間停損：持有達 time_stop_days 個交易日且累計報酬未達門檻
         sessions = self.calendar.sessions_between(date.fromisoformat(first_date), as_of_date)
         holding_days = max(0, len(sessions) - 1)
-        if holding_days >= exit_params.time_stop_days:
-            return_bps = (close - wavg_price) / wavg_price * 10000.0
-            if return_bps < exit_params.time_stop_min_return_bps:
-                return "TIME_STOP_EXIT"
+        return_bps = (close - wavg_price) / wavg_price * 10000.0
+        time_hit = (
+            holding_days >= exit_params.time_stop_days
+            and return_bps < exit_params.time_stop_min_return_bps
+        )
+        time_stop = {
+            "time_stop_days": exit_params.time_stop_days,
+            "min_return_bps": exit_params.time_stop_min_return_bps,
+            "holding_days": holding_days,
+            "return_bps": round(return_bps, 1),
+            "hit": time_hit,
+        }
 
-        return None
+        # 優先序：第一個觸發者為 reason（與舊短路邏輯一致）
+        reason = None
+        if fixed_hit:
+            reason = "FIXED_STOP_EXIT"
+        elif trailing_hit:
+            reason = "TRAILING_STOP_EXIT"
+        elif ma_hit:
+            reason = "MA_BREAK_EXIT"
+        elif time_hit:
+            reason = "TIME_STOP_EXIT"
+
+        return {
+            "evaluable": True,
+            "symbol": symbol,
+            "close": _scaled_to_yuan(close),
+            "wavg": _scaled_to_yuan(wavg_price),
+            "fixed_stop": fixed_stop,
+            "trailing": trailing,
+            "ma_break": ma_break,
+            "time_stop": time_stop,
+            "reason": reason,
+        }
+
+
+def _scaled_to_yuan(scaled: float) -> float:
+    """價格內部以 ×10000 整數儲存；轉回元（保留 2 位）供顯示/明細。"""
+    return round(scaled / 10000.0, 2)

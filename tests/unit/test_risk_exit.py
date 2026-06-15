@@ -112,6 +112,42 @@ def test_fixed_stop_exit(setup):
     assert sig.signal_source == "RISK_EXIT"
 
 
+def test_explain_exit_breakdown(setup):
+    """explain_exit 回傳逐條明細，reason 與 generate_exit_bundles 一致（固定停損案例）。"""
+    conn, projection, calendar = setup
+    _buy(projection, "2330", 100, 1000000, "trend_breakout", "2026-06-08T09:00:00+08:00")
+    pit = MockPIT({"2330": [make_bar("2330", date(2026, 6, 10), 929000)]}, date(2026, 6, 10))
+    engine = RiskExitEngine({"trend_breakout": make_defn()}, projection, calendar)
+    pos = projection.get_strategy_positions("acc-1", include_long_term=True)[("trend_breakout", "2330")]
+
+    detail = engine.explain_exit(date(2026, 6, 10), "acc-1", pos, make_defn().exit_params, pit)
+    assert detail["evaluable"] is True
+    assert detail["close"] == 92.9
+    assert detail["wavg"] == 100.0
+    assert detail["fixed_stop"]["hit"] is True
+    assert detail["fixed_stop"]["level"] == 93.0  # 100 × (1 - 0.07)
+    assert detail["reason"] == "FIXED_STOP_EXIT"
+    # 與 _evaluate_position 委派一致
+    assert engine._evaluate_position(date(2026, 6, 10), "acc-1", pos, make_defn().exit_params, pit) == "FIXED_STOP_EXIT"
+
+
+def test_explain_exit_no_trigger(setup):
+    """價格平穩 → 各條件皆未觸發，reason=None。"""
+    conn, projection, calendar = setup
+    _buy(projection, "2330", 100, 1000000, "trend_breakout", "2026-06-08T09:00:00+08:00")
+    pit = MockPIT({"2330": [make_bar("2330", date(2026, 6, 10), 1010000)]}, date(2026, 6, 10))
+    engine = RiskExitEngine({"trend_breakout": make_defn()}, projection, calendar)
+    pos = projection.get_strategy_positions("acc-1", include_long_term=True)[("trend_breakout", "2330")]
+
+    detail = engine.explain_exit(date(2026, 6, 10), "acc-1", pos, make_defn().exit_params, pit)
+    assert detail["reason"] is None
+    assert detail["fixed_stop"]["hit"] is False
+    assert detail["trailing"]["hit"] is False
+    # 無 watermark → high 由 max(均價, 收盤) 保守初始化
+    assert detail["trailing"]["high_from_watermark"] is False
+    assert detail["trailing"]["high"] == 101.0
+
+
 def test_trailing_stop_exit_uses_watermark(setup):
     conn, projection, calendar = setup
     _buy(projection, "2330", 100, 1000000, "trend_breakout", "2026-06-08T09:00:00+08:00")

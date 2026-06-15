@@ -57,6 +57,10 @@
   - `daily_runs` 單一 orchestrator run（`strategy_id='MULTI'`）；bundle/signal id 納入 strategy_id 防撞鍵；執行時取回當日全部 bundle。
   - 舊策略 `trend_pullback` 退役：補 `exit:` 由 risk_exit 管理存量倉位，不再進場（回測仍可顯式指定）。
   - `report pnl --by-strategy` 策略別損益歸因。
+- [x] **單筆部位出場試算與長期重分類**（2026-06-15 完成）:
+  - `trade exit-check --symbol X --strategy Y`：對單一持倉套某策略 `exit:` 規則跑一次（共用 `RiskExitEngine.explain_exit`，與每日引擎同源），dry-run 報告四條件數值與是否觸發。**純唯讀**、不發 SELL、不碰每日執行路徑。
+  - `trade set-long-term --symbol X [--unset] [--strategy-id ...]`：將既有持倉重分類為長期持有（更新 `fills.is_long_term` 後 `rebuild_from_ledger`）；**預設只動 `MANUAL` bucket**，避免誤把同 symbol 的策略交易部位排除於 risk_exit。已對 `data/app.db` 三檔 ETF（00400A/00981A/00994A）手動持倉標長期，對帳通過。
+  - Web 儀表板多張表格（持倉／今日成交／下次執行／公司行動／執行事件）顯示中文股名（`src/contracts/stock_names.py` 共用對照，cli 與 service 共用）。
 
 ---
 
@@ -88,6 +92,7 @@ MVP 核心功能、首批架構缺陷修正、排程安全強化、與多策略�
 
 1. **手動成交的事實完整性**:
    - 目前 `record-fill` 已標記 `source = MANUAL_IMPORT` 並落入 `MANUAL` 策略 bucket（結構性排除於 risk_exit 之外），且 `report pnl` 已支援依交易來源/策略分流，但手動錄入仍僅能使用估計費率，且缺乏沖銷修正的模型支援（reversal / corrected fill）。
+   - MANUAL／長期持倉**不會被 risk_exit 自動賣出**。要讓某策略賣出，須在補錄成交時以 `--strategy-id` 歸入具 `exit:` 區塊的策略；要試算「若交由某策略管理會否觸發」可用 `trade exit-check`（dry-run、唯讀）；要把手動持倉永久免除自動出場可用 `trade set-long-term`。目前沒有「將既有 MANUAL 部位永久轉歸某策略並自動賣出」的工具（與長期持有需求相衝，刻意不做）。
 2. **撮合模型與公司行動限制**:
    - 零股與整張股票採用相同的成交滑價模型；未追蹤除權息等公司行動（會使加權均價與 `position_high_watermarks` 失真，多策略上線後此風險被放大）；缺乏詳細的排程異常告警閉環。
 3. **進場策略相關性高**:

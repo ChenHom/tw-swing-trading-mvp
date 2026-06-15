@@ -33,6 +33,8 @@ from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
+from src.application.services import exit_check
+from src.contracts.stock_names import stock_name
 
 _MONITOR_NOTES = {
     "long_term_excluded": "（長期持有，結構性排除於 risk_exit 監控）",
@@ -405,5 +407,104 @@ def cmd_trade_close_all(args):
         print(f"  Closed {qty} shares of {symbol} [{strategy_id}] at price {close_price/10000.0:.2f}")
 
     conn.close()
+
+
+def _hit_mark(hit: bool) -> str:
+    return "✗ 觸發" if hit else "✓ 未觸發"
+
+
+def cmd_trade_exit_check(args):
+    """單筆部位出場試算（dry-run）：套某策略 exit 規則跑一次、報告各條件。純唯讀。"""
+    settings = common.get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    try:
+        account_id = common.resolve_account_id(conn, args.account)
+        strategy_id = args.strategy
+        try:
+            defn = strategy_registry.load_strategy_definition(settings, strategy_id)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"載入策略設定失敗: {e}")
+            sys.exit(1)
+
+        as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+
+        result = exit_check.dry_run_exit(
+            conn,
+            account_id=account_id,
+            symbol=args.symbol,
+            definition=defn,
+            as_of_date=as_of,
+        )
+
+        name = stock_name(args.symbol)
+        title = f"{args.symbol}" + (f"（{name}）" if name else "")
+        if result["status"] != "OK":
+            print(result["message"])
+            return
+
+        pos = result["position"]
+        d = result["detail"]
+        long_tag = "（長期）" if pos["is_long_term"] else ""
+        print(f"=== 出場試算：{title} × 策略 {strategy_id} ===")
+        print(f"帳戶：{account_id}　試算日：{result['as_of_date']}")
+        print(f"持倉：{pos['quantity']} 股{long_tag}　歸屬策略：{pos['strategy_id']}　建倉日：{pos['first_acquired_at'][:10]}")
+        print(f"收盤價：{d['close']:.2f} 元　加權均價：{d['wavg']:.2f} 元　當前報酬：{d['time_stop']['return_bps']/100:+.2f}%")
+        print("-" * 48)
+
+        fs = d["fixed_stop"]
+        print(f"固定停損（-{fs['stop_loss_bps']/100:.1f}%）：跌破 {fs['level']:.2f} 元 → {_hit_mark(fs['hit'])}")
+
+        tr = d["trailing"]
+        wm = "watermark 累積最高" if tr["high_from_watermark"] else "max(均價,收盤) 保守初始（無 watermark）"
+        print(f"移動停利（-{tr['trailing_stop_bps']/100:.1f}%）：最高 {tr['high']:.2f}（{wm}）→ 跌破 {tr['level']:.2f} 元 → {_hit_mark(tr['hit'])}")
+
+        mb = d["ma_break"]
+        if mb["evaluable"]:
+            print(f"均線失效（{mb['period']}MA，連 {mb['confirm_days']} 日、buffer {mb['buffer_bps']/100:.1f}%）：最新 SMA {mb['sma']:.2f} 元 → {_hit_mark(mb['hit'])}")
+        else:
+            print(f"均線失效（{mb['period']}MA）：歷史資料不足，未評估")
+
+        ts = d["time_stop"]
+        print(f"時間停損（持有≥{ts['time_stop_days']}日且報酬<{ts['min_return_bps']/100:.1f}%）：已持有 {ts['holding_days']} 交易日 → {_hit_mark(ts['hit'])}")
+
+        print("-" * 48)
+        if d["reason"]:
+            print(f"結論：**會出場**，觸發條件 = {d['reason']}（以優先序第一個觸發者為準）")
+        else:
+            print("結論：未觸發任何出場條件，**不會賣出**。")
+        print("（dry-run 試算，未寫入任何資料。實際賣出請用 trade record-fill --side SELL）")
+    finally:
+        conn.close()
+
+
+def cmd_trade_set_long_term(args):
+    """把既有部位重分類為長期持有（或以 --unset 取消）：更新 fills 並重建投影。"""
+    settings = common.get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    try:
+        account_id = common.resolve_account_id(conn, args.account)
+        value = not args.unset
+        strategy_id = args.strategy_id or MANUAL_STRATEGY_ID
+        try:
+            result = trade_write.set_long_term(
+                conn, account_id=account_id, symbol=args.symbol, value=value, strategy_id=strategy_id
+            )
+        except trade_write.TradeWriteError as e:
+            print(e.message)
+            sys.exit(1)
+
+        if result["affected"] == 0:
+            print(f"帳戶 '{account_id}' 查無 {args.symbol}（策略 bucket：{strategy_id}）的成交紀錄，未變更。")
+            return
+
+        name = stock_name(args.symbol)
+        label = "長期持有" if value else "非長期（可被策略管理）"
+        print(f"已將 {args.symbol}{f'（{name}）' if name else ''} [{strategy_id}] 重分類為：{label}")
+        print(f"  - 更新成交筆數：{result['affected']}")
+        print(f"  - 重建後該 bucket 持倉：{result['position_qty']} 股（is_long_term={result['is_long_term']}）")
+        recon = result["reconcile_status"]
+        print(f"  - 對帳：{'通過' if recon == 'RECONCILE_OK' else recon}")
+    finally:
+        conn.close()
 
 

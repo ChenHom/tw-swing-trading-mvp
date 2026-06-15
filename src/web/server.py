@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 from src.config import AppSettings
 from src.portfolio.db import get_db_connection
 from src.portfolio.projection import PortfolioProjection
+from src.market_data.repository import SqliteMarketBarRepository
 from src.application.services import dashboard as dash
 from src.strategy import registry as strategy_registry
 
@@ -67,9 +68,12 @@ def index(request: Request,
             d = today
         projection = PortfolioProjection(conn)
         data = dash.build_dashboard(conn, projection, account_id, d, _exit_strategy_ids())
+        # market repo 由路由注入（比照 _exit_strategy_ids），connection 生命週期仍由路由 own。
+        market_repo = SqliteMarketBarRepository(conn)
+        cap = dash.build_capital_overview(conn, projection, account_id, d, market_repo)
         return templates.TemplateResponse(
             request, "dashboard.html",
-            {"d": data, "accounts": accounts,
+            {"d": data, "cap": cap, "accounts": accounts,
              "view_date": d.isoformat(), "today": today.isoformat()},
         )
     finally:
@@ -88,6 +92,24 @@ def report_detail(name: str):
     if text is None:
         return PlainTextResponse("報告不存在。", status_code=404)
     return PlainTextResponse(text)
+
+
+@app.get("/backtests", response_class=HTMLResponse)
+def backtests(request: Request):
+    items = dash.list_backtest_results(dash.BACKTEST_REPORT_DIR)
+    return templates.TemplateResponse(request, "backtests.html", {"results": items})
+
+
+@app.get("/backtests/{name}", response_class=HTMLResponse)
+def backtest_detail(request: Request, name: str):
+    result = dash.read_backtest_result(name, dash.BACKTEST_REPORT_DIR)
+    if result is None:
+        return templates.TemplateResponse(
+            request, "backtests.html",
+            {"results": dash.list_backtest_results(dash.BACKTEST_REPORT_DIR), "error": "回測結果不存在。"},
+            status_code=404,
+        )
+    return templates.TemplateResponse(request, "backtest_detail.html", {"result": result, "name": name})
 
 
 @app.get("/healthz", response_class=PlainTextResponse)

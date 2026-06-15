@@ -205,3 +205,63 @@ def un_reject_signal(conn: sqlite3.Connection, *, signal_id: str) -> dict:
         "action": row["action"],
         "status": "restored",
     }
+
+
+def set_long_term(
+    conn: sqlite3.Connection,
+    *,
+    account_id: str,
+    symbol: str,
+    value: bool = True,
+    strategy_id: str = MANUAL_STRATEGY_ID,
+) -> dict:
+    """把帳戶內某 (strategy_id, symbol) bucket 的持倉重分類為長期持有（value=True）或取消。
+
+    **限定單一策略 bucket**（預設 MANUAL）：同一 symbol 可能同時存在手動長期持倉與策略
+    交易部位（FIFO 依 strategy_id 隔離），若全 symbol 翻旗會誤把策略部位排除於 risk_exit
+    監控之外。本功能語意為「將手動持倉標長期」，故預設只動 MANUAL bucket；要動其他策略
+    bucket 須顯式指定 strategy_id。
+
+    `is_long_term` 是不可變事實 `fills` 的欄位（rebuild_from_ledger 自 fills 重建
+    position_lots），故須更新 fills 後重建投影才持久。重分類不改變數量／FIFO 淨額，
+    `reconcile` 比對淨額，翻旗+重建後仍應通過。
+
+    回傳 affected（更新筆數）、該 bucket 重建後 position_qty 與 is_long_term、reconcile_status。
+    查無該 bucket 成交 → affected=0（非錯誤）。
+    """
+    cursor = conn.cursor()
+    target = 1 if value else 0
+    cursor.execute(
+        "UPDATE fills SET is_long_term = ? WHERE account_id = ? AND symbol = ? AND strategy_id = ?",
+        (target, account_id, symbol, strategy_id),
+    )
+    affected = cursor.rowcount
+    conn.commit()
+
+    if affected == 0:
+        return {
+            "account_id": account_id,
+            "symbol": symbol,
+            "strategy_id": strategy_id,
+            "affected": 0,
+            "position_qty": 0,
+            "is_long_term": value,
+            "reconcile_status": None,
+        }
+
+    projection = PortfolioProjection(conn)
+    projection.rebuild_from_ledger(account_id)
+
+    positions = projection.get_strategy_positions(account_id, include_long_term=True)
+    bucket = positions.get((strategy_id, symbol))
+    recon = projection.reconcile(account_id)
+
+    return {
+        "account_id": account_id,
+        "symbol": symbol,
+        "strategy_id": strategy_id,
+        "affected": affected,
+        "position_qty": bucket["quantity"] if bucket else 0,
+        "is_long_term": bucket["is_long_term"] if bucket else value,
+        "reconcile_status": recon.get("status") if isinstance(recon, dict) else None,
+    }

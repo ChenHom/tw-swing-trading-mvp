@@ -186,3 +186,73 @@ def test_un_reject_signal_not_found_raises(conn):
     with pytest.raises(trade_write.TradeWriteError) as ei:
         trade_write.un_reject_signal(conn, signal_id="ghost")
     assert ei.value.code == "SIGNAL_NOT_FOUND"
+
+
+# --- set_long_term ---------------------------------------------------------
+
+def test_set_long_term_reclassifies_and_rebuilds(conn):
+    # 先以非長期 MANUAL 補錄一筆持倉
+    trade_write.record_fill(
+        conn, account_id="acc-lt", symbol="00400A", side="BUY",
+        quantity=1000, price=13.67,
+    )
+    proj = PortfolioProjection(conn)
+    before = proj.get_strategy_positions("acc-lt", include_long_term=True)[("MANUAL", "00400A")]
+    assert before["is_long_term"] is False
+
+    result = trade_write.set_long_term(conn, account_id="acc-lt", symbol="00400A", value=True)
+    assert result["affected"] == 1
+    assert result["is_long_term"] is True
+    assert result["position_qty"] == 1000
+    assert result["reconcile_status"] == "RECONCILE_OK"
+
+    # 重建後投影確實標長期；數量不變
+    after = proj.get_strategy_positions("acc-lt", include_long_term=True)[("MANUAL", "00400A")]
+    assert after["is_long_term"] is True
+    assert after["quantity"] == 1000
+    # 非長期視圖應排除該部位
+    assert ("MANUAL", "00400A") not in proj.get_strategy_positions("acc-lt", include_long_term=False)
+
+
+def test_set_long_term_scopes_to_manual_bucket_only(conn):
+    """同一 symbol 同時有 MANUAL 長期持倉與策略交易部位時，預設只動 MANUAL bucket，
+    策略部位的 is_long_term 不受影響（仍可被 risk_exit 監控）。"""
+    trade_write.record_fill(
+        conn, account_id="acc-mix", symbol="00994A", side="BUY",
+        quantity=5000, price=17.30,
+    )
+    trade_write.record_fill(
+        conn, account_id="acc-mix", symbol="00994A", side="BUY",
+        quantity=200, price=17.50, strategy_id="pullback_rebound",
+    )
+
+    result = trade_write.set_long_term(conn, account_id="acc-mix", symbol="00994A", value=True)
+    assert result["affected"] == 1  # 只動 MANUAL 的那筆
+    assert result["strategy_id"] == MANUAL_STRATEGY_ID
+    assert result["position_qty"] == 5000
+
+    proj = PortfolioProjection(conn)
+    positions = proj.get_strategy_positions("acc-mix", include_long_term=True)
+    assert positions[(MANUAL_STRATEGY_ID, "00994A")]["is_long_term"] is True
+    # 策略部位未被翻旗 → 仍非長期、仍在非長期視圖（受 risk_exit 監控）
+    assert positions[("pullback_rebound", "00994A")]["is_long_term"] is False
+    non_lt = proj.get_strategy_positions("acc-mix", include_long_term=False)
+    assert ("pullback_rebound", "00994A") in non_lt
+    assert (MANUAL_STRATEGY_ID, "00994A") not in non_lt
+
+
+def test_set_long_term_unset_restores(conn):
+    trade_write.record_fill(
+        conn, account_id="acc-lt2", symbol="2327", side="BUY",
+        quantity=100, price=500.0, is_long_term=True,
+    )
+    result = trade_write.set_long_term(conn, account_id="acc-lt2", symbol="2327", value=False)
+    assert result["affected"] == 1
+    assert result["is_long_term"] is False
+    assert result["reconcile_status"] == "RECONCILE_OK"
+
+
+def test_set_long_term_no_fills_is_noop(conn):
+    result = trade_write.set_long_term(conn, account_id="acc-none", symbol="9999", value=True)
+    assert result["affected"] == 0
+    assert result["reconcile_status"] is None

@@ -5,15 +5,18 @@
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
 from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
+from src.contracts.stock_names import stock_name
 
 ORCHESTRATOR_STRATEGY_ID = "MULTI"
 REPORT_DIR = "artifacts/reports/daily"
+BACKTEST_REPORT_DIR = "artifacts/reports/backtest"
 
 # execution_events.event_type 代碼 → 使用者可讀中文（來源：engine._validate_buy_gate
 # 的 block_reason 前綴）。未收錄者於 _events 退回顯示原碼。
@@ -77,6 +80,7 @@ def _positions(projection, account_id, exit_strategy_ids=None):
         out.append({
             "strategy_id": sid,
             "symbol": symbol,
+            "name": stock_name(symbol),
             "quantity": pos["quantity"],
             "wavg_price": _p(pos["wavg_price"]),
             "is_long_term": pos["is_long_term"],
@@ -118,8 +122,9 @@ def _fills_today(conn, account_id, d):
         SELECT side, symbol, quantity, price, strategy_id, source
         FROM fills WHERE account_id = ? AND filled_at LIKE ? ORDER BY filled_at
         """, (account_id, f"{d}%")).fetchall()
-    return [{"side": r["side"], "symbol": r["symbol"], "quantity": r["quantity"],
-             "price": _p(r["price"]), "strategy_id": r["strategy_id"], "source": r["source"]} for r in rows]
+    return [{"side": r["side"], "symbol": r["symbol"], "name": stock_name(r["symbol"]),
+             "quantity": r["quantity"], "price": _p(r["price"]),
+             "strategy_id": r["strategy_id"], "source": r["source"]} for r in rows]
 
 
 def _next_execution_signals(conn):
@@ -134,8 +139,9 @@ def _next_execution_signals(conn):
         WHERE sb.signal_date = (SELECT MAX(signal_date) FROM signal_bundles)
         ORDER BY sb.target_execution_date, sb.strategy_id, si.action, si.symbol
         """).fetchall()
-    return [{"action": r["action"], "symbol": r["symbol"], "reason_code": r["reason_code"],
-             "strategy_id": r["strategy_id"], "is_exit": str(r["bundle_id"]).endswith("-exit"),
+    return [{"action": r["action"], "symbol": r["symbol"], "name": stock_name(r["symbol"]),
+             "reason_code": r["reason_code"], "strategy_id": r["strategy_id"],
+             "is_exit": str(r["bundle_id"]).endswith("-exit"),
              "target_date": r["target_execution_date"]} for r in rows]
 
 
@@ -149,6 +155,7 @@ def _events(conn, account_id, d):
     for r in rows:
         e = dict(r)
         e["event_label"] = EVENT_TYPE_LABELS.get(e["event_type"], e["event_type"])
+        e["name"] = stock_name(e["symbol"]) if e["symbol"] else ""
         out.append(e)
     return out
 
@@ -180,6 +187,7 @@ def _corporate_actions(conn, account_id, positions, d) -> list:
             detail = f"配股 {(r['stock_ratio'] or 0):.2%}"
         out.append({
             "symbol": r["symbol"],
+            "name": stock_name(r["symbol"]),
             "ex_date": r["ex_date"],
             "detail_zh": detail,
             "applied": r["applied_cnt"] > 0,
@@ -257,3 +265,130 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
         # 向後相容：保留舊鍵供既有測試/消費者（reconcile_ok 布林）。
         "reconcile_ok": reconcile["ok"],
     }
+
+
+def _resolve_close(repo, symbol, view_date, wavg_x10000):
+    """回 (close_x10000:int, stale:bool)。
+
+    view_date 當天有 bar → 用 bar.close；否則 fallback 用持倉均價當現價、stale=True
+    （比照 src/cli/report.py 的 fallback，避免圓環少一塊、市值落空）。
+    """
+    bar = repo.find(symbol, view_date)
+    if bar is not None:
+        return bar.close, False
+    return wavg_x10000, True
+
+
+def _initial_deposit(conn, account_id) -> int:
+    """淨投入本金 = INITIAL_DEPOSIT 合計（SQL 同 projection.rebuild_from_ledger）。
+
+    DIVIDEND 不計入（它已反映在現金餘額，屬報酬而非投入）。
+    """
+    row = conn.execute(
+        "SELECT SUM(amount) AS s FROM cash_ledger "
+        "WHERE account_id = ? AND event_type = 'INITIAL_DEPOSIT'",
+        (account_id,),
+    ).fetchone()
+    return row["s"] if row and row["s"] is not None else 0
+
+
+def build_capital_overview(conn, projection, account_id, view_date, market_repo) -> dict:
+    """資金總覽卡 + 持倉資產配置圓環資料（純讀）。
+
+    - 市值 = int(qty * close // 10000)（整數整除，與 projection/backtest 對齊）；
+      當日無 bar 以持倉加權均價 fallback 並標 stale。
+    - 圓環含「現金」一塊，各塊分母 = 總權益（與卡片一致）。
+    - 總報酬率分母 = 淨投入本金（INITIAL_DEPOSIT 合計）；分母 0 → None（UI 顯示「—」）。
+    - 跨策略持有同一 symbol 在圓環聚合為一塊（使用者看的是「這檔佔多少」）。
+    """
+    vd = view_date if isinstance(view_date, date) else date.fromisoformat(str(view_date))
+    cash = projection.get_cash_balance(account_id)
+
+    # 依 symbol 聚合跨策略持倉：qty 加總、cost=Σ(qty*wavg) 供算數量加權均價。
+    positions = projection.get_strategy_positions(account_id, include_long_term=True)
+    by_symbol: dict = {}
+    for (_sid, symbol), pos in positions.items():
+        agg = by_symbol.setdefault(symbol, {"qty": 0, "cost": 0})
+        agg["qty"] += pos["quantity"]
+        agg["cost"] += pos["quantity"] * pos["wavg_price"]
+
+    holdings = []
+    any_stale = False
+    positions_value = 0
+    for symbol, agg in by_symbol.items():
+        qty = agg["qty"]
+        if qty <= 0:
+            continue
+        wavg = int(agg["cost"] / qty)  # 截斷，與 projection 的 CAST(... AS INTEGER) 一致
+        close, stale = _resolve_close(market_repo, symbol, vd, wavg)
+        value = int(qty * close // 10000)
+        any_stale = any_stale or stale
+        positions_value += value
+        holdings.append({"symbol": symbol, "value": value, "stale": stale})
+
+    total_equity = cash + positions_value
+    net_principal = _initial_deposit(conn, account_id)
+    total_return = total_equity - net_principal
+    return_pct = (total_return / net_principal * 100.0) if net_principal > 0 else None
+
+    # allocation：現金一塊（>0 才放）+ 各持倉塊（依 value 由大到小）；total_equity=0 → 空。
+    allocation = []
+    if total_equity > 0:
+        if cash > 0:
+            allocation.append({
+                "label": "現金", "symbol": None, "value": cash,
+                "ratio": cash / total_equity, "kind": "cash", "stale": False,
+            })
+        for h in sorted(holdings, key=lambda x: x["value"], reverse=True):
+            if h["value"] <= 0:
+                continue
+            allocation.append({
+                "label": h["symbol"], "symbol": h["symbol"], "value": h["value"],
+                "ratio": h["value"] / total_equity, "kind": "position", "stale": h["stale"],
+            })
+
+    return {
+        "account_id": account_id,
+        "as_of_date": vd.isoformat(),
+        "net_principal": net_principal,
+        "cash": cash,
+        "positions_value": positions_value,
+        "total_equity": total_equity,
+        "total_return": total_return,
+        "return_pct": return_pct,
+        "any_stale": any_stale,
+        "allocation": allocation,
+    }
+
+
+def list_backtest_results(base_dir: str = BACKTEST_REPORT_DIR, limit: int = 30) -> list[dict]:
+    """從 INDEX.tsv 讀回測結果清單（新到舊）。"""
+    index_path = Path(base_dir) / "INDEX.tsv"
+    if not index_path.exists():
+        return []
+    out = []
+    for line in index_path.read_text(encoding="utf-8").splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 9:
+            out.append({
+                "created_at": parts[0],
+                "strategy_id": parts[1],
+                "run_id": parts[2],
+                "start_date": parts[3],
+                "end_date": parts[4],
+                "final_equity": int(parts[5]),
+                "total_pnl_bps": int(parts[6]),
+                "max_drawdown": float(parts[7]),
+                "name": f"{parts[1]}_{parts[2]}.json",
+            })
+    out.reverse()
+    return out[:limit]
+
+
+def read_backtest_result(name: str, base_dir: str = BACKTEST_REPORT_DIR) -> Optional[dict]:
+    """安全讀取單一回測結果 JSON（防目錄穿越）。"""
+    safe = Path(name).name  # 去掉任何路徑成分
+    path = Path(base_dir) / safe
+    if path.suffix != ".json" or not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))

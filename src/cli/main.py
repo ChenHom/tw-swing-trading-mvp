@@ -40,7 +40,7 @@ from src.cli.account import cmd_account_init, cmd_account_adjust_cash
 from src.cli.backtest import cmd_backtest_run
 from src.cli.simulation import cmd_simulation_run_daily, cmd_simulation_reset, cmd_simulation_execute_pending
 from src.cli.signal import cmd_signal_generate, cmd_signal_list
-from src.cli.trade import cmd_trade_plan, cmd_trade_reject_signal, cmd_trade_un_reject_signal, cmd_trade_record_fill, cmd_trade_close_all
+from src.cli.trade import cmd_trade_plan, cmd_trade_reject_signal, cmd_trade_un_reject_signal, cmd_trade_record_fill, cmd_trade_close_all, cmd_trade_exit_check, cmd_trade_set_long_term
 from src.cli.portfolio import cmd_portfolio_reconcile, cmd_portfolio_rebuild_projections
 from src.cli.report import cmd_report_pnl
 from src.cli.corporate_action import cmd_corporate_action_record, cmd_corporate_action_apply, cmd_corporate_action_list, cmd_corporate_action_check
@@ -187,7 +187,29 @@ def main():
     parser_trade_close = trade_subs.add_parser("close-all", help="強制平倉所有持有部位（緊急避險退出）")
     parser_trade_close.add_argument("--broker", type=str, default="fake", help="券商介面名稱")
     parser_trade_close.add_argument("--reason", type=str, required=True, help="緊急平倉的原因")
-    
+
+    parser_trade_exit_check = trade_subs.add_parser(
+        "exit-check",
+        help="單筆部位出場試算（dry-run）：套某策略 exit 規則跑一次、報告各條件目前數值與是否觸發。純唯讀、不寫入、不發 SELL。"
+    )
+    parser_trade_exit_check.add_argument("--symbol", type=str, required=True, help="要試算的持倉股票代號")
+    parser_trade_exit_check.add_argument("--strategy", type=str, required=True, help="套用其 exit 規則的策略 ID（須具 exit: 區塊，如 trend_breakout）")
+    parser_trade_exit_check.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
+    parser_trade_exit_check.add_argument("--as-of", type=str, default=None, help="試算基準日 YYYY-MM-DD（預設今天，行情取截止當日的最近收盤）")
+
+    parser_trade_set_lt = trade_subs.add_parser(
+        "set-long-term",
+        help="把既有部位重分類為長期持有（免受策略自動出場），或以 --unset 取消。更新 fills 並重建投影。"
+    )
+    parser_trade_set_lt.add_argument("--symbol", type=str, required=True, help="要重分類的股票代號")
+    parser_trade_set_lt.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
+    parser_trade_set_lt.add_argument(
+        "--strategy-id", type=str, default=None,
+        help="限定要重分類的策略 bucket（預設 MANUAL）。同一 symbol 若同時有手動長期持倉與策略交易部位，"
+             "預設只動 MANUAL bucket，避免誤把策略部位排除於 risk_exit 監控。"
+    )
+    parser_trade_set_lt.add_argument("--unset", action="store_true", help="取消長期標記（改回非長期、可被策略管理）")
+
     # 9. portfolio group
     parser_portfolio = subparsers.add_parser("portfolio", help="投資組合對帳與投影重建")
     portfolio_subs = parser_portfolio.add_subparsers(dest="subcommand", required=True)
@@ -259,6 +281,8 @@ def main():
         ("trade", "close-all"): cmd_trade_close_all,
         ("trade", "reject-signal"): cmd_trade_reject_signal,
         ("trade", "un-reject-signal"): cmd_trade_un_reject_signal,
+        ("trade", "exit-check"): cmd_trade_exit_check,
+        ("trade", "set-long-term"): cmd_trade_set_long_term,
         ("portfolio", "reconcile"): cmd_portfolio_reconcile,
         ("portfolio", "rebuild-projections"): cmd_portfolio_rebuild_projections,
         ("report", "pnl"): cmd_report_pnl,

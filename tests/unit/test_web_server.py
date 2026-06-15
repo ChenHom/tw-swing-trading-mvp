@@ -44,6 +44,52 @@ def test_dashboard_renders(client):
     assert "simulation-main" in body
     # 空帳戶對帳應顯示通過
     assert "通過" in body
+    # C3-1 資金總覽卡（空帳戶 → allocation 空、報酬率「—」）
+    assert "淨投入本金" in body
+    assert "總權益" in body
+    assert "總報酬率" in body
+    assert "持倉資產配置" in body
+    assert "無資產可顯示" in body
+    assert "/static/js/chart.umd.min.js" in body
+
+
+def test_dashboard_allocation_with_position(tmp_path, monkeypatch):
+    """有持倉 + 當日行情 → 渲染圓環 canvas 與 JSON 資料區塊。"""
+    from datetime import date
+    from src.market_data.repository import SqliteMarketBarRepository
+    from src.contracts.models import MarketBar
+
+    db = tmp_path / "web_alloc.db"
+    init_db(str(db))
+    c = get_db_connection(str(db))
+    c.execute(
+        "INSERT INTO cash_balances (account_id, balance, currency, updated_at) "
+        "VALUES ('simulation-main', 100000, 'TWD', '2026-06-12')"
+    )
+    c.execute(
+        "INSERT INTO position_lots (lot_id, account_id, symbol, quantity, price, acquired_at, "
+        "fill_id, created_at, is_long_term, strategy_id) "
+        "VALUES ('lot1','simulation-main','2330',1000,1000000,'2026-06-10','f1','2026-06-10',0,'trend_breakout')"
+    )
+    c.commit()
+    SqliteMarketBarRepository(c).upsert(MarketBar(
+        symbol="2330", exchange="TWSE", instrument_type="STOCK", trade_date=date(2026, 6, 12),
+        open=1100000, high=1100000, low=1100000, close=1100000, volume=1000, amount=1100000,
+        source="TEST", source_fetched_at="2026-06-12T00:00:00+08:00", raw_payload_checksum="x",
+    ))
+    c.close()
+
+    fake_settings = type("S", (), {"trading": type("T", (), {"database_path": str(db)})()})()
+    monkeypatch.setattr(server, "AppSettings", lambda: fake_settings)
+    r = TestClient(server.app).get("/?view_date=2026-06-12")
+    assert r.status_code == 200
+    body = r.text
+    assert 'id="allocData"' in body
+    assert 'id="allocChart"' in body
+    assert "2330" in body
+    # 持倉表「名稱」欄：代號 2330 應伴隨中文股名（stock_names 對照）
+    assert "台積電" in body
+    assert "<th>名稱</th>" in body
 
 
 def test_dashboard_defaults_to_today(client):
@@ -70,6 +116,72 @@ def test_report_detail_404_on_missing(client):
 def test_report_detail_path_traversal_blocked(client):
     # 嘗試目錄穿越應被擋（read_report 只取檔名）
     r = client.get("/reports/..%2f..%2f..%2fetc%2fpasswd")
+    assert r.status_code == 404
+
+
+def test_backtests_list_empty(client, monkeypatch):
+    monkeypatch.setattr("src.application.services.dashboard.BACKTEST_REPORT_DIR", "/nonexistent/xyz")
+    r = client.get("/backtests")
+    assert r.status_code == 200
+    assert "回測結果" in r.text
+    assert "尚無回測結果" in r.text
+
+
+def test_backtests_list_and_detail(client, monkeypatch, tmp_path):
+    from datetime import date
+    from src.application.reporting.backtest_report import write_backtest_result
+
+    base = tmp_path / "backtest"
+    result = {
+        "run_id": "bt-aaa11111",
+        "account_id": "backtest:bt-aaa11111",
+        "equity_curve": [
+            {"date": date(2025, 1, 2), "cash": 300000, "position_value": 0, "equity": 300000},
+            {"date": date(2025, 1, 3), "cash": 280000, "position_value": 32345, "equity": 312345},
+        ],
+        "statistics": {
+            "initial_cash": 300000,
+            "final_equity": 312345,
+            "total_pnl": 12345,
+            "total_pnl_bps": 411,
+            "max_drawdown": 0.0234,
+            "win_rate": 0.6,
+            "profit_factor": None,
+            "avg_profit": 1000.0,
+            "avg_loss": 0.0,
+            "trade_count": 5,
+        },
+    }
+    write_backtest_result(
+        result, strategy_id="trend_breakout", start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 3), initial_cash=300000, base_dir=str(base),
+    )
+    monkeypatch.setattr("src.application.services.dashboard.BACKTEST_REPORT_DIR", str(base))
+
+    r = client.get("/backtests")
+    assert r.status_code == 200
+    assert "trend_breakout" in r.text
+    assert "trend_breakout_bt-aaa11111.json" in r.text
+
+    r = client.get("/backtests/trend_breakout_bt-aaa11111.json")
+    assert r.status_code == 200
+    body = r.text
+    assert "trend_breakout" in body
+    assert 'id="equityChart"' in body
+    assert 'id="equityCurveData"' in body
+    assert "&#8734;" in body  # profit_factor=None → ∞
+    assert "/static/js/backtest-charts.js" in body
+
+
+def test_backtest_detail_404_on_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("src.application.services.dashboard.BACKTEST_REPORT_DIR", str(tmp_path / "backtest"))
+    r = client.get("/backtests/does_not_exist.json")
+    assert r.status_code == 404
+
+
+def test_backtest_detail_path_traversal_blocked(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("src.application.services.dashboard.BACKTEST_REPORT_DIR", str(tmp_path / "backtest"))
+    r = client.get("/backtests/..%2f..%2f..%2fetc%2fpasswd")
     assert r.status_code == 404
 
 

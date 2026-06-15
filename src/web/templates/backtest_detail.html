@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}回測結果 · {{ result.strategy_id }} · tw-day-trading{% endblock %}
+{% block content %}
+<p class="caption"><a href="{{ base }}/backtests">&laquo; 回測結果列表</a></p>
+<h2>{{ result.strategy_id }}（{{ result.start_date }} ~ {{ result.end_date }}）</h2>
+<p class="hint">執行時間 {{ result.created_at[:19] }} ｜ run_id {{ result.run_id }}</p>
+
+<section class="cards">
+  <div class="card">
+    <div class="card-label">初始資金</div>
+    <div class="card-value">{{ "{:,}".format(result.statistics.initial_cash) }} <span class="unit">TWD</span></div>
+  </div>
+  <div class="card">
+    <div class="card-label">最終權益</div>
+    <div class="card-value">{{ "{:,}".format(result.statistics.final_equity) }} <span class="unit">TWD</span></div>
+  </div>
+  <div class="card">
+    <div class="card-label">總損益</div>
+    <div class="card-value {{ 'pos' if result.statistics.total_pnl >= 0 else 'neg' }}">{{ "{:+,}".format(result.statistics.total_pnl) }} <span class="unit">TWD</span></div>
+    <div class="hint">{{ "%+.2f"|format(result.statistics.total_pnl_bps / 100) }}%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">最大回撤</div>
+    <div class="card-value">{{ "%.2f"|format(result.statistics.max_drawdown * 100) }}%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">勝率</div>
+    <div class="card-value">{{ "%.2f"|format(result.statistics.win_rate * 100) }}%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">獲利因子</div>
+    {% if result.statistics.profit_factor is none %}
+    <div class="card-value">&#8734;</div>
+    {% else %}
+    <div class="card-value">{{ "%.2f"|format(result.statistics.profit_factor) }}</div>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="card-label">交易次數</div>
+    <div class="card-value">{{ result.statistics.trade_count }}</div>
+  </div>
+</section>
+
+<div class="alloc">
+  <h2>權益曲線</h2>
+  <div class="equity-chart"><canvas id="equityChart" role="img" aria-label="權益曲線圖"></canvas></div>
+  <script type="application/json" id="equityCurveData">{{ result.equity_curve|tojson }}</script>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ base }}/static/js/chart.umd.min.js"></script>
+<script src="{{ base }}/static/js/backtest-charts.js"></script>
+{% endblock %}

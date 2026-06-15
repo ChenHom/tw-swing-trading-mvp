@@ -21,6 +21,7 @@ def test_discord_config_from_env(monkeypatch):
 def test_discord_config_from_local_file(tmp_path, monkeypatch):
     """本地 YAML/JSON 檔案讀取（環境變數未設）。"""
     monkeypatch.delenv("DISCORD_CHANNEL_ID", raising=False)
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
 
     # 建立本地設定檔（JSON 格式）
     config_file = tmp_path / "alert.local.yaml"
@@ -28,9 +29,28 @@ def test_discord_config_from_local_file(tmp_path, monkeypatch):
         json.dumps({"discord": {"channel_id": "123456789"}})
     )
 
-    cfg = DiscordAlertConfig(str(config_file))
+    cfg = DiscordAlertConfig(
+        str(config_file), openclaw_env_path=str(tmp_path / "nonexistent.env")
+    )
     assert cfg.channel_id == "123456789"
     assert cfg.is_configured() is False  # 因為無 token
+
+
+def test_discord_config_token_from_openclaw_env(tmp_path, monkeypatch):
+    """token 次優先來源：~/.openclaw/.env（環境變數未設時）。"""
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("DISCORD_CHANNEL_ID", raising=False)
+
+    openclaw_env = tmp_path / "openclaw.env"
+    openclaw_env.write_text("DISCORD_BOT_TOKEN=token-from-openclaw\n")
+
+    config_file = tmp_path / "alert.local.yaml"
+    config_file.write_text(json.dumps({"discord": {"channel_id": "123456789"}}))
+
+    cfg = DiscordAlertConfig(str(config_file), openclaw_env_path=str(openclaw_env))
+    assert cfg.bot_token == "token-from-openclaw"
+    assert cfg.channel_id == "123456789"
+    assert cfg.is_configured() is True
 
 
 def test_discord_config_not_configured():

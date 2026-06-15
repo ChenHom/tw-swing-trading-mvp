@@ -23,10 +23,24 @@ except ImportError:
 class DiscordAlertConfig:
     """讀取 Discord 告警配置（環境變數優先）。"""
 
-    def __init__(self, config_file: str = "config/alert.local.yaml"):
+    def __init__(
+        self,
+        config_file: str = "config/alert.local.yaml",
+        openclaw_env_path: str = "~/.openclaw/.env",
+    ):
         # 環境變數：優先級最高
         self.bot_token = os.getenv("DISCORD_BOT_TOKEN")
         self.channel_id = os.getenv("DISCORD_CHANNEL_ID")
+
+        # token 次優先來源：~/.openclaw/.env（不進 os.environ，避免污染全域狀態）
+        if not self.bot_token:
+            try:
+                from dotenv import dotenv_values
+
+                openclaw_env = dotenv_values(os.path.expanduser(openclaw_env_path))
+                self.bot_token = openclaw_env.get("DISCORD_BOT_TOKEN")
+            except Exception:
+                pass
 
         # 本地檔案（若環境變數未設）：支援 YAML 與 JSON
         if not self.channel_id and Path(config_file).exists():

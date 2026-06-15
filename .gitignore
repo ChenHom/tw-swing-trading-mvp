@@ -88,6 +88,12 @@ Thumbs.db
 # Log files
 *.log
 
+# 執行期 log 目錄與其 stdout 落檔（非 .log 副檔名也一併排除）
+logs/
+
+# Playwright MCP 暫存產物（截圖/快照/console log）
+.playwright-mcp/
+
 # 每日影子報告（執行時生成的產物，不入版控）
 artifacts/reports/daily/
 

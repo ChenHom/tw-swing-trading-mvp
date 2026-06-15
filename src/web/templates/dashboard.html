@@ -9,12 +9,14 @@
       {% endfor %}
     </select>
   </label>
-  <label>日期
+  <label>日期 <span class="info-tip" title="日期只影響「當日 RUN 狀態 / 今日成交 / 執行事件（審計）」三塊；現金、持倉、損益、對帳為即時狀態，「下次執行」永遠顯示最近一批待執行訊號，皆不隨日期變動。">ⓘ</span>
     <input type="date" name="view_date" value="{{ view_date }}" onchange="this.form.submit()">
   </label>
   <a class="btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}">重新整理</a>
 </form>
-<p class="hint">日期只影響「當日 RUN 狀態 / 今日成交 / 執行事件（審計）」三塊；現金、持倉、損益、對帳為即時狀態，「下次執行」永遠顯示最近一批待執行訊號，皆不隨日期變動。{% if today and view_date != today %} 目前檢視 {{ view_date }}，今天是 {{ today }}。{% endif %}</p>
+{% if today and view_date != today %}
+<p class="hint">目前檢視 {{ view_date }}，今天是 {{ today }}。</p>
+{% endif %}
 
 <section class="cards">
   <div class="card">
@@ -36,7 +38,7 @@
     </div>
   </div>
   <div class="card">
-    <div class="card-label">對帳</div>
+    <div class="card-label">對帳 <span class="info-tip" title="比對現金帳本流水 vs 餘額快照、成交淨額 vs 庫存、各策略桶持倉一致性。通過＝帳實相符；失敗＝出現差異（下方顯示明細）。">ⓘ</span></div>
     <div class="card-value">
       {% if d.reconcile.ok %}<span class="badge ok">通過</span>
       {% else %}<span class="badge bad">失敗</span>{% endif %}
@@ -44,27 +46,68 @@
     <div class="hint">{{ d.reconcile.detail_zh }}</div>
   </div>
 </section>
-<p class="hint">對帳：比對現金帳本流水 vs 餘額快照、成交淨額 vs 庫存、各策略桶持倉一致性。通過＝帳實相符；失敗＝出現差異（上方顯示明細）。</p>
 
 {% if d.run_status and d.run_status.last_error_code %}
 <p class="alert">⚠ 當日 RUN 最後錯誤：{{ d.run_status.last_error_code }}</p>
 {% endif %}
 
+{# === 資金總覽 + 資產配置（C3-1）=== #}
+<section class="capital">
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">淨投入本金</div>
+      <div class="card-value">{{ "{:,}".format(cap.net_principal) }} <span class="unit">TWD</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">可用現金</div>
+      <div class="card-value">{{ "{:,}".format(cap.cash) }} <span class="unit">TWD</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">持倉總市值</div>
+      <div class="card-value">{{ "{:,}".format(cap.positions_value) }} <span class="unit">TWD</span>{% if cap.any_stale %} <span class="badge warn">估算</span>{% endif %}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">總權益</div>
+      <div class="card-value">{{ "{:,}".format(cap.total_equity) }} <span class="unit">TWD</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">總報酬率</div>
+      {% if cap.return_pct is none %}
+      <div class="card-value">—</div>
+      {% else %}
+      <div class="card-value {{ 'pos' if cap.return_pct >= 0 else 'neg' }}">{{ "%+.2f"|format(cap.return_pct) }}%</div>
+      {% endif %}
+      <div class="hint">總報酬 {{ "{:+,}".format(cap.total_return) }} TWD</div>
+    </div>
+  </div>
+
+  <div class="alloc">
+    <h2>持倉資產配置（含現金，截至 {{ cap.as_of_date }}）</h2>
+    {% if cap.allocation %}
+    <div class="alloc-chart"><canvas id="allocChart" role="img" aria-label="資產配置圓環圖"></canvas></div>
+    <script type="application/json" id="allocData">{{ cap.allocation|tojson }}</script>
+    {% else %}
+    <p class="empty">無資產可顯示。</p>
+    {% endif %}
+  </div>
+</section>
+
 <section>
   <h2>持倉部位</h2>
   <table>
-    <thead><tr><th>策略</th><th>代號</th><th>股數</th><th>均價</th><th>監控</th></tr></thead>
+    <thead><tr><th>策略</th><th>代號</th><th>名稱</th><th>股數</th><th>均價</th><th>監控</th></tr></thead>
     <tbody>
       {% for p in d.positions %}
       <tr>
         <td>{{ p.strategy_id }}{% if p.is_long_term %} <span class="tag">長期</span>{% endif %}</td>
         <td>{{ p.symbol }}</td>
+        <td>{{ p.name }}</td>
         <td class="num">{{ "{:,}".format(p.quantity) }}</td>
         <td class="num">{{ "%.2f"|format(p.wavg_price) }}</td>
         <td>{% if p.monitored %}✓{% else %}—{% endif %}</td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="empty">無持倉</td></tr>
+      <tr><td colspan="6" class="empty">無持倉</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -97,7 +140,7 @@
       <thead><tr><th>方向</th><th>代號</th><th>股數</th><th>價格</th><th>策略/來源</th></tr></thead>
       <tbody>
         {% for f in d.fills_today %}
-        <tr><td>{{ f.side }}</td><td>{{ f.symbol }}</td><td class="num">{{ "{:,}".format(f.quantity) }}</td>
+        <tr><td>{{ f.side }}</td><td>{{ f.symbol }}{% if f.name %} <span class="tag-muted">{{ f.name }}</span>{% endif %}</td><td class="num">{{ "{:,}".format(f.quantity) }}</td>
             <td class="num">{{ "%.2f"|format(f.price) }}</td><td>{{ f.strategy_id or '-' }}/{{ f.source }}</td></tr>
         {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
       </tbody>
@@ -105,14 +148,13 @@
   </section>
 
   <section>
-    <h2>下次執行</h2>
-    <p class="caption">最近一批待執行訊號（不隨上方日期變動）；「執行日」為實際下單目標日。</p>
+    <h2>下次執行 <span class="info-tip" title="最近一批待執行訊號（不隨上方日期變動）；「執行日」為實際下單目標日。">ⓘ</span></h2>
     <table>
       <thead><tr><th>動作</th><th>代號</th><th>策略</th><th>理由</th><th>執行日</th></tr></thead>
       <tbody>
         {% for s in d.next_execution %}
         <tr><td>{{ s.action }}{% if s.is_exit %} <span class="tag">EXIT</span>{% endif %}</td>
-            <td>{{ s.symbol }}</td><td>{{ s.strategy_id }}</td><td>{{ s.reason_code }}</td><td>{{ s.target_date }}</td></tr>
+            <td>{{ s.symbol }}{% if s.name %} <span class="tag-muted">{{ s.name }}</span>{% endif %}</td><td>{{ s.strategy_id }}</td><td>{{ s.reason_code }}</td><td>{{ s.target_date }}</td></tr>
         {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
       </tbody>
     </table>
@@ -120,15 +162,14 @@
 </div>
 
 <section>
-  <h2>公司行動 / 除權息</h2>
-  <p class="caption">近一個月除息/除權事件；「未套用」表示尚未以 corporate-action apply 調整均價與停利水位（除息日前未套用會使停損基準失真）。</p>
+  <h2>公司行動 / 除權息 <span class="info-tip" title="近一個月除息/除權事件；「未套用」表示尚未以 corporate-action apply 調整均價與停利水位（除息日前未套用會使停損基準失真）。">ⓘ</span></h2>
   <table>
     <thead><tr><th>除息日</th><th>代號</th><th>內容</th><th>狀態</th></tr></thead>
     <tbody>
       {% for c in d.corporate_actions %}
       <tr>
         <td>{{ c.ex_date }}</td>
-        <td>{{ c.symbol }}{% if c.held %} <span class="tag">持倉中</span>{% endif %}</td>
+        <td>{{ c.symbol }}{% if c.name %} <span class="tag-muted">{{ c.name }}</span>{% endif %}{% if c.held %} <span class="tag">持倉中</span>{% endif %}</td>
         <td>{{ c.detail_zh }}</td>
         <td>{% if c.applied %}<span class="badge ok">已套用</span>{% else %}<span class="badge warn">未套用</span>{% endif %}</td>
       </tr>
@@ -138,17 +179,21 @@
 </section>
 
 <section>
-  <h2>執行事件（審計）</h2>
-  <p class="caption">所選日期當天交易流程的審計軌跡：記錄授權閘門攔截、訊號被擋等；無事件＝流程順利。</p>
+  <h2>執行事件（審計） <span class="info-tip" title="所選日期當天交易流程的審計軌跡：記錄授權閘門攔截、訊號被擋等；無事件＝流程順利。">ⓘ</span></h2>
   <table>
     <thead><tr><th>類型</th><th>策略</th><th>代號</th><th>明細</th></tr></thead>
     <tbody>
       {% for e in d.events %}
       <tr><td>{{ e.event_label }}{% if e.event_label != e.event_type %} <span class="tag">{{ e.event_type }}</span>{% endif %}</td>
-          <td>{{ e.strategy_id or '-' }}</td><td>{{ e.symbol or '-' }}</td><td>{{ e.detail or '' }}</td></tr>
+          <td>{{ e.strategy_id or '-' }}</td><td>{{ e.symbol or '-' }}{% if e.name %} <span class="tag-muted">{{ e.name }}</span>{% endif %}</td><td>{{ e.detail or '' }}</td></tr>
       {% else %}<tr><td colspan="4" class="empty">無</td></tr>{% endfor %}
     </tbody>
   </table>
 </section>
 
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ base }}/static/js/chart.umd.min.js"></script>
+<script src="{{ base }}/static/js/dashboard-charts.js"></script>
 {% endblock %}

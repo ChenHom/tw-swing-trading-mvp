@@ -318,3 +318,20 @@
 **優缺點**：優 — 零風險、回滾有依據。缺 — 無。
 
 **驗證**：working tree clean；tag 可見。
+
+---
+
+## 2026-06-15 ｜ B2 go-live 啟用步驟完成（Discord 告警實測）
+
+**背景／觸發**：B2（`src/notification/discord_alert.py` + `shadow_daily.sh`）程式面已就位，但 go-live 啟用步驟（`daily_runbook.md` §go-live 2）尚未執行：缺 `config/alert.local.yaml`、未實測。
+
+**怎麼動**：
+1. 修 `DiscordAlertConfig`：原先只用 `os.getenv("DISCORD_BOT_TOKEN")`，但 `~/.openclaw/.env` 不在 `src/config.py` 的 `load_dotenv()`（讀 cwd `.env`）範圍內，token 永遠讀不到。改為在環境變數未設時，用 `dotenv_values()`（不污染 `os.environ`）讀取 `~/.openclaw/.env` 的 `DISCORD_BOT_TOKEN`。
+2. `cp config/alert.local.yaml.example config/alert.local.yaml`，填入 channel_id（gitignored，不入版控）。
+3. 實測 `.venv/bin/python -m src.notification.discord_alert "go-live 告警測試"` → exit 0，Discord 頻道收到紅色 embed 告警。
+
+**為什麼這樣動**：`dotenv_values()` 回傳 dict 而非寫入 `os.environ`，避免影響既有測試（尤其 `test_discord_config_from_local_file` 原本假設無 token，若用 `load_dotenv()` 會讀到真實機器上的 `~/.openclaw/.env` 而誤判為已配置）。
+
+**優缺點**：優 — go-live gate #3 全鏈路（程式 + 設定 + 實測）皆完成。缺 — 無。
+
+**驗證**：`pytest tests/unit/test_discord_alert.py` 9 項全綠（新增 1 項覆蓋 openclaw env fallback）；Discord 實際收到測試告警。

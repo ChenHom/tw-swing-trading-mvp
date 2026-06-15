@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}tw-day-trading 儀表板{% endblock %}</title>
   <link rel="stylesheet" href="{{ base }}/static/style.css">
+  {% block head %}{% endblock %}
 </head>
 <body>
   <header class="topbar">
@@ -12,10 +13,12 @@
     <nav>
       <a href="{{ base }}/">儀表板</a>
       <a href="{{ base }}/reports">歷史報告</a>
+      <a href="{{ base }}/backtests">回測結果</a>
     </nav>
   </header>
   <main>
     {% block content %}{% endblock %}
   </main>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

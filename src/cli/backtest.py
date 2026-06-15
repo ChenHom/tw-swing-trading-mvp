@@ -21,6 +21,7 @@ from src.contracts.models import (
 from src.calendar.calendar import ExchangeCalendarsTradingCalendar
 from src.market_data.provider import ShioajiMarketDataProvider
 from src.application.runners.backtest import BacktestRunner
+from src.application.reporting.backtest_report import write_backtest_result
 from src.application.runners.simulation import DailySimulationRunner, EntryStrategySpec
 from src.approval.validator import ManifestValidator
 from src.approval.store import load_active_manifests, activate_manifest, deactivate_strategy
@@ -94,6 +95,15 @@ def cmd_backtest_run(args):
     print(f"Trades count: {stats['trade_count']}")
     print(f"Win Rate: {stats['win_rate']*100:.2f}%")
     print(f"Profit Factor: {stats['profit_factor']:.2f}")
+
+    result_path = write_backtest_result(
+        result,
+        strategy_id=strategy_id,
+        start_date=start_date,
+        end_date=end_date,
+        initial_cash=args.initial_cash,
+    )
+    print(f"BACKTEST_RESULT_PATH={result_path}")
     conn.close()
 
 

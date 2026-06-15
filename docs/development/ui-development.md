@@ -50,13 +50,22 @@
 | `src/web/templates/base.html` | 版型骨架（topbar/nav，`{{ base }}` 連結前綴） |
 | `src/web/templates/dashboard.html` | 主儀表板 |
 | `src/web/templates/reports.html` | 歷史報告清單 |
+| `src/web/templates/backtests.html` | 回測結果清單（C3-2a） |
+| `src/web/templates/backtest_detail.html` | 回測結果詳情：統計卡 + equity curve 折線圖（C3-2a） |
 | `src/web/static/style.css` | 基本款樣式（行動友善、單欄優先） |
+| `src/web/static/js/chart.umd.min.js` | Chart.js v4 UMD（**self-host**，零 CDN 依賴；區網/手機可用） |
+| `src/web/static/js/dashboard-charts.js` | 前端圖表 render（讀 `#allocData` JSON 畫資產配置 doughnut；優雅降級） |
+| `src/web/static/js/backtest-charts.js` | 前端圖表 render（讀 `#equityCurveData` JSON 畫權益曲線 line chart：equity/cash/position_value；優雅降級） |
+| `src/application/reporting/backtest_report.py` | `write_backtest_result`：回測結果落檔（JSON + `LATEST.txt` + `INDEX.tsv` 三件套，`profit_factor` inf→null） |
 | `scripts/web_ui.sh` | 手動啟動（uvicorn） |
 | `deploy/trading-web.service` | systemd 常駐 unit |
 | `deploy/README.md` | 常駐安裝/管理說明 |
 | `docs/operations/nginx-trading.conf.sample` | nginx 子路徑反代範例 |
 | `tests/unit/test_web_server.py` | TestClient 冒煙測試 |
 | `tests/unit/test_trade_write_service.py` | 寫入 service 直測（bucket 落點、monitor_status、TradeWriteError） |
+| `tests/unit/test_capital_overview.py` | 資金總覽 service 直測（市值/報酬率/fallback/聚合/邊界） |
+| `tests/unit/test_backtest_report.py` | `write_backtest_result` 直測（落檔三件套、inf→null、INDEX 多筆追加） |
+| `tests/unit/test_backtest_results_service.py` | `list_backtest_results`/`read_backtest_result` 直測（空目錄/roundtrip/防穿越/非 .json 拒絕） |
 
 ---
 
@@ -67,6 +76,8 @@
 | GET | `/` | 主儀表板 | `account`（預設第一個帳戶）、`view_date`（預設**最近有 run 的日期**，見 §6） |
 | GET | `/reports` | 歷史每日報告清單（讀 `INDEX.tsv`） | — |
 | GET | `/reports/{name}` | 單一報告純文字（**防目錄穿越**，僅取檔名、限 `.txt`） | — |
+| GET | `/backtests` | 回測結果清單（讀 `artifacts/reports/backtest/INDEX.tsv`，C3-2a） | — |
+| GET | `/backtests/{name}` | 回測結果詳情：統計卡 + equity curve 折線圖（**防目錄穿越**，僅取檔名、限 `.json`；不存在回 404） | — |
 | GET | `/healthz` | 健康檢查，回 `ok` | — |
 
 **子路徑前綴**：`root_path` 由環境變數 `TRADING_WEB_ROOT_PATH`（預設 `/trading`）決定，注入 Jinja 全域 `base`。模板所有內部連結以 `{{ base }}/...` 產生，確保 nginx 子路徑與本機直連皆正確。
@@ -80,12 +91,19 @@
 | `list_accounts(conn)` | `list[str]` | 帳戶下拉來源（`cash_balances`） |
 | `latest_run_date(conn, account_id=None)` | `str \| None` | 最近有 `daily_run` 的日期（預設日期用） |
 | `build_dashboard(conn, projection, account_id, view_date)` | `dict` | 組整頁資料（見下） |
+| `build_capital_overview(conn, projection, account_id, view_date, market_repo)` | `dict` | 資金總覽卡 + 資產配置圓環（含現金一塊，見 §6） |
 | `list_reports(base_dir, limit=30)` | `list[dict]` | 由 `artifacts/reports/daily/INDEX.tsv` 取歷史報告（新到舊） |
 | `read_report(name, base_dir)` | `str \| None` | 安全讀單一報告檔 |
+| `list_backtest_results(base_dir, limit=30)` | `list[dict]` | 由 `artifacts/reports/backtest/INDEX.tsv` 取回測結果摘要（新到舊，C3-2a） |
+| `read_backtest_result(name, base_dir)` | `dict \| None` | 安全讀單一回測結果 JSON（防穿越、限 `.json`，C3-2a） |
 
 `build_dashboard` 回傳鍵：`account_id, date, cash, run_status, positions[], monitored_count, pnl[], fills_today[], next_signals[], events[], reconcile_ok, reconcile_detail`。各區段對應模板同名表格。
 
+**股票名稱顯示**：`positions / fills_today / next_execution / corporate_actions / events` 每筆皆帶 `name`（中文股名），來源為共用對照 `src/contracts/stock_names.py` 的 `stock_name(symbol)`（查無回 `""`；cli 與 service/web 共用，service 不反向依賴 cli）。持倉表為獨立「名稱」欄；其餘 4 表於代號後接 `.tag-muted` 小字。**資產配置圓環圖 label 維持代號**（不改）。
+
 > 內部 `_run_status/_positions/_pnl_by_strategy/_fills_today/_next_signals/_events` 為私有查詢，新增區段時於此擴充。
+
+`build_capital_overview` 回傳鍵：`account_id, as_of_date, net_principal, cash, positions_value, total_equity, total_return, return_pct(float|None), any_stale, allocation[]`（金額皆整數元；`allocation` 每塊 `{label, symbol, value, ratio, kind:"cash"|"position", stale}`）。`market_repo`（`SqliteMarketBarRepository`）由**路由注入**（比照 `exit_strategy_ids`），connection 生命週期仍由路由 own。
 
 ---
 
@@ -96,6 +114,8 @@
 - **`events` 中文化**：`_events` 每列附 `event_label`，由 `EVENT_TYPE_LABELS` 將 `execution_events.event_type`（授權閘門代碼，來源 `engine._validate_buy_gate`）譯為中文，未收錄者退回原碼；模板以「中文（原碼小字 tag）」呈現，`detail`（含 bundle id／sha256）留為技術明細。
 - **`monitored_count` / 持倉「監控」欄**：監控對象 = **非長期、且 strategy_id 屬具 exit 區塊的策略**（即 `load_exit_managed_definitions` 範圍，與 `RiskExitEngine`／CLI 一致）；MANUAL 與無 exit 區塊的策略皆排除，顯示 `—`。server 會把該集合（`_exit_strategy_ids()`）注入 `build_dashboard`，`dashboard._positions` 據以判定（非僅排除 MANUAL/長期）。go-live 前既有持倉多為 MANUAL → 監控常為 0，屬正常。**（2026-06-14 已修）** `record-fill --strategy-id` 可將手動成交歸入策略 bucket，**歸入具 exit 區塊的策略後**該部位即納入 risk_exit 監控、於此欄打勾；既有 MANUAL 部位若要納入須以正確 strategy_id 重新補錄（或日後提供轉歸工具）。
 - **`reconcile`（對帳）**：`build_dashboard` 以 `_reconcile_summary()` 把 `projection.reconcile()` 的 dict 轉 `{ok, code, detail_zh}`；通過/失敗皆有中文說明，失敗時 `detail_zh` 含具體差異數字（現金帳本 vs 餘額、成交淨額 vs 庫存、策略桶）。模板卡片顯示 badge + `detail_zh`，並附一行「對帳在比對什麼」。（仍保留 `reconcile_ok` 布林鍵向後相容；`projection.reconcile()` 契約為 `{"status":"RECONCILE_OK"}`，勿用真值判斷。）
+- **`capital`（資金總覽 / 資產配置，C3-1）**：`build_capital_overview` 算市值 = `int(qty*close//10000)`；當日無 bar 以持倉均價 fallback 並標 `stale`（卡片顯示「估算」badge、圓環不缺塊）。圓環**含現金一塊**，各塊比例分母 = 總權益，與卡片一致、加總相等。`return_pct` 分母 = 淨投入本金（`INITIAL_DEPOSIT` 合計，DIVIDEND 不計），分母 0 顯示「—」。跨策略持有同一 symbol 在圓環聚合為一塊。資料以 `<script type="application/json" id="allocData">{{ ...|tojson }}</script>` 傳前端，`dashboard-charts.js` 讀取渲染（無 JS / 載入失敗則圖不顯示、其餘照常）。
+- **回測結果 / equity curve（C3-2a）**：`app backtest run` 跑完後由 `write_backtest_result` 落檔至 `artifacts/reports/backtest/<strategy_id>_<run_id>.json`（含 `equity_curve` 逐日 `{date, cash, position_value, equity}` 與 `statistics`），並追加 `INDEX.tsv`、更新 `LATEST.txt`，CLI 印 `BACKTEST_RESULT_PATH=<path>`。`statistics.profit_factor` 若為 `inf`（無虧損交易）落檔時轉成 `null`，detail 頁顯示「∞」。`/backtests/{name}` 以 `<script type="application/json" id="equityCurveData">{{ result.equity_curve|tojson }}</script>` 傳前端，`backtest-charts.js` 畫三條線（總權益/現金/持倉市值）。本機制只多寫結果檔，不改 DB schema、不影響 daily run 或 B1 影子驗證。
 
 ---
 
@@ -136,6 +156,8 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 3. 在 `dashboard.html` 新增對應 `<section>` 表格。
 4. 在 `test_web_server.py` 補渲染斷言。
 
+**加圖表**：service 回乾淨資料 dict → 模板以 `<script type="application/json">{{ data|tojson }}</script>` 傳遞（autoescape 下 `|tojson` 會跳脫 `<` 等，安全嵌入 `<script>`）→ `static/js/*.js` 用 Chart.js 渲染。Chart.js 一律 **self-host**（區網無外網），`{% block scripts %}` 內**先**載 `chart.umd.min.js`**再**載 render script；render script 對缺 canvas/資料/`Chart` 未定義時靜默 return（優雅降級）。base.html 已備 `{% block head %}`/`{% block scripts %}` 供插入。
+
 **加一個新頁面**：於 `server.py` 加 `@app.get(...)` 路由 → 呼叫 service → `templates.TemplateResponse(request, "x.html", {...})`（**注意新版 Starlette 簽名為 `(request, name, context)`**）。模板 extends `base.html`，連結用 `{{ base }}/...`。
 
 **加寫入操作（分期 3，需謹慎）**：
@@ -150,7 +172,7 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 
 ## 10. 測試
 
-`tests/unit/test_web_server.py`（FastAPI `TestClient`）：healthz、儀表板渲染、預設日期落最近 run、報告清單、404、目錄穿越阻擋。執行：`.venv/bin/python -m pytest tests/unit/test_web_server.py -q`。
+`tests/unit/test_web_server.py`（FastAPI `TestClient`）：healthz、儀表板渲染、預設日期落最近 run、報告清單、404、目錄穿越阻擋、回測結果清單/詳情（C3-2a）。執行：`.venv/bin/python -m pytest tests/unit/test_web_server.py -q`。
 
 > 測試以 env `TRADING_WEB_ROOT_PATH=""` 匯入 server，避免子路徑前綴干擾斷言。
 
@@ -158,7 +180,7 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 
 ## 11. 已知限制 / 待辦
 
-- 無圖表（權益曲線待後續）。
+- 資金卡 + 資產配置圓環（C3-1）、回測權益曲線（C3-2a）已具備；**實盤/影子每日權益曲線（C3-2b）待後續**（需新增 `equity_snapshots` 表並改動 `DailySimulationRunner.run_daily()`，留待 B1 影子驗證完成後再做）。
 - 無自動刷新（資料一天一更新，手動重整即可）。
 - 無認證（信任區網；如需，nginx basic-auth 一行）。
 - ~~持倉監控欄受 record-fill 全歸 MANUAL 限制，待修。~~ → **已修（2026-06-14）**：`record-fill --strategy-id` 可歸策略並納入監控；既有 MANUAL 部位需重新補錄方納入。
