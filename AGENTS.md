@@ -61,6 +61,12 @@
   - `trade exit-check --symbol X --strategy Y`：對單一持倉套某策略 `exit:` 規則跑一次（共用 `RiskExitEngine.explain_exit`，與每日引擎同源），dry-run 報告四條件數值與是否觸發。**純唯讀**、不發 SELL、不碰每日執行路徑。
   - `trade set-long-term --symbol X [--unset] [--strategy-id ...]`：將既有持倉重分類為長期持有（更新 `fills.is_long_term` 後 `rebuild_from_ledger`）；**預設只動 `MANUAL` bucket**，避免誤把同 symbol 的策略交易部位排除於 risk_exit。已對 `data/app.db` 三檔 ETF（00400A/00981A/00994A）手動持倉標長期，對帳通過。
   - Web 儀表板多張表格（持倉／今日成交／下次執行／公司行動／執行事件）顯示中文股名（`src/contracts/stock_names.py` 共用對照，cli 與 service 共用）。
+- [x] **現金異動（append-only）與 rebuild 開帳修正**（2026-06-17 完成）:
+  - `account adjust --amount ±N --reason "<原因>"`：append 一筆不可變 `CASH_ADJUSTMENT`（`source_type=MANUAL`）事件（提領為負、補入為正），原因存 `cash_ledger.memo`。**不改寫既有 `INITIAL_DEPOSIT`**（與會刪除重寫初始入金的 `adjust-cash` 區別）。`PortfolioLedger.adjust_cash`。
+  - `rebuild_from_ledger` 開帳餘額由「只認 `INITIAL_DEPOSIT`」改為「SUM 所有非 FILL 現金事件（`source_type != 'FILL'`）」。同時修好潛在 bug：`DIVIDEND` 配息原本 rebuild 後會從餘額消失、打破 reconcile（live DB 尚無配息，未爆）。
+- [x] **「下次執行」股數/金額/可讀理由 + 復活 `order_intents`**（2026-06-17 完成）:
+  - `engine.execute_bundles` 規劃段抽成純讀 `plan_bundles()`（無 broker/無寫入）；run-daily Stage 3c 產生隔日訊號後以同一路徑 dry-run 並冪等寫入 `order_intents`（`PENDING`+規劃股數 / `BLOCKED`+原因）。Web「下次執行」LEFT JOIN 該表顯示股數、金額（qty×reference_price），純唯讀。
+  - reason_code → 可讀句子集中於 `src/contracts/reason_codes.py`（`signal_reason_text` 預留 `llm_explanation` 參數作為日後 LLM 補強理由的掛載點）；委託被擋原因 humanize 為 `block_reason_text`。被使用者 `reject-signal` 拒絕的訊號於儀表板標「已拒絕」。
 
 ---
 

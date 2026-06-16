@@ -274,3 +274,68 @@ def write_daily_report(
         f.write(f"{rdate}\t{account_id}\t{run_status or '-'}\t{report_path}\n")
 
     return report_path
+
+
+def load_exit_strategy_ids(settings) -> list[str]:
+    """從 config/strategies/*.yaml 收集含 exit: 區塊的 strategy_id。"""
+    import yaml
+
+    ids: list[str] = []
+    strat_dir = Path("config/strategies")
+    for yml in strat_dir.glob("*.yaml"):
+        with open(yml, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        if "exit" in data and data.get("strategy_id"):
+            ids.append(data["strategy_id"])
+    return ids
+
+
+def resolve_report_account(conn, specified: Optional[str]) -> str:
+    """報告帳戶解析：未指定時取 DB 第一個帳戶，皆無則回退 simulation-main。"""
+    if specified:
+        return specified
+    row = conn.execute(
+        "SELECT account_id FROM cash_balances ORDER BY account_id LIMIT 1"
+    ).fetchone()
+    return row["account_id"] if row else "simulation-main"
+
+
+def generate_and_write_daily_report(
+    conn,
+    settings,
+    *,
+    account: Optional[str] = None,
+    report_date: Optional[date] = None,
+    base_dir: str = DEFAULT_REPORT_DIR,
+):
+    """每日影子報告的完整編排：解析帳戶/日期 → 載 manifests 與 exit 策略 → 取 run 狀態
+    → build → write。回傳 (report_text, report_path, account_id, report_date)。
+
+    CLI (`report daily`) 與 scripts/daily_report.py（cron 入口）共用此函式，零邏輯重複。
+    """
+    from src.approval.store import load_active_manifests
+
+    account_id = resolve_report_account(conn, account)
+    rdate = report_date or date.today()
+
+    manifests = load_active_manifests(settings)
+    try:
+        exit_ids = set(load_exit_strategy_ids(settings))
+    except Exception:
+        exit_ids = None
+
+    run_status = ""
+    row = conn.execute(
+        "SELECT status FROM daily_runs WHERE run_date = ? AND account_id = ? AND strategy_id = ?",
+        (rdate.isoformat(), account_id, ORCHESTRATOR_STRATEGY_ID),
+    ).fetchone()
+    if row:
+        run_status = row["status"]
+
+    projection = PortfolioProjection(conn)
+    text = build_daily_report(
+        conn, projection, account_id, rdate,
+        manifests=manifests, exit_strategy_ids=exit_ids,
+    )
+    path = write_daily_report(text, account_id, rdate, base_dir=base_dir, run_status=run_status)
+    return text, path, account_id, rdate

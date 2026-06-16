@@ -327,5 +327,19 @@ def init_db(db_path: str) -> None:
     if "signal_source" not in signal_item_columns:
         cursor.execute("ALTER TABLE signal_items ADD COLUMN signal_source TEXT NOT NULL DEFAULT 'ENTRY';")
 
+    # Migration: free-text memo on cash_ledger (e.g. reason for a CASH_ADJUSTMENT withdrawal/deposit)
+    cursor.execute("PRAGMA table_info(cash_ledger);")
+    cash_ledger_columns = [row["name"] for row in cursor.fetchall()]
+    if "memo" not in cash_ledger_columns:
+        cursor.execute("ALTER TABLE cash_ledger ADD COLUMN memo TEXT;")
+
+    # Migration: human-readable reason / status note on order_intents (revived for the
+    # "next execution" plan persisted at signal-generation time; BLOCKED rows carry the
+    # block reason here).
+    cursor.execute("PRAGMA table_info(order_intents);")
+    order_intent_columns = [row["name"] for row in cursor.fetchall()]
+    if "reason" not in order_intent_columns:
+        cursor.execute("ALTER TABLE order_intents ADD COLUMN reason TEXT;")
+
     conn.commit()
     conn.close()

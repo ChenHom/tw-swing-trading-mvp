@@ -109,6 +109,29 @@ def _report_pnl_by_strategy(conn, projection, account_id, report_date):
             print(f"  {pos['symbol']} {name}{lt_tag}: {pos['quantity']} 股 @ 均價 {pos['entry_price']:.2f} (現價: {pos['current_price']:.2f}) - 價值: {pos['value']:,} TWD (未實現: {pos['unrealized_pnl']:+,} TWD)")
 
 
+def cmd_report_daily(args):
+    """每日影子報告（與 cron/shadow_daily.sh 同源）：產生報告文字、落檔並印出。
+
+    純唯讀：不重跑交易、不寫交易事實，只讀 DB/projection 後產生報告檔
+    （artifacts/reports/daily/<account>_<date>.txt 與 LATEST.txt / INDEX.tsv）。
+    """
+    from src.application.reporting.daily_report import generate_and_write_daily_report
+
+    settings = common.get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+
+    report_date = date.fromisoformat(args.date) if args.date else None
+    base_dir = getattr(args, "dir", None) or "artifacts/reports/daily"
+
+    text, path, _account, _rdate = generate_and_write_daily_report(
+        conn, settings,
+        account=args.account, report_date=report_date, base_dir=base_dir,
+    )
+    print(text)
+    print(f"REPORT_PATH={path}")
+    conn.close()
+
+
 def cmd_report_pnl(args):
     settings = common.get_settings()
     conn = get_db_connection(settings.trading.database_path)

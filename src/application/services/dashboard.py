@@ -13,6 +13,7 @@ from typing import Optional
 
 from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
 from src.contracts.stock_names import stock_name
+from src.contracts.reason_codes import signal_reason_text, block_reason_text
 
 ORCHESTRATOR_STRATEGY_ID = "MULTI"
 REPORT_DIR = "artifacts/reports/daily"
@@ -127,22 +128,48 @@ def _fills_today(conn, account_id, d):
              "strategy_id": r["strategy_id"], "source": r["source"]} for r in rows]
 
 
-def _next_execution_signals(conn):
+def _next_execution_signals(conn, account_id):
     """下次執行的待執行訊號：**與檢視日期解耦**，永遠取最新一批產生的訊號
     （`MAX(signal_date)`）。其 target_execution_date 即下一個交易日的執行計畫，
     故使用者在交易日盤前也看得到「今天開盤要執行什麼」，不因日期欄停在他日而變空。
+
+    LEFT JOIN order_intents（run-daily Stage 3c 以同一規劃路徑 dry-run 後落檔）取得
+    規劃股數與狀態；金額由 quantity × reference_price 計算。理由與被擋原因 humanize。
     """
     rows = conn.execute(
         """
-        SELECT si.action, si.symbol, si.reason_code, sb.strategy_id, sb.bundle_id, sb.target_execution_date
+        SELECT si.action, si.symbol, si.reason_code, si.reference_price,
+               si.user_override, si.override_reason,
+               sb.strategy_id, sb.bundle_id, sb.target_execution_date,
+               oi.quantity AS planned_qty, oi.status AS intent_status, oi.reason AS block_reason
         FROM signal_items si JOIN signal_bundles sb ON si.bundle_id = sb.bundle_id
+        LEFT JOIN order_intents oi
+               ON oi.signal_id = si.signal_id AND oi.account_id = ?
+              AND oi.target_execution_date = sb.target_execution_date
         WHERE sb.signal_date = (SELECT MAX(signal_date) FROM signal_bundles)
         ORDER BY sb.target_execution_date, sb.strategy_id, si.action, si.symbol
-        """).fetchall()
-    return [{"action": r["action"], "symbol": r["symbol"], "name": stock_name(r["symbol"]),
-             "reason_code": r["reason_code"], "strategy_id": r["strategy_id"],
-             "is_exit": str(r["bundle_id"]).endswith("-exit"),
-             "target_date": r["target_execution_date"]} for r in rows]
+        """, (account_id,)).fetchall()
+    out = []
+    for r in rows:
+        qty = r["planned_qty"]
+        ref_price = (r["reference_price"] or 0) / 10000.0
+        amount = int(qty * ref_price) if qty else None
+        rejected = r["user_override"] == "REJECTED"
+        blocked = (not rejected) and r["intent_status"] == "BLOCKED"
+        out.append({
+            "action": r["action"], "symbol": r["symbol"], "name": stock_name(r["symbol"]),
+            "reason_text": signal_reason_text(r["reason_code"]),
+            "strategy_id": r["strategy_id"],
+            "is_exit": str(r["bundle_id"]).endswith("-exit"),
+            "target_date": r["target_execution_date"],
+            "quantity": qty,
+            "amount": amount,
+            "rejected": rejected,
+            "reject_reason": r["override_reason"] if rejected else None,
+            "blocked": blocked,
+            "block_text": block_reason_text(r["block_reason"]) if blocked else None,
+        })
+    return out
 
 
 def _events(conn, account_id, d):
@@ -258,7 +285,7 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
         "monitored_count": len(monitored),
         "pnl": _pnl_by_strategy(conn, projection, account_id),
         "fills_today": _fills_today(conn, account_id, d),
-        "next_execution": _next_execution_signals(conn),
+        "next_execution": _next_execution_signals(conn, account_id),
         "events": _events(conn, account_id, d),
         "reconcile": reconcile,
         "corporate_actions": _corporate_actions(conn, account_id, positions, d),

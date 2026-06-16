@@ -48,7 +48,15 @@ class TradeExecutionEngine:
     def execute_bundle(self, context: ExecutionContext, bundle: DailySignalBundle) -> dict:
         return self.execute_bundles(context, [bundle])
 
-    def execute_bundles(self, context: ExecutionContext, bundles: list[DailySignalBundle]) -> dict:
+    def plan_bundles(self, context: ExecutionContext, bundles: list[DailySignalBundle]) -> tuple:
+        """Pure planning pass (no broker, no DB writes): order bundles, run the BUY gate
+        and the MultiStrategyAllocator, and return (ordered, planned_orders, signal_results,
+        events). Shared by execute_bundles (real execution) and the run-daily dry-run that
+        persists next-execution order_intents — so the persisted plan matches reality.
+
+        signal_results maps signal_id -> list[order] (executable, carries quantity) or a
+        block-reason string.
+        """
         execution_time = datetime.fromisoformat(f"{context.execution_date.isoformat()}T09:00:00+08:00")
         mode_req = "simulation" if context.run_type == "DAILY_SIMULATION" else "backtest"
         validator = ManifestValidator(self.allowed_issuers, self.revoked_approvals)
@@ -143,6 +151,11 @@ class TradeExecutionEngine:
         )
         signal_results.update(alloc_results)
         events.extend(alloc_events)
+
+        return ordered, planned_orders, signal_results, events
+
+    def execute_bundles(self, context: ExecutionContext, bundles: list[DailySignalBundle]) -> dict:
+        ordered, planned_orders, signal_results, events = self.plan_bundles(context, bundles)
 
         # Execute with FakeBroker
         broker = FakeBroker(self.market_repo)

@@ -86,3 +86,39 @@ def cmd_account_adjust_cash(args):
         conn.close()
 
 
+def cmd_account_adjust(args):
+    """Append-only 現金異動：寫一筆 CASH_ADJUSTMENT 事件（提領為負、補入為正），
+    不改寫既有初始入金。與 adjust-cash（重設初始金）不同。"""
+    settings = common.get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+
+    account_id = common.resolve_account_id(conn, args.account)
+    amount = args.amount
+
+    ledger = PortfolioLedger(conn)
+    projection = PortfolioProjection(conn)
+
+    before = projection.get_cash_balance(account_id)
+    run_id = f"adjust-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    try:
+        ledger.adjust_cash(account_id, run_id, amount, "TWD", date.today(), memo=args.reason)
+        projection.rebuild_from_ledger(account_id)
+        after = projection.get_cash_balance(account_id)
+        verb = "提領" if amount < 0 else "補入"
+        print(f"已對帳戶 '{account_id}' {verb} {abs(amount):,} TWD（原因：{args.reason}）")
+        print(f"可用現金：{before:,} → {after:,} TWD")
+
+        result = projection.reconcile(account_id)
+        status = result.get("status")
+        if status == "RECONCILE_OK":
+            print("✅ 對帳通過：現金流水與投影一致。")
+        else:
+            print(f"⚠ 對帳異常：{result}")
+            sys.exit(1)
+    except Exception as e:
+        print(f"現金異動失敗: {e}")
+        sys.exit(1)
+    finally:
+        conn.close()
+
+

@@ -36,13 +36,13 @@ from src.cli import common
 from src.cli.market import cmd_market_backfill, cmd_market_sync, cmd_market_validate
 from src.cli.strategy import cmd_strategy_inspect
 from src.cli.approval import cmd_approval_create, cmd_approval_validate, cmd_approval_activate, cmd_approval_deactivate, cmd_approval_list, cmd_approval_status
-from src.cli.account import cmd_account_init, cmd_account_adjust_cash
+from src.cli.account import cmd_account_init, cmd_account_adjust_cash, cmd_account_adjust
 from src.cli.backtest import cmd_backtest_run
 from src.cli.simulation import cmd_simulation_run_daily, cmd_simulation_reset, cmd_simulation_execute_pending
 from src.cli.signal import cmd_signal_generate, cmd_signal_list
 from src.cli.trade import cmd_trade_plan, cmd_trade_reject_signal, cmd_trade_un_reject_signal, cmd_trade_record_fill, cmd_trade_close_all, cmd_trade_exit_check, cmd_trade_set_long_term
 from src.cli.portfolio import cmd_portfolio_reconcile, cmd_portfolio_rebuild_projections
-from src.cli.report import cmd_report_pnl
+from src.cli.report import cmd_report_pnl, cmd_report_daily
 from src.cli.corporate_action import cmd_corporate_action_record, cmd_corporate_action_apply, cmd_corporate_action_list, cmd_corporate_action_check
 
 
@@ -105,9 +105,14 @@ def main():
     parser_acc_init.add_argument("--account", type=str, default=None, help="帳戶名稱")
     parser_acc_init.add_argument("--initial-cash", type=int, required=True, help="初始台幣現金金額")
     
-    parser_acc_adjust = account_subs.add_parser("adjust-cash", help="調整/設定帳戶的初始剩餘金額")
+    parser_acc_adjust = account_subs.add_parser("adjust-cash", help="重設帳戶的初始入金總額（會刪除並重寫 INITIAL_DEPOSIT；要 append-only 異動請用 adjust）")
     parser_acc_adjust.add_argument("--account", type=str, default=None, help="帳戶名稱")
     parser_acc_adjust.add_argument("--amount", type=int, required=True, help="設定的新初始台幣現金金額")
+
+    parser_acc_adj = account_subs.add_parser("adjust", help="現金異動（append-only）：提領用負值、補入用正值，不改寫初始入金歷史")
+    parser_acc_adj.add_argument("--account", type=str, default=None, help="帳戶名稱")
+    parser_acc_adj.add_argument("--amount", type=int, required=True, help="異動金額（整數元，提領為負、補入為正）")
+    parser_acc_adj.add_argument("--reason", type=str, required=True, help="異動原因（存入 cash_ledger.memo 供稽核）")
     
     # 5. backtest group
     parser_backtest = subparsers.add_parser("backtest", help="歷史回測執行")
@@ -230,6 +235,11 @@ def main():
     parser_rep_pnl.add_argument("--source", type=str, choices=["all", "strategy", "manual"], default="all", help="篩選成交來源：all (全部), strategy (僅策略), manual (僅手動錄入)")
     parser_rep_pnl.add_argument("--by-strategy", action="store_true", dest="by_strategy", help="依策略 (strategy_id) 分組顯示損益歸因報表")
 
+    parser_rep_daily = report_subs.add_parser("daily", help="產生每日影子報告（與 cron/shadow_daily.sh 同源，純唯讀、落檔）")
+    parser_rep_daily.add_argument("--account", type=str, default=None, help="帳戶名稱（預設取 DB 第一個）")
+    parser_rep_daily.add_argument("--date", type=str, help="報告日期 YYYY-MM-DD（預設今天）")
+    parser_rep_daily.add_argument("--dir", type=str, default="artifacts/reports/daily", help="報告輸出目錄")
+
     # 11. corporate-action group
     parser_corpact = subparsers.add_parser("corporate-action", help="公司行動（除息、配股）管理")
     corpact_subs = parser_corpact.add_subparsers(dest="subcommand", required=True)
@@ -270,6 +280,7 @@ def main():
         ("approval", "status"): cmd_approval_status,
         ("account", "init"): cmd_account_init,
         ("account", "adjust-cash"): cmd_account_adjust_cash,
+        ("account", "adjust"): cmd_account_adjust,
         ("backtest", "run"): cmd_backtest_run,
         ("simulation", "run-daily"): cmd_simulation_run_daily,
         ("simulation", "execute-pending"): cmd_simulation_execute_pending,
@@ -286,6 +297,7 @@ def main():
         ("portfolio", "reconcile"): cmd_portfolio_reconcile,
         ("portfolio", "rebuild-projections"): cmd_portfolio_rebuild_projections,
         ("report", "pnl"): cmd_report_pnl,
+        ("report", "daily"): cmd_report_daily,
         ("corporate-action", "record"): cmd_corporate_action_record,
         ("corporate-action", "apply"): cmd_corporate_action_apply,
         ("corporate-action", "list"): cmd_corporate_action_list,

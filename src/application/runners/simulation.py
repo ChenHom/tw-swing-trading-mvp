@@ -213,23 +213,7 @@ class DailySimulationRunner:
                         execution_date=run_date,
                         account_id=account_id
                     )
-                    engine = TradeExecutionEngine(
-                        db_conn=self.db_conn,
-                        market_repo=self.market_repo,
-                        projection=self.projection,
-                        allowed_issuers=self.allowed_issuers,
-                        revoked_approvals=self.revoked_approvals,
-                        manifests=self.manifests,
-                        strategy_budgets={
-                            sid: d.order_budget_twd for sid, d in self.exit_definitions.items()
-                        } | {
-                            spec.definition.strategy_id: spec.definition.order_budget_twd
-                            for spec in self.entry_specs
-                        },
-                        global_limits=self.global_limits,
-                        pipeline_order=self.pipeline_order,
-                        slippage_bps=self.slippage_bps
-                    )
+                    engine = self._build_engine()
                     exec_result = engine.execute_bundles(context, bundles)
                     if exec_result.get("status") == "WAITING_MARKET_DATA":
                         self._upsert_run(
@@ -300,6 +284,11 @@ class DailySimulationRunner:
                     new_bundle = spec.strategy.generate(sig_ctx, pit_data, portfolio_snapshot)
                     self._save_bundle(new_bundle, target_execution_date)
 
+                # 3c. Persist the next-execution plan (revives order_intents): dry-run the
+                # just-generated bundles through the SAME planning path the engine uses at
+                # execution, so the dashboard's "下次執行" shows real planned shares/amount.
+                self._persist_next_execution_intents(account_id, run_id, target_execution_date)
+
                 self._update_run_sub_status(run_date, account_id, "signal_generation_status", "COMPLETED")
 
             # Stage 4: Reporting
@@ -333,6 +322,90 @@ class DailySimulationRunner:
             )
             raise e
 
+    def _build_engine(self) -> TradeExecutionEngine:
+        """Construct the multi-strategy execution engine with this runner's config.
+        Shared by Stage 2 (real execution) and Stage 3c (dry-run intent persistence)."""
+        return TradeExecutionEngine(
+            db_conn=self.db_conn,
+            market_repo=self.market_repo,
+            projection=self.projection,
+            allowed_issuers=self.allowed_issuers,
+            revoked_approvals=self.revoked_approvals,
+            manifests=self.manifests,
+            strategy_budgets={
+                sid: d.order_budget_twd for sid, d in self.exit_definitions.items()
+            } | {
+                spec.definition.strategy_id: spec.definition.order_budget_twd
+                for spec in self.entry_specs
+            },
+            global_limits=self.global_limits,
+            pipeline_order=self.pipeline_order,
+            slippage_bps=self.slippage_bps,
+        )
+
+    def _persist_next_execution_intents(self, account_id: str, run_id: str, target_execution_date: date) -> None:
+        """Dry-run plan all bundles targeting target_execution_date and persist the result
+        to order_intents (idempotent). PENDING rows carry the planned quantity; BLOCKED rows
+        carry the block reason. Pure read of projection/db — no broker, no fills, no writes
+        outside order_intents. The dashboard reads these for the "下次執行" plan.
+        """
+        bundles = self._find_bundles_for_execution(target_execution_date)
+        cursor = self.db_conn.cursor()
+        # Idempotent refresh: re-running run-daily for the same target date rewrites intents.
+        cursor.execute(
+            "DELETE FROM order_intents WHERE account_id = ? AND target_execution_date = ?",
+            (account_id, target_execution_date.isoformat())
+        )
+        if not bundles:
+            self.db_conn.commit()
+            return
+
+        context = ExecutionContext(
+            run_id=run_id,
+            run_type="DAILY_SIMULATION",
+            as_of_date=bundles[0].signal_date,
+            execution_date=target_execution_date,
+            account_id=account_id,
+        )
+        engine = self._build_engine()
+        ordered, _planned_orders, signal_results, _events = engine.plan_bundles(context, bundles)
+
+        for bundle in ordered:
+            for sig in bundle.signals:
+                result = signal_results.get(sig.signal_id)
+                if isinstance(result, list):
+                    qty = sum(o["quantity"] for o in result)
+                    status, reason = ("PENDING", None) if qty > 0 else ("BLOCKED", "無交易（無持倉/數量為 0）")
+                elif isinstance(result, str):
+                    qty, status, reason = 0, "BLOCKED", result
+                else:
+                    qty, status, reason = 0, "BLOCKED", "未規劃"
+                cursor.execute(
+                    """
+                    INSERT INTO order_intents (
+                        intent_id, account_id, bundle_id, signal_id, execution_key,
+                        symbol, action, quantity, target_execution_date, status, reason, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    ON CONFLICT(execution_key) DO UPDATE SET
+                        quantity = excluded.quantity, status = excluded.status,
+                        reason = excluded.reason, created_at = excluded.created_at
+                    """,
+                    (
+                        uuid.uuid4().hex,
+                        account_id,
+                        bundle.bundle_id,
+                        sig.signal_id,
+                        f"{account_id}-{bundle.bundle_id}-{sig.signal_id}-{target_execution_date.isoformat()}",
+                        sig.symbol,
+                        sig.action,
+                        qty,
+                        target_execution_date.isoformat(),
+                        status,
+                        reason,
+                    )
+                )
+        self.db_conn.commit()
+
     def update_high_watermarks(self, account_id: str, as_of_date: date) -> None:
         """
         Persist the day's close into position_high_watermarks for every
@@ -358,7 +431,22 @@ class DailySimulationRunner:
         交由 WAITING_MARKET_DATA 機制處理。
         skip_missing_symbols=True（歷史回補）：個別商品缺資料（如尚未上市的 ETF）
         僅跳過該檔，不放棄整個日期，避免阻斷排在後面的指數同步。
+
+        同日防護：若 sync_date == 今天且現在尚未過 14:00 Taipei，拒絕同步並回傳 False。
+        Shioaji 在盤中（09:00–13:30）的 kbars 第一根棒為昨收「參考價棒」，
+        aggregator 會把它當作開盤價，造成 open/low 系統性偏低。
+        14:00 之後拿到的是完整結算資料（收盤後約 30 min buffer），不含此棒。
         """
+        import pytz as _pytz
+        _taipei = _pytz.timezone("Asia/Taipei")
+        _now_taipei = datetime.now(_taipei)
+        if sync_date == _now_taipei.date() and _now_taipei.hour < 14:
+            print(
+                f"[sync_market_data] 拒絕盤中同步 {sync_date}（現在 {_now_taipei.strftime('%H:%M')} Taipei < 14:00）"
+                "：請於收盤後重試以取得完整日 K。"
+            )
+            return False
+
         aggregator = DailyBarAggregator()
         validator = MarketBarValidator()
 

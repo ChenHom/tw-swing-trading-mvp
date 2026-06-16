@@ -62,11 +62,16 @@ class PortfolioProjection:
             )
             fills_rows = cursor.fetchall()
             
-            # Fetch INITIAL_DEPOSIT amount
+            # Opening balance = SUM of all non-FILL cash events.
+            # FILL-sourced events (BUY_NOTIONAL / SELL_PROCEEDS / fees) are deleted below and
+            # replayed from fills, so the opening balance must include every non-FILL cash
+            # event: INITIAL_DEPOSIT (SYSTEM), DIVIDEND (CORPORATE_ACTION) and CASH_ADJUSTMENT
+            # (MANUAL). Summing only INITIAL_DEPOSIT used to drop dividends / cash adjustments
+            # on rebuild and break reconcile.
             cursor.execute(
                 """
                 SELECT SUM(amount) as initial_cash FROM cash_ledger
-                WHERE account_id = ? AND event_type = 'INITIAL_DEPOSIT'
+                WHERE account_id = ? AND source_type != 'FILL'
                 """,
                 (account_id,)
             )
