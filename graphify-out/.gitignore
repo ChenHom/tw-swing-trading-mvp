@@ -1,0 +1,6 @@
+# graphify 內部暫存與機器相關檔，不進版控
+cache/
+.graphify_python
+.graphify_*.json
+.needs_update
+.detect_err.txt
