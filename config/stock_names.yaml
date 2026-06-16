@@ -1,0 +1,7 @@
+# 股票代號 → 中文名稱（使用者自訂）
+# 格式：代號: "名稱"
+# 新增標的時在此補充名稱，儲存後重啟 trading-web.service 即生效：
+#   sudo systemctl restart trading-web
+# 此檔覆蓋程式內建清單（可用來修正名稱）。
+
+3163: "波若威"
