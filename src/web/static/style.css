@@ -52,6 +52,12 @@ td.empty { text-align: center; color: #9aa5b1; }
 
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 @media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
+td.truncate { max-width: 22em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) { td.truncate { max-width: 12em; } }
+/* 窄螢幕：寬表格改為可橫向捲動的區塊，避免欄位擠壓/跑版 */
+@media (max-width: 720px) {
+  table { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+}
 
 /* 資金總覽 + 資產配置（C3-1）*/
 .capital { margin-bottom: 1rem; }

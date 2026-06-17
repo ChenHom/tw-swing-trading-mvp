@@ -133,43 +133,40 @@
   </table>
 </section>
 
-<div class="two-col">
-  <section>
-    <h2>今日成交</h2>
-    <table>
-      <thead><tr><th>方向</th><th>代號</th><th>股數</th><th>價格</th><th>策略/來源</th></tr></thead>
-      <tbody>
-        {% for f in d.fills_today %}
-        <tr><td>{{ f.side }}</td><td>{{ f.symbol }}{% if f.name %} <span class="tag-muted">{{ f.name }}</span>{% endif %}</td><td class="num">{{ "{:,}".format(f.quantity) }}</td>
-            <td class="num">{{ "%.2f"|format(f.price) }}</td><td>{{ f.strategy_id or '-' }}/{{ f.source }}</td></tr>
-        {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </section>
+<section>
+  <h2>今日成交</h2>
+  <table>
+    <thead><tr><th>方向</th><th>代號</th><th>股數</th><th>價格</th><th>策略/來源</th></tr></thead>
+    <tbody>
+      {% for f in d.fills_today %}
+      <tr><td>{{ f.side }}</td><td>{{ f.symbol }}{% if f.name %} <span class="tag-muted">{{ f.name }}</span>{% endif %}</td><td class="num">{{ "{:,}".format(f.quantity) }}</td>
+          <td class="num">{{ "%.2f"|format(f.price) }}</td><td>{{ f.strategy_id or '-' }}/{{ f.source }}</td></tr>
+      {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
 
-  <section>
-    <h2>下次執行 <span class="info-tip" title="最近一批待執行訊號（不隨上方日期變動）；「執行日」為實際下單目標日。股數/金額為以當前現金、依完整管線順序試算的規劃結果，被擋者顯示原因。">ⓘ</span></h2>
-    <table>
-      <thead><tr><th>動作</th><th>代號</th><th>策略</th><th>股數</th><th>金額</th><th>理由</th><th>執行日</th></tr></thead>
-      <tbody>
-        {% for s in d.next_execution %}
-        <tr><td>{{ s.action }}{% if s.is_exit %} <span class="tag">EXIT</span>{% endif %}</td>
-            <td>{{ s.symbol }}{% if s.name %} <span class="tag-muted">{{ s.name }}</span>{% endif %}</td>
-            <td>{{ s.strategy_id }}</td>
-            {% if s.rejected %}
-            <td colspan="2"><span class="tag">已拒絕</span> {{ s.reject_reason }}</td>
-            {% elif s.blocked %}
-            <td colspan="2"><span class="tag">擋下</span> {{ s.block_text }}</td>
-            {% else %}
-            <td>{% if s.quantity %}{{ s.quantity }} 股{% else %}-{% endif %}</td>
-            <td>{% if s.amount is not none %}{{ "{:,}".format(s.amount) }}{% else %}-{% endif %}</td>
-            {% endif %}
-            <td>{{ s.reason_text }}</td><td>{{ s.target_date }}</td></tr>
-        {% else %}<tr><td colspan="7" class="empty">無</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </section>
-</div>
+<section>
+  <h2>下次執行{% if d.next_execution_date %}（執行日 {{ d.next_execution_date }}）{% endif %} <span class="info-tip" title="最近一批待執行訊號（不隨上方日期變動）。「規劃」為以當前現金、依完整管線順序試算的股數與每股參考買入價，被擋或已拒絕者顯示原因。策略與理由滑鼠移上可看說明/全文。">ⓘ</span></h2>
+  <table>
+    <thead><tr><th>動作</th><th>代號</th><th>策略</th><th>規劃（股數 @ 買入價）</th><th>理由</th></tr></thead>
+    <tbody>
+      {% for s in d.next_execution %}
+      <tr><td>{{ s.action }}{% if s.is_exit %} <span class="tag">EXIT</span>{% endif %}</td>
+          <td>{{ s.symbol }}{% if s.name %} <span class="tag-muted">{{ s.name }}</span>{% endif %}</td>
+          <td>{{ s.strategy_name }}{% if s.strategy_desc %} <span class="info-tip" title="{{ s.strategy_desc }}">ⓘ</span>{% endif %}</td>
+          {% if s.rejected %}
+          <td><span class="tag">已拒絕</span> {{ s.reject_reason }}</td>
+          {% elif s.blocked %}
+          <td><span class="tag">擋下</span> {{ s.block_text }}</td>
+          {% else %}
+          <td>{% if s.quantity %}{{ s.quantity }} 股 @ {{ "{:,.2f}".format(s.price) }}{% else %}-{% endif %}</td>
+          {% endif %}
+          <td class="truncate" title="{{ s.reason_text }}">{{ s.reason_text }}</td></tr>
+      {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
 
 <section>
   <h2>公司行動 / 除權息 <span class="info-tip" title="近一個月除息/除權事件；「未套用」表示尚未以 corporate-action apply 調整均價與停利水位（除息日前未套用會使停損基準失真）。">ⓘ</span></h2>

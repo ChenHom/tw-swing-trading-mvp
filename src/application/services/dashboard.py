@@ -14,6 +14,7 @@ from typing import Optional
 from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
 from src.contracts.stock_names import stock_name
 from src.contracts.reason_codes import signal_reason_text, block_reason_text
+from src.contracts.strategy_names import strategy_name, strategy_desc
 
 ORCHESTRATOR_STRATEGY_ID = "MULTI"
 REPORT_DIR = "artifacts/reports/daily"
@@ -152,18 +153,19 @@ def _next_execution_signals(conn, account_id):
     out = []
     for r in rows:
         qty = r["planned_qty"]
-        ref_price = (r["reference_price"] or 0) / 10000.0
-        amount = int(qty * ref_price) if qty else None
+        price = (r["reference_price"] or 0) / 10000.0  # 每股參考買入價位
         rejected = r["user_override"] == "REJECTED"
         blocked = (not rejected) and r["intent_status"] == "BLOCKED"
         out.append({
             "action": r["action"], "symbol": r["symbol"], "name": stock_name(r["symbol"]),
             "reason_text": signal_reason_text(r["reason_code"]),
             "strategy_id": r["strategy_id"],
+            "strategy_name": strategy_name(r["strategy_id"]),
+            "strategy_desc": strategy_desc(r["strategy_id"]),
             "is_exit": str(r["bundle_id"]).endswith("-exit"),
             "target_date": r["target_execution_date"],
             "quantity": qty,
-            "amount": amount,
+            "price": price,
             "rejected": rejected,
             "reject_reason": r["override_reason"] if rejected else None,
             "blocked": blocked,
@@ -285,7 +287,8 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
         "monitored_count": len(monitored),
         "pnl": _pnl_by_strategy(conn, projection, account_id),
         "fills_today": _fills_today(conn, account_id, d),
-        "next_execution": _next_execution_signals(conn, account_id),
+        "next_execution": (_ne := _next_execution_signals(conn, account_id)),
+        "next_execution_date": _ne[0]["target_date"] if _ne else None,
         "events": _events(conn, account_id, d),
         "reconcile": reconcile,
         "corporate_actions": _corporate_actions(conn, account_id, positions, d),
