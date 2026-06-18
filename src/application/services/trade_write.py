@@ -43,6 +43,7 @@ def record_fill(
     strategy_id: Optional[str] = None,
     is_long_term: bool = False,
     exit_strategy_ids: Optional[set] = None,
+    trade_date: Optional[str] = None,
 ) -> dict:
     """補錄一筆外部券商已成交的 fill，走既有 FIFO/cash/PnL projection。
 
@@ -71,17 +72,31 @@ def record_fill(
     price_scaled = int(round(price * 10000))
     is_long_term_int = 1 if is_long_term else 0
 
+    # 回填日期：--date 指定成交日（補錄昨日/前日的真實成交），否則用現在。
+    # filled_at 是所有現金事件/庫存/損益的經濟日期；run_id 沿用 manual-YYYYMMDD 慣例。
+    # ponytail: 同日多筆 fill 都蓋 12:00，FIFO tie-break 退回插入序；若日後需精確盤中序，改帶真實成交時間。
+    if trade_date:
+        try:
+            date.fromisoformat(trade_date)
+        except ValueError:
+            raise TradeWriteError("BAD_DATE", f"錯誤：--date 須為 YYYY-MM-DD，收到 '{trade_date}'。")
+        filled_at = f"{trade_date}T12:00:00+08:00"
+        run_compact = trade_date.replace("-", "")
+    else:
+        filled_at = datetime.now().isoformat()
+        run_compact = date.today().strftime("%Y%m%d")
+
     fill_payload = {
         "fill_id": f"fill-manual-{_uuid_like()}",
         "account_id": account_id,
-        "run_id": f"manual-{date.today().strftime('%Y%m%d')}",
+        "run_id": f"manual-{run_compact}",
         "order_id": f"ord-manual-{_uuid_like()}",
         "execution_key": f"manual-fill-{symbol}-{_uuid_like()}",
         "symbol": symbol,
         "side": side,
         "quantity": quantity,
         "price": price_scaled,
-        "filled_at": datetime.now().isoformat(),
+        "filled_at": filled_at,
         "is_long_term": is_long_term_int,
         "source": "MANUAL_IMPORT",
         "strategy_id": strategy_id,

@@ -256,3 +256,33 @@ def test_set_long_term_no_fills_is_noop(conn):
     result = trade_write.set_long_term(conn, account_id="acc-none", symbol="9999", value=True)
     assert result["affected"] == 0
     assert result["reconcile_status"] is None
+
+
+# --- record_fill --date 回填 ------------------------------------------------
+
+def test_record_fill_trade_date_backfills_filled_at_and_run_id(conn):
+    """--date 把成交日回填到 filled_at（經濟日期）與 run_id；不指定則用今天。"""
+    trade_write.record_fill(
+        conn, account_id="acc-bf", symbol="2330", side="BUY",
+        quantity=1, price=2360.0, trade_date="2026-06-17",
+    )
+    fill = conn.execute(
+        "SELECT filled_at, run_id FROM fills WHERE account_id = 'acc-bf'"
+    ).fetchone()
+    assert fill["filled_at"].startswith("2026-06-17")
+    assert fill["run_id"] == "manual-20260617"
+
+    # 現金事件 occurred_at 也落在回填日（filled_at 驅動）。
+    led = conn.execute(
+        "SELECT occurred_at FROM cash_ledger WHERE account_id = 'acc-bf' AND event_type = 'BUY_NOTIONAL'"
+    ).fetchone()
+    assert led["occurred_at"].startswith("2026-06-17")
+
+
+def test_record_fill_bad_trade_date_raises(conn):
+    with pytest.raises(trade_write.TradeWriteError) as ei:
+        trade_write.record_fill(
+            conn, account_id="acc-bad", symbol="2330", side="BUY",
+            quantity=1, price=2360.0, trade_date="06/17/2026",
+        )
+    assert ei.value.code == "BAD_DATE"

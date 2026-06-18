@@ -243,6 +243,44 @@ def test_run_daily_idempotency_already_completed(temp_db):
     mock_provider.fetch_kbars.assert_not_called()
 
 
+def test_run_daily_no_auto_execute_skips_execution_stage(temp_db):
+    """auto_execute=False（真實帳號）：Stage 2 不建 engine、不自動成交，但流程仍標完成。"""
+    calendar = ExchangeCalendarsTradingCalendar()
+    repo = SqliteMarketBarRepository(temp_db)
+    projection = PortfolioProjection(temp_db)
+
+    # 只剩 execution 待辦，其餘 stage 預先標 COMPLETED 以隔離 Stage 2 分支。
+    temp_db.execute(
+        """
+        INSERT INTO daily_runs (
+            run_id, run_date, account_id, strategy_id, status, market_sync_status,
+            execution_status, signal_generation_status, report_status, started_at, completed_at
+        ) VALUES ('sim-20260610', '2026-06-10', 'sim-test', 'MULTI', 'STARTED', 'COMPLETED', 'PENDING', 'COMPLETED', 'COMPLETED', 'now', 'now')
+        """
+    )
+    temp_db.commit()
+
+    runner = DailySimulationRunner(
+        db_conn=temp_db, calendar=calendar, market_provider=MagicMock(),
+        market_repo=repo, projection=projection,
+        allowed_issuers=[], revoked_approvals=[]
+    )
+    runner._build_engine = MagicMock()  # spy：auto_execute=False 不該建 engine 成交
+
+    status = runner.run_daily(
+        run_date=date(2026, 6, 10), account_id="sim-test",
+        universe_symbols=["2330"], auto_execute=False
+    )
+
+    assert status == "COMPLETED"
+    runner._build_engine.assert_not_called()
+    row = temp_db.execute(
+        "SELECT execution_status FROM daily_runs WHERE run_date='2026-06-10'"
+    ).fetchone()
+    assert row["execution_status"] == "COMPLETED"
+    assert temp_db.execute("SELECT COUNT(*) c FROM fills").fetchone()["c"] == 0
+
+
 # ── Integration: engine must NOT crash when long-term lot blocks a SELL ───────
 
 def test_engine_skips_sell_blocked_by_long_term_position():

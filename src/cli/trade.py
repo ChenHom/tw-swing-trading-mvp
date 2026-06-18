@@ -321,6 +321,7 @@ def cmd_trade_record_fill(args):
                 strategy_id=strategy_id,
                 is_long_term=is_long_term,
                 exit_strategy_ids=exit_strategy_ids,
+                trade_date=getattr(args, "date", None),
             )
         except trade_write.TradeWriteError as e:
             print(e.message)

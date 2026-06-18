@@ -17,7 +17,14 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 ACCOUNT="${1:-simulation-main}"
-RUN_DATE="${2:-$(TZ=Asia/Taipei date +%Y-%m-%d)}"
+shift || true
+# 第二個位置參數若不是 --flag 就當日期；其餘參數（如 --no-auto-execute）透傳給 run-daily。
+if [[ "${1:-}" != --* && -n "${1:-}" ]]; then
+  RUN_DATE="$1"; shift
+else
+  RUN_DATE="$(TZ=Asia/Taipei date +%Y-%m-%d)"
+fi
+EXTRA=("$@")
 LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/shadow_daily.log"
 mkdir -p "$LOG_DIR"
@@ -28,7 +35,7 @@ PYTHON_EXEC=".venv/bin/python"
 echo "=== shadow_daily $ACCOUNT $RUN_DATE $(date) ===" | tee -a "$LOG_FILE"
 
 # 1) 每日模擬（影子）
-$PYTHON_EXEC -m app simulation run-daily --account "$ACCOUNT" --date "$RUN_DATE" >> "$LOG_FILE" 2>&1
+$PYTHON_EXEC -m app simulation run-daily --account "$ACCOUNT" --date "$RUN_DATE" "${EXTRA[@]}" >> "$LOG_FILE" 2>&1
 RUN_RC=$?
 echo "run-daily 退出碼: $RUN_RC" | tee -a "$LOG_FILE"
 

@@ -141,7 +141,8 @@ class DailySimulationRunner:
         self,
         run_date: date,
         account_id: str,
-        universe_symbols: list[str]
+        universe_symbols: list[str],
+        auto_execute: bool = True
     ) -> str:
         """
         Run the daily multi-strategy simulation workflow (single orchestrator run).
@@ -203,30 +204,32 @@ class DailySimulationRunner:
                 print(f"[run_daily] Manifest preflight [{sid}]: {preflight}")
 
             # Stage 2: Execution of pending signals (ALL bundles targeting run_date)
+            # auto_execute=False（真實帳號）：跳過自動成交，僅標記完成後續跑規劃(Stage 3)。
             if run_record["execution_status"] != "COMPLETED":
-                bundles = self._find_bundles_for_execution(run_date)
-                if bundles:
-                    context = ExecutionContext(
-                        run_id=run_id,
-                        run_type="DAILY_SIMULATION",
-                        as_of_date=bundles[0].signal_date,
-                        execution_date=run_date,
-                        account_id=account_id
-                    )
-                    engine = self._build_engine()
-                    exec_result = engine.execute_bundles(context, bundles)
-                    if exec_result.get("status") == "WAITING_MARKET_DATA":
-                        self._upsert_run(
-                            run_date=run_date,
-                            account_id=account_id,
-                            status="WAITING",
-                            market_sync_status="COMPLETED",
-                            execution_status="PENDING",
-                            signal_generation_status=run_record["signal_generation_status"],
-                            report_status=run_record["report_status"],
-                            last_error="WAITING_MARKET_DATA"
+                if auto_execute:
+                    bundles = self._find_bundles_for_execution(run_date)
+                    if bundles:
+                        context = ExecutionContext(
+                            run_id=run_id,
+                            run_type="DAILY_SIMULATION",
+                            as_of_date=bundles[0].signal_date,
+                            execution_date=run_date,
+                            account_id=account_id
                         )
-                        return "WAITING"
+                        engine = self._build_engine()
+                        exec_result = engine.execute_bundles(context, bundles)
+                        if exec_result.get("status") == "WAITING_MARKET_DATA":
+                            self._upsert_run(
+                                run_date=run_date,
+                                account_id=account_id,
+                                status="WAITING",
+                                market_sync_status="COMPLETED",
+                                execution_status="PENDING",
+                                signal_generation_status=run_record["signal_generation_status"],
+                                report_status=run_record["report_status"],
+                                last_error="WAITING_MARKET_DATA"
+                            )
+                            return "WAITING"
 
                 self._update_run_sub_status(run_date, account_id, "execution_status", "COMPLETED")
 

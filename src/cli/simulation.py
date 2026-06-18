@@ -98,7 +98,8 @@ def cmd_simulation_run_daily(args):
         status = runner.run_daily(
             run_date=run_date,
             account_id=account_id,
-            universe_symbols=symbols
+            universe_symbols=symbols,
+            auto_execute=not getattr(args, "no_auto_execute", False)
         )
 
         print(f"Simulation runner finished with status: {status}")

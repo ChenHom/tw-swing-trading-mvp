@@ -131,6 +131,7 @@ def main():
     parser_sim_daily = sim_subs.add_parser("run-daily", help="執行每日模擬交易工作流")
     parser_sim_daily.add_argument("--date", type=str, help="執行日期 YYYY-MM-DD")
     parser_sim_daily.add_argument("--account", type=str, default=None, help="目標帳戶名稱")
+    parser_sim_daily.add_argument("--no-auto-execute", action="store_true", help="真實帳號用：跳過自動成交，只產生訊號/風控/下次執行計畫（不經 FakeBroker 下單）")
     
     parser_sim_exec = sim_subs.add_parser("execute-pending", help="執行待處理的交易訊號包")
     parser_sim_exec.add_argument("--execution-date", type=str, help="執行委託的日期 YYYY-MM-DD")
@@ -175,6 +176,7 @@ def main():
              "依策略訊號自行手動下單者應指定，使該部位納入 risk_exit 停損監控與策略別損益歸因。"
     )
     parser_trade_record.add_argument("--long-term", action="store_true", help="設定此成交為長期持有部位，免受策略自動出場訊號影響")
+    parser_trade_record.add_argument("--date", type=str, default=None, help="成交日 YYYY-MM-DD（補錄昨日/前日的真實成交；省略＝今天）。決定現金事件/庫存/損益的經濟日期與 run_id。")
 
     parser_trade_reject = trade_subs.add_parser(
         "reject-signal",
