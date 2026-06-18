@@ -54,6 +54,10 @@ td.empty { text-align: center; color: #9aa5b1; }
 @media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
 td.truncate { max-width: 22em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 720px) { td.truncate { max-width: 12em; } }
+/* 下次執行：筆數多時限高可縱向捲動、表頭吸頂（約顯示 3 列後捲動） */
+.scroll-rows { max-height: 12rem; overflow-y: auto; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.scroll-rows table { box-shadow: none; border-radius: 0; }
+.scroll-rows thead th { position: sticky; top: 0; z-index: 1; }
 /* 窄螢幕：寬表格改為可橫向捲動的區塊，避免欄位擠壓/跑版 */
 @media (max-width: 720px) {
   table { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }

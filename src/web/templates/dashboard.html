@@ -148,6 +148,7 @@
 
 <section>
   <h2>下次執行{% if d.next_execution_date %}（執行日 {{ d.next_execution_date }}）{% endif %} <span class="info-tip" title="最近一批待執行訊號（不隨上方日期變動）。「規劃」為以當前現金、依完整管線順序試算的股數與每股參考買入價，被擋或已拒絕者顯示原因。策略與理由滑鼠移上可看說明/全文。">ⓘ</span></h2>
+  <div class="scroll-rows">
   <table>
     <thead><tr><th>動作</th><th>代號</th><th>策略</th><th>規劃（股數 @ 買入價）</th><th>理由</th></tr></thead>
     <tbody>
@@ -166,6 +167,7 @@
       {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
     </tbody>
   </table>
+  </div>
 </section>
 
 <section>
