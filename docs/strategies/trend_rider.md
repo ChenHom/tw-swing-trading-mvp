@@ -54,7 +54,7 @@
 | `max_regime_drawdown` | 0.35 | 寬停損的趨勢策略本就容忍較大回撤，門檻較現役寬，但仍須有上限 |
 | `min_expectancy_ci_lower` | 0 | 逐筆期望值 bootstrap 5% CI 下界須 ≥0 |
 | `max_bear_underperformance` | 0.20 | 暫不參與 Phase 1 評估（需 regime 標記，Phase 3+ 才建），先寫死 |
-| `min_effective_sample_size` | 20 | 趨勢騎乘交易筆數較少（持有久），有效樣本下限相應放寬，但不可過少 |
+| `min_effective_sample_size` | 20 | 順勢交易者交易筆數較少（持有久），有效樣本下限相應放寬，但不可過少 |
 | `max_profit_concentration` | 0.50 | 趨勢策略獲利天生較集中於少數大贏家，門檻較現役寬，但仍須防「全靠一筆」 |
 
 **本策略專屬否決條件（Challenger 對照）**：若 trend_rider 的崩盤防守（2022/COVID 回吐）惡化到

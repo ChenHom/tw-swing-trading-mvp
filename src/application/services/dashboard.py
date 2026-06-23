@@ -64,14 +64,20 @@ def _run_status(conn, account_id, d) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def _positions(projection, account_id, exit_strategy_ids=None):
+def _positions(projection, account_id, exit_strategy_ids=None, market_repo=None, view_date=None):
     """全部策略持倉（含長期/MANUAL），標記是否受 risk_exit 監控。
 
     監控資格須與 RiskExitEngine 一致：非 MANUAL、非長期、且 strategy_id 屬具
     exit 區塊的策略（exit_strategy_ids）。exit_strategy_ids=None 表示呼叫端未提供
     （沿用寬鬆判定，僅排除 MANUAL/長期），正式 server 會帶入實際集合。
+
+    market_repo + view_date 有給時附 view_date 當日收盤價 last_close（查無 bar → None，
+    UI 顯示「—」，不以均價 fallback 以免誤讀為收盤）。
     """
     positions = projection.get_strategy_positions(account_id, include_long_term=True)
+    vd = None
+    if view_date is not None:
+        vd = view_date if isinstance(view_date, date) else date.fromisoformat(str(view_date))
     out = []
     for (sid, symbol), pos in sorted(positions.items()):
         monitored = (
@@ -79,12 +85,18 @@ def _positions(projection, account_id, exit_strategy_ids=None):
             and not pos["is_long_term"]
             and (exit_strategy_ids is None or sid in exit_strategy_ids)
         )
+        last_close = None
+        if market_repo is not None and vd is not None:
+            bar = market_repo.find(symbol, vd)
+            if bar is not None:
+                last_close = _p(bar.close)
         out.append({
             "strategy_id": sid,
             "symbol": symbol,
             "name": stock_name(symbol),
             "quantity": pos["quantity"],
             "wavg_price": _p(pos["wavg_price"]),
+            "last_close": last_close,
             "is_long_term": pos["is_long_term"],
             "monitored": monitored,
         })
@@ -110,6 +122,8 @@ def _pnl_by_strategy(conn, projection, account_id):
         fe = fees.get(sid, 0)
         out.append({
             "strategy_id": sid,
+            "strategy_name": strategy_name(sid),
+            "strategy_desc": strategy_desc(sid),
             "gross": g,
             "fees": fe,
             "net_realized": g + fe,
@@ -272,10 +286,10 @@ def read_report(name: str, base_dir: str = REPORT_DIR) -> Optional[str]:
 
 
 def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
-                    account_id: str, view_date, exit_strategy_ids=None) -> dict:
+                    account_id: str, view_date, exit_strategy_ids=None, market_repo=None) -> dict:
     d = view_date.isoformat() if isinstance(view_date, date) else str(view_date)
     cash = projection.get_cash_balance(account_id)
-    positions = _positions(projection, account_id, exit_strategy_ids)
+    positions = _positions(projection, account_id, exit_strategy_ids, market_repo, view_date)
     monitored = [p for p in positions if p["monitored"]]
     reconcile = _reconcile_summary(projection.reconcile(account_id))
     return {

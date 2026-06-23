@@ -16,6 +16,11 @@ STRATEGY_LABELS: dict[str, dict[str, str]] = {
         "desc": "進場：均線回踩後 K 線轉強低接（含大盤 60MA 濾網、已持有不加碼）。"
                 "出場：交由 risk_exit 管理。",
     },
+    "trend_rider": {
+        "name": "順勢交易者",
+        "desc": "進場：站上上升 60MA + 創 60 日新高 + 大盤 60MA 濾網（確立中期趨勢）。"
+                "出場「讓贏家跑」：寬移動停利 -25% / 長均線跌破 / 停用時間停損，不提早砍贏家。",
+    },
     "trend_pullback": {
         "name": "趨勢回檔（退役）",
         "desc": "舊策略，已退役、不再進場；存量倉位出場由 risk_exit 管理。",

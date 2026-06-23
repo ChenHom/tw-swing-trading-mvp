@@ -5,7 +5,7 @@ from src.strategy.filters import index_above_ma
 
 
 class TrendRiderStrategy:
-    """趨勢騎乘（讓贏家跑）：進場選確立的中期上升趨勢——close > 上升 60MA + 創 60 日新高 +
+    """順勢交易者（讓贏家跑）：進場選確立的中期上升趨勢——close > 上升 60MA + 創 60 日新高 +
     大盤 60MA 多頭濾網。**僅產生 BUY；出場交 risk_exit**，靠 YAML exit: 的寬鬆參數
     （time_stop 停用、寬移動停利、長均線跌破）讓贏家跑久，不像 breakout 20 天就砍。
     保留 index 濾網＝崩盤防守不丟。portfolio.positions 為本策略自身持倉視角（已持有不再進場）。"""

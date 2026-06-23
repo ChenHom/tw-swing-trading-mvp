@@ -98,7 +98,7 @@ class PullbackReboundParams(BaseModel):
 
 
 class TrendRiderParams(BaseModel):
-    """趨勢騎乘（讓贏家跑）進場參數。進場選「確立的中期上升趨勢」，出場交 risk_exit 以
+    """順勢交易者（讓贏家跑）進場參數。進場選「確立的中期上升趨勢」，出場交 risk_exit 以
     寬鬆 exit config 實現「讓贏家跑」（time_stop 停用、寬移動停利、長均線跌破）。
     保留 index 60MA 濾網作崩盤防守。"""
     model_config = ConfigDict(extra="forbid", frozen=True)
