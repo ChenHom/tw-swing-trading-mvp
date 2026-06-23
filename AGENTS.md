@@ -4,7 +4,11 @@
 
 ## Project Mission (專案任務)
 
-本專案的核心目標是建構一個**高確定性、可重現、可安全對帳**的量化交易閉環。MVP 階段著重於流程的正確性與數據的一致性，而不負責證明策略的盈利能力：
+本專案的核心目標是建構一個**高確定性、可重現、可安全對帳**的量化交易閉環。
+
+> **北極星目標（2026-06-23 使用者釐清）**：**建策略 → 回測 → 驗證是否「真的」賺錢 → 持續優化**。MVP 階段先把「流程正確性 + 資料一致性」做穩（下列 1-5），其上的「研究回測層（Phase 0/1/2 + R）」才是回答「會不會賺錢」的地方（見 README §8、記憶 `goal-validate-profit`）。治理護欄（kill-switch/lineage/影子升級階梯）是次要，**先驗證出 edge 再說**。
+
+MVP 流程閉環的不變式：
 
 1. **確定性回測與模擬**: 歷史回測與每日模擬共用同一個交易核心 (`TradeExecutionEngine`)。
 2. **防範未來資料**: 策略只能透過 `PointInTimeMarketData` 讀取截止至 `as_of_date` 的市場數據，杜絕 Lookahead Bias。
@@ -18,8 +22,9 @@
 
 ## Hard Boundaries (硬性安全邊界)
 
-- **嚴禁進行正式實盤交易**：本 MVP 絕不串接實盤交易 API 憑證 (CA)。
-- **Shioaji 權限限制**：僅允許在同步行情時調用 Shioaji API，且帳號不可載入交易 CA 憑證。
+- **下單全手動、不接券商交易 API**：`國泰`＝**真實帳號**但採 `run-daily --no-auto-execute`（plan-only，只產訊號/計畫），**所有下單由人工處理、永不呼叫券商 API 自動成交**；實際成交以 `record-fill` 事後補登。⇒ `broker_orders` 是死表（設計如此）、不做券商對帳。`simulation-main`＝影子帳號（FakeBroker 全自動，永不串實盤）。見記憶 `manual-only-execution`、`real-shadow-account-split`。
+- **Shioaji 權限限制**：僅允許在同步行情時調用 Shioaji API（read-only 行情），帳號不可載入交易 CA 憑證。
+- **cron 跑工作區程式**：每交易日 15:10/15:12 cron 跑「當下 checkout 的程式」，改 code 即影響下次 live run，務必確認 live-safe（如 backtest-scoped 改動不影響 `simulation` mode）。
 - **秘密資料保護**：不得在 log、commit、或對話中洩露 `SHIOAJI_API_KEY`、`SHIOAJI_SECRET_KEY` 等敏感變數。本機應使用 `.env` (必須加入 `.gitignore`) 進行設定。
 - **防止浮點數精度問題**：
   - 帳戶現金與交易金額以**整數 (TWD)** 儲存。
@@ -67,28 +72,35 @@
 - [x] **「下次執行」股數/金額/可讀理由 + 復活 `order_intents`**（2026-06-17 完成）:
   - `engine.execute_bundles` 規劃段抽成純讀 `plan_bundles()`（無 broker/無寫入）；run-daily Stage 3c 產生隔日訊號後以同一路徑 dry-run 並冪等寫入 `order_intents`（`PENDING`+規劃股數 / `BLOCKED`+原因）。Web「下次執行」LEFT JOIN 該表顯示股數、金額（qty×reference_price），純唯讀。
   - reason_code → 可讀句子集中於 `src/contracts/reason_codes.py`（`signal_reason_text` 預留 `llm_explanation` 參數作為日後 LLM 補強理由的掛載點）；委託被擋原因 humanize 為 `block_reason_text`。被使用者 `reject-signal` 拒絕的訊號於儀表板標「已拒絕」。
+- [x] **誠實回測實驗室 + trend_rider Challenger**（2026-06-23 完成，311 tests；plan `2455-cosmic-fountain.md`、README §8）:
+  - **Phase 0/1/2 首度在真實資料上跑通**（先前全是合成單元測試）：回補 `data/research.db`（44,959 bars, 2018-2026, 含 2022 完整空頭），修 3 個整合 bug（fingerprint `set(dict)`、TSE→TAIEX data_id、approval 時效閘擋歷史回放）。
+  - 量尺：風險/穩健指標、四 benchmark、報酬分層、DSR/bootstrap/Herfindahl/有效N gate、成本占比、分年表；**五級裁決狀態機**（今日 diagnostic universe → 只能 `INVALID`+diagnostic_result）；Research Ledger / 家族級 lockbox / 參數高原。
+  - 三支真實回測：現役兩支真 edge 是**崩盤防守**（COVID/2022 都只虧 ~3%），但持續上升趨勢嚴重低捕獲（2024 AI 年）。新增 **`trend_rider`「順勢交易者」**（讓贏家跑，純靠 exit config、零引擎改動、保留 index 60MA 防守）→ +121.9%/Sharpe 1.20/成本 5.6%，但 **+122% 受後見之明污染、報酬 edge 未證實**（待 PIT universe）。
+  - UI：儀表板持倉部位加「最後收盤」欄、策略別損益顯示中文名。
 
 ---
 
 ## Next Development Priority (下一步開發優先順序)
 
-MVP 核心功能、首批架構缺陷修正、排程安全強化、與多策略並行第一階段已完成。後續優先開發方向包含：
+當前處於「誠實回測實驗室建成、trend_rider 識別為有潛力 Challenger」的里程碑之後。下一段＝ plan `2455-cosmic-fountain.md` 的 **R-T4b**：
 
-1. **公司行動處理**（多策略上線後風險被放大，列為最優先）:
-   - 實作對除權息、股票分割等公司行動的檢測與資料調整，避免持倉均價、`position_high_watermarks` 與停損基準失真。
-2. **手動成交事實完整性與修正模型**:
-   - 擴展 `record-fill` 以支援手動輸入外部券商實際手續費與交易稅，並實作沖銷修正流水紀錄（reversal / corrected fill）以維持不可變 facts 的完整。
-3. **零股與整張股票成交模型分流**:
-   - 在 Fake Broker 成交模擬中，引進整張股票 (Round Lot) 與零股 (Odd Lot) 的撮合流動性與滑價成本分流模型。
-4. **權益曲線視覺化報表**與多策略上線後的實際運行觀察（含 `execution_events` 審計回顧）。
+1. **Track 1（優先、輕）— trend_rider 影子上線驗證**：per-account 策略範圍（`config/trading.yaml` 加 `account_overrides`，`simulation-main` 跑 trend_rider、`國泰` 維持兩支不污染），累積**零偏差** live forward 證據（S4 唯一真乾淨證據，比歷史 PIT 更直接答「真有 edge？」）。
+2. **Track 2（較重、後排）— PIT 流動性排名 universe**：消除後見之明/survivorship（FinMind 探測：指數成分史不可行/付費；**流動性 top-N 可行、下市股歷史可查 → survivorship 可消除**）。需解 `fingerprint.py` 寫死 `diagnostic:` 前綴、backtest 接 `UniversePolicy`、backtest 支援 per-date 變動 universe → 首個非 `INVALID` 裁決。
+3. **backtest 冪等**：signal `bundle_id` 改 run-scoped（現以 copy-per-run 繞過）；成本歸因拆解（P3-T5）。
+
+> 歷史 backlog（公司行動處理、零股撮合分流、權益曲線等）多已於 Phase 0/2026-06 完成或併入研究層；治理護欄（Phase 3A kill-switch/lineage、Phase 3-5）延後到驗證出會賺錢策略之後。
 
 ---
 
 ## Important Docs (重要文件)
 
-- [tw-swing-trading-mvp-implementation-plan.md](file:///home/hom/services/stock/tw-day-trading/docs/planning/tw-swing-trading-mvp-implementation-plan.md) - 核心業務規則與決策記錄。
-- [multi_strategy_plan.md](file:///home/hom/services/stock/tw-day-trading/docs/planning/multi_strategy_plan.md) - 多策略架構設計與風險評估規劃書 (v3，含四項拍板決策與程式碼審查修正)。
-- [implementation_plan.md](file:///home/hom/.gemini/antigravity-cli/brain/51d942a2-225b-433a-913f-6889f769c880/implementation_plan.md) - 具體實作里程碑與程式結構規劃。
+- `~/.claude/plans/2455-cosmic-fountain.md` — **現行主計畫**「波段策略賺錢 — 交易治理閉環」（Phase 0-5 + R 全紀錄、現況落差盤點、R-T4b 下一段）。
+- [docs/development/engineering-log.md](docs/development/engineering-log.md) — 施工記錄（每次變更的決策脈絡，新到舊）。
+- [docs/development/todo.md](docs/development/todo.md) — 路線圖（A-G 分區，含研究回測 G）。
+- [README.md](README.md) §8 — 研究回測工作流（backfill + backtest --db + 量尺/裁決）。
+- [docs/strategies/](docs/strategies/) — 各策略 Strategy Thesis（看結果前寫死）。
+- [tw-swing-trading-mvp-implementation-plan.md](docs/planning/tw-swing-trading-mvp-implementation-plan.md) - 核心業務規則與決策記錄。
+- [multi_strategy_plan.md](docs/planning/multi_strategy_plan.md) - 多策略架構設計與風險評估規劃書 (v3)。
 
 ---
 
@@ -101,9 +113,11 @@ MVP 核心功能、首批架構缺陷修正、排程安全強化、與多策略�
    - MANUAL／長期持倉**不會被 risk_exit 自動賣出**。要讓某策略賣出，須在補錄成交時以 `--strategy-id` 歸入具 `exit:` 區塊的策略；要試算「若交由某策略管理會否觸發」可用 `trade exit-check`（dry-run、唯讀）；要把手動持倉永久免除自動出場可用 `trade set-long-term`。目前沒有「將既有 MANUAL 部位永久轉歸某策略並自動賣出」的工具（與長期持有需求相衝，刻意不做）。
 2. **撮合模型與公司行動限制**:
    - 零股與整張股票採用相同的成交滑價模型；未追蹤除權息等公司行動（會使加權均價與 `position_high_watermarks` 失真，多策略上線後此風險被放大）；缺乏詳細的排程異常告警閉環。
-3. **進場策略相關性高**:
-   - `trend_breakout` 與 `pullback_rebound` 皆為 long-only 順勢策略，大盤 60MA 濾網可規避空頭但無法規避高檔盤整鈍刀；中期方向為波動率/盤整偵測濾網或防禦型第三策略。
-4. **舊 `trend_pullback` 授權檔 digest 不一致（升級前即存在）**:
+3. **進場策略相關性高 + 上升趨勢低捕獲**:
+   - `trend_breakout` 與 `pullback_rebound` 皆為 long-only 順勢策略，大盤 60MA 濾網可規避空頭但無法規避高檔盤整鈍刀。真實回測（2018-2026）另證實：兩支在持續上升趨勢中**嚴重低捕獲**（緊出場太早砍贏家，2024 AI 年幾乎零捕獲）。研究 Challenger `trend_rider`（讓贏家跑）即針對此缺口，但尚未上線/未證實 edge。
+4. **尚未證實任何策略「會賺錢」（最重要的研究限制）**:
+   - 今日固定 21 檔 universe 是 **diagnostic（非 PIT）**，回測只能判 `INVALID`，只能淘汰、不能晉級。所有 diagnostic 回測的**報酬數字受後見之明/survivorship bias 污染**（手挑已知大贏家），不可當賺錢證據。可信的只有「不受標的池影響」的結構面（崩盤防守、成本占比）。要正式裁決需 PIT universe（見 plan R-T4b）。
+5. **舊 `trend_pullback` 授權檔 digest 不一致（升級前即存在）**:
    - `artifacts/approvals/approval-trend_pullback-20260610202219.json` 的 digest 與其內容不符（preflight 顯示 INVALID）。該策略已退役且 SELL 不受授權閘門影響，無實際風險；存量倉位出清後可清理。
 
 ---

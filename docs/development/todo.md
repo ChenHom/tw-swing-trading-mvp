@@ -56,7 +56,16 @@
 - 🔄 **F1 施工記錄維護**：每次開發變更記於 `engineering-log.md`。
 - ⬜ **F2 施工記錄封裝為 skill / MCP**：待 UI 建置完成後，自動產出開發記錄（目前手動 md）。詳見記憶 `ui-requirements`。
 
+## G. 研究回測 / 策略驗證（Phase 0/1/2 + R；詳見 plan `2455-cosmic-fountain.md`）
+
+- ✅ **誠實回測實驗室 milestone**（2026-06-23，311 tests）：Phase 0（雙價/CA 帳本、FinMind/TWSE provider、PIT universe 骨架）+ Phase 1（風險/穩健指標、四 benchmark、五級裁決）+ Phase 2（Thesis/Research Ledger/lockbox/參數高原）首度在**真實資料**上跑通。回補 research.db（44,959 bars, 2018-2026, 含 2022）、修 3 個整合 bug。commits `277c096`/`08b09a5`/`4cdd1d3`。
+- ✅ **trend_rider「順勢交易者」Challenger**（2026-06-23）：「讓贏家跑」exit config（不動現役兩支）。回測亮眼（+121.9%/Sharpe 1.20/成本 5.6%、崩盤防守保住）但 **+122% 受後見之明污染、報酬 edge 未證實**。
+- ✅ **儀表板 UI**：持倉部位加「最後收盤」欄 + 策略別損益顯示中文名（commit `443ce86`）。
+- 🔄 **R-T4b Track 1 — trend_rider 影子上線驗證**：per-account 策略範圍（simulation-main 跑、國泰維持兩支不污染），累積零偏差 forward 證據。**lean、優先**。
+- ⬜ **R-T4b Track 2 — PIT 流動性排名 universe**：消除後見之明/survivorship（方案 B 流動性 top-N、下市股可查）→ 解 fingerprint 寫死 diagnostic、backtest 接 policy + per-date universe → 首個非 INVALID 裁決。**較重、後排**。
+- ⬜ **backtest 冪等**：signal `bundle_id` 改 run-scoped（現以 copy-per-run 繞過）。
+
 ---
 
 ### 關聯記憶
-`ceo-review-golive-2026-06-14`、`multi-strategy-rollout-state`、`ui-requirements`、`record-fill-strategy-attribution`、`discord-alert-config`。
+`goal-validate-profit`、`manual-only-execution`、`ceo-review-golive-2026-06-14`、`multi-strategy-rollout-state`、`ui-requirements`、`record-fill-strategy-attribution`、`discord-alert-config`。

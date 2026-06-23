@@ -357,9 +357,45 @@ tail -n 50 logs/daily_sim.log
 
 ## 7. 測試與驗證
 
-本專案使用 `pytest` 進行完整的單元與整合測試，包含 Shioaji 行情模組測試、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、長期持有與 FIFO 隔離、資金配置與超額分配優化、排程安全（非互動帳戶解析、file lock、MANUAL_IMPORT 來源標記）、訊號拒絕閘門等共計 **67 個測試案例**。
+本專案使用 `pytest` 進行完整的單元與整合測試，涵蓋 Shioaji 行情、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、長期持有與 FIFO 隔離、資金配置、排程安全、訊號拒絕閘門，以及研究回測層（雙價/CA 帳本、FinMind/TWSE provider、風險/穩健指標、裁決狀態機、Research Ledger、lockbox、參數高原）等共計 **311 個測試案例**。
 
 執行所有測試：
 ```bash
 python3 -m pytest
 ```
+
+---
+
+## 8. 研究回測（Research Backtest，Phase 0/1/2 + R）
+
+live 每日流程（上述）負責「能不能穩定執行」；研究回測層負責「**這策略到底會不會賺錢**」。研究資料與 live 完全隔離：寫 `data/research.db`，不碰 `data/app.db`。
+
+### 工作流
+
+```bash
+# 1. 回補真實深歷史（FinMind 主，含 2022 完整空頭）→ data/research.db
+python3 app.py market backfill-history --from 2018-01-01 --to 2026-06-22 \
+  --symbols "TSE,0050,2330,2317,..." --db data/research.db --source finmind
+
+# 2. 在 research.db 上回測（--db 指向研究庫；研究庫當資料母版、建議 copy-per-run 避免重跑碰撞）
+cp data/research.db data/_run.db
+python3 app.py backtest run --db data/_run.db --from 2018-01-01 --to 2026-06-22 \
+  --strategy trend_rider --initial-cash 300000
+# 報告落 artifacts/reports/backtest/（gitignored，可重現）
+```
+
+### 量尺與裁決（看結果前寫死，不可事後人工裁切）
+
+- **指標**：CAGR/Sharpe/Sortino/Calmar、對 0050 Beta/Alpha、三種回撤、PF/Expectancy、四條 benchmark（0050 buy-hold / 同曝險 / 同波動 / 等權 universe）、報酬分層、DSR/block bootstrap/Herfindahl、有效樣本數 gate、成本占比、分年表。
+- **五級裁決**：`INVALID / REJECTED / RESEARCH_PASS / SHADOW_PASS / CAPITAL_APPROVED`。**今日固定 21 檔 universe 是 diagnostic（非 PIT）→ 結果只能標 `INVALID`+`diagnostic_result`，只能淘汰爛策略、不能晉級**。要拿 `RESEARCH_PASS` 必須改用 PIT universe（policy 驅動、含下市股、流動性條件只用 ≤D 資料）。
+- **治理工具**：Strategy Thesis（`docs/strategies/<id>.md`）、Research Ledger（append-only、餵 DSR 試驗次數）、家族級 lockbox（只開一次）、參數高原掃描（不取單點最佳）。
+
+### 現役策略（live）vs Challenger（研究中）
+
+| strategy_id | 中文名 | 角色 | 出場特性 |
+|---|---|---|---|
+| `trend_breakout` | 趨勢帶量突破 | live | risk_exit 四層（緊停損 -7%、時間停損 20 日） |
+| `pullback_rebound` | 回檔轉強 | live | risk_exit 四層（緊停損 -5%） |
+| `trend_rider` | 順勢交易者 | **研究 Challenger（未上線交易）** | 「讓贏家跑」：寬移動停利 -25%、長均線跌破、**停用時間停損** |
+
+> ⚠️ 回測在 diagnostic universe 上的報酬數字（含 trend_rider 亮眼的 +122%）**受後見之明/survivorship bias 污染**，不可當賺錢證據。可信的是「不受標的池影響」的結構面（崩盤防守、成本占比）。正式裁決待 PIT universe（見 plan `2455-cosmic-fountain.md` R-T4b）。

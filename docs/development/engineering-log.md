@@ -9,6 +9,42 @@
 
 ---
 
+## 2026-06-23 ｜ 誠實回測實驗室 + trend_rider「順勢交易者」Challenger（Phase 0/1/2 + R）
+
+**背景／觸發**：使用者把目標釐清為「**建策略 → 回測 → 驗證是否真的賺錢 → 持續優化**」。盤點發現一個致命現況：Phase 0/1/2 的回測機器（305 tests）**全是合成單元測試、從未在真實資料上跑過**，`research.db` 根本不存在。對「會不會賺錢」這個問題，系統連 step 0 都沒踏出。
+
+**Phase 0/1/2（先前已寫、本次首度真實驗證）**：雙價/CA 帳本 + FinMind/TWSE provider + PIT universe 骨架（Phase 0）；風險/結構指標、四條 benchmark、報酬分層、DSR/bootstrap/Herfindahl/有效N gate、成本占比、分年表、五級裁決狀態機（Phase 1）；Strategy Thesis、Research Ledger、家族級 lockbox、參數高原掃描（Phase 2）。
+
+**Phase R（讓回測在真實資料上跑起來）**：
+- `backtest run` 加 `--db`（指向 `research.db`，預設仍 `app.db` 不破壞 live）。
+- 跑 `market backfill-history` 回補真實歷史 → research.db（**44,959 bars, 2018-2026, 25 檔, 含 2022 完整空頭**；196 現金股利+9 股票股利）。
+- 端到端真跑暴出 **3 個合成單測沒抓到的整合 bug**：① fingerprint `set(dict)` TypeError（index_symbols 是 dict，改取 code）② TSE 加權指數 FinMind data_id 要用 `TAIEX`（加 alias，落帳仍存 `TSE`）③ approval 時效閘擋掉歷史回放（backtest mode 跳過 valid_from/expires_at，保留 digest/issuer/revocation/mode）。
+- **另發現**：backtest 在共用 db 上**非冪等**（signal `bundle_id` 非 run-scoped，重跑碰撞）→ 暫以「research.db 當資料母版、copy-per-run」繞過。
+
+**三支策略真實數字（2018-2026, 8.5年, diagnostic universe → 仍 INVALID 但數字真實）**：
+| 指標 | trend_breakout | pullback_rebound | trend_rider |
+|---|---|---|---|
+| 總報酬 / Sharpe | +32.9% / 0.49 | +44.2% / 0.82 | **+121.9% / 1.20** |
+| maxDD / 交易數 / PF | 14.6% / 388 / 1.54 | 9.4% / 410 / 1.89 | 10.5% / **113** / **3.92** |
+| 成本占毛利 | 34.3% | 29.2% | **5.6%** |
+| COVID / 2022 / 2024 | −0.5%/−3.6%/−2.4% | −1.8%/−3.3%/+6.4% | −2.8%/−1.2%/**+6.9%** |
+
+**誠實解讀**：① 兩支現役策略的真 edge 是**防守**（COVID 急殺 0050 −26%、2022 緩跌 −25%，策略都只虧 ~3%，靠 index 60MA 濾網 + 停損，非運氣）。② 結構缺陷在「持續上升趨勢」被放到最大——2024 AI 大年個股 +30~114%，現役策略幾乎零捕獲。③ 故新增 **trend_rider「順勢交易者」**（reuse risk_exit 引擎、零引擎改動，純靠 exit config「讓贏家跑」：寬移動停利 −25%、長均線跌破、停用時間停損；保留 index 60MA 濾網作崩盤防守）。
+
+**trend_rider 結果與紀律警告**：成本剩 5.6%（交易少）、崩盤防守保住、Sharpe 1.20——這些是**不受標的池偏差影響的結構性勝利**。但 **+121.9% 是全研究最受後見之明污染的數字**（「讓贏家跑」套在「今天才挑、已知 2330/2454 漲 10~14x 的籃子」上必然超好看；HHI 最高、去最佳 5 筆只留 22%）。**報酬 edge 未證實**，需真 PIT universe 才能公平裁決。
+
+**為什麼這樣動 / 紀律**：trend_rider 參數依標準趨勢跟蹤慣例**設死、不為補抓已看過的 2024 調參**（過擬合＝違反 S4 一次性）；Strategy Thesis 看結果前寫死；新 strategy_id、**不動現役兩支**（Champion/Challenger 分離）。
+
+**UI**：儀表板「持倉部位」加「最後收盤」欄；「策略別損益」改顯示策略中文名 + ⓘ tooltip（reuse `strategy_names` 對照）。
+
+**驗證**：全套件 **311 passed**。三支各產出 `artifacts/reports/backtest/` 報告、數字自洽、裁決＝INVALID+diagnostic_result（今日 universe 非 PIT）。
+
+**關聯 commit**：`277c096`（Phase 0 資料地基）、`08b09a5`（Phase 1+2 量尺與治理）、`4cdd1d3`（Phase R + trend_rider）、`443ce86`（UI 最後收盤 + 策略中文名）。
+
+**遺留 / 下一段（R-T4b，見 plan `2455-cosmic-fountain.md`）**：Track 1 — trend_rider 影子上線驗證（per-account 策略範圍，simulation-main 跑、國泰不污染，累積零偏差 forward 證據）；Track 2 — PIT 流動性排名 universe（消除後見之明：方案A 指數成分史不可行/付費，方案B 流動性排名可行，**下市股歷史可查 → survivorship 可消除**）；其餘問題：backtest 非冪等、成本歸因、fingerprint 解除 diagnostic 寫死、backtest per-date universe。
+
+---
+
 ## 2026-06-15（夜）｜ 掛 cron（A3）+ E1 拆 src/cli.py（2053→cli 套件）
 
 **背景／觸發**：go-live 關鍵路徑已轉為使用者操作 + 時間（B1 三交易日），趁等影子空窗清 CEO review #1 技術債（cli.py churn 之冠）。使用者另指示：C1 Web 寫入**不加**（守唯讀 gate）、cron 交我掛。
