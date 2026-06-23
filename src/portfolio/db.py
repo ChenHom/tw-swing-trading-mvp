@@ -18,6 +18,9 @@ def init_db(db_path: str) -> None:
     cursor = conn.cursor()
     
     # 1. market_bars
+    # PK 維持原 4 欄（live upsert() 的 ON CONFLICT 目標不變，行為不受影響）。canonical bar
+    # 不變式改用獨立 UNIQUE INDEX：(symbol, trade_date, price_basis) 唯一——research 寫入路徑
+    # upsert_canonical() 以此為 ON CONFLICT 目標；任一來源重複寫入同一 (symbol,date,basis) 視為更新。
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS market_bars (
         symbol TEXT NOT NULL,
@@ -35,6 +38,8 @@ def init_db(db_path: str) -> None:
         is_complete INTEGER NOT NULL,
         source_fetched_at TEXT NOT NULL,
         raw_payload_checksum TEXT NOT NULL,
+        price_basis TEXT NOT NULL DEFAULT 'raw',
+        adjustment_factor REAL NOT NULL DEFAULT 1.0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (symbol, exchange, trade_date, source)
@@ -261,6 +266,10 @@ def init_db(db_path: str) -> None:
         stock_ratio REAL,
         source TEXT NOT NULL,
         memo TEXT,
+        effective_date TEXT,
+        known_at TEXT,
+        ingested_at TEXT,
+        source_payload_hash TEXT,
         created_at TEXT NOT NULL
     );
     """)
@@ -333,6 +342,33 @@ def init_db(db_path: str) -> None:
     if "memo" not in cash_ledger_columns:
         cursor.execute("ALTER TABLE cash_ledger ADD COLUMN memo TEXT;")
 
+    # Migration: dual-price model on market_bars (raw vs adjusted canonical bars).
+    # Pre-existing rows default to price_basis='raw', adjustment_factor=1.0 — identical to
+    # current live semantics (Shioaji bars are always raw), so no behavior change.
+    cursor.execute("PRAGMA table_info(market_bars);")
+    market_bar_columns = [row["name"] for row in cursor.fetchall()]
+    if "price_basis" not in market_bar_columns:
+        cursor.execute("ALTER TABLE market_bars ADD COLUMN price_basis TEXT NOT NULL DEFAULT 'raw';")
+    if "adjustment_factor" not in market_bar_columns:
+        cursor.execute("ALTER TABLE market_bars ADD COLUMN adjustment_factor REAL NOT NULL DEFAULT 1.0;")
+    cursor.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_market_bars_canonical
+    ON market_bars (symbol, trade_date, price_basis);
+    """)
+
+    # Migration: PIT timestamps + integrity hash on corporate_actions (research ledger needs
+    # known_at to gate "as of D" replay against events not yet public on D).
+    cursor.execute("PRAGMA table_info(corporate_actions);")
+    corp_action_columns = [row["name"] for row in cursor.fetchall()]
+    if "effective_date" not in corp_action_columns:
+        cursor.execute("ALTER TABLE corporate_actions ADD COLUMN effective_date TEXT;")
+    if "known_at" not in corp_action_columns:
+        cursor.execute("ALTER TABLE corporate_actions ADD COLUMN known_at TEXT;")
+    if "ingested_at" not in corp_action_columns:
+        cursor.execute("ALTER TABLE corporate_actions ADD COLUMN ingested_at TEXT;")
+    if "source_payload_hash" not in corp_action_columns:
+        cursor.execute("ALTER TABLE corporate_actions ADD COLUMN source_payload_hash TEXT;")
+
     # Migration: human-readable reason / status note on order_intents (revived for the
     # "next execution" plan persisted at signal-generation time; BLOCKED rows carry the
     # block reason here).
@@ -340,6 +376,100 @@ def init_db(db_path: str) -> None:
     order_intent_columns = [row["name"] for row in cursor.fetchall()]
     if "reason" not in order_intent_columns:
         cursor.execute("ALTER TABLE order_intents ADD COLUMN reason TEXT;")
+
+    # universe_policy (research.db)：PIT 標的池治理（policy 驅動，非固定清單）。
+    # 今日固定 21 檔只能以 policy_version 含 'diagnostic' 入帳 — 該前綴是 S1 的程式層
+    # 防線：RESEARCH_PASS 必須改用非 diagnostic 的 PIT policy（見 universe_policy.py）。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS universe_policy (
+        policy_version TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        effective_from TEXT NOT NULL,
+        effective_to TEXT,
+        known_at TEXT NOT NULL,
+        inclusion_reason TEXT,
+        exclusion_reason TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (policy_version, symbol, effective_from)
+    );
+    """)
+
+    # run_fingerprints：每次 backtest run 落地 14 欄版本指紋（P0-T8），
+    # 同指紋應重現同結果；可追溯結果差異來自資料修正/程式變動/參數變動。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS run_fingerprints (
+        run_id TEXT PRIMARY KEY,
+        dataset_hash TEXT NOT NULL,
+        data_cutoff TEXT NOT NULL,
+        universe_snapshot_id TEXT NOT NULL,
+        corporate_action_version TEXT NOT NULL,
+        cost_model_version TEXT NOT NULL,
+        strategy_version TEXT NOT NULL,
+        params_hash TEXT NOT NULL,
+        code_commit TEXT NOT NULL,
+        random_seed INTEGER,
+        engine_version TEXT NOT NULL,
+        config_hash TEXT NOT NULL,
+        trading_calendar_version TEXT NOT NULL,
+        source_payload_manifest_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """)
+
+    # regime_gate_thresholds：S1 裁決（P1-T7）的 regime gate 門檻，須在看到任何 backtest
+    # 結果前寫入——事後依結果回填等於沒有 gate。無對應列的策略一律 INVALID。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS regime_gate_thresholds (
+        strategy_id TEXT NOT NULL,
+        strategy_version TEXT NOT NULL,
+        regime_definition_version TEXT NOT NULL,
+        max_regime_drawdown REAL NOT NULL,
+        min_expectancy_ci_lower REAL NOT NULL,
+        max_bear_underperformance REAL NOT NULL,
+        min_effective_sample_size INTEGER NOT NULL,
+        max_profit_concentration REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (strategy_id, strategy_version)
+    );
+    """)
+
+    # research_ledger：append-only 研究嘗試紀錄（P2-T2）——失敗/棄用版本不刪，
+    # 餵 DSR（backtest.py _deflated_sharpe_ratio）的 num_trials。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS research_ledger (
+        entry_id TEXT PRIMARY KEY,
+        strategy_id TEXT NOT NULL,
+        strategy_version TEXT NOT NULL,
+        params_hash TEXT NOT NULL,
+        run_id TEXT,
+        status TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL
+    );
+    """)
+
+    # data_partition_policy + lockbox_openings：四種資料分離 + 家族級 Final lockbox（P2-T3）。
+    # strategy_family 沿用 strategy_id（同策略不同版本天然同家族）。切界日期看結果前寫死，
+    # 同 family 第二次 INSERT 不覆寫既有切界；lockbox_openings 以 PK 擋「只開一次」。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS data_partition_policy (
+        strategy_family TEXT PRIMARY KEY,
+        training_end_date TEXT NOT NULL,
+        walkforward_end_date TEXT NOT NULL,
+        lockbox_end_date TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS lockbox_openings (
+        strategy_family TEXT PRIMARY KEY,
+        opened_at TEXT NOT NULL,
+        opened_by_strategy_version TEXT NOT NULL,
+        opened_by_run_id TEXT NOT NULL,
+        reason TEXT,
+        created_at TEXT NOT NULL
+    );
+    """)
 
     conn.commit()
     conn.close()

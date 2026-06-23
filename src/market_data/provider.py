@@ -86,6 +86,14 @@ class ShioajiMarketDataProvider:
         "TSE": ("TSE", "001"),  # 加權指數 (TAIEX)
     }
 
+    def resolve_name(self, symbol: str) -> str:
+        """回傳代碼的官方中文名；查無（下市/指數/不存在）回空字串。"""
+        api = self._get_api()
+        try:
+            return getattr(api.Contracts.Stocks[symbol], "name", "") or ""
+        except (KeyError, AttributeError):
+            return ""
+
     def fetch_kbars(
         self,
         symbol: str,

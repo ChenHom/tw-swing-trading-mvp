@@ -504,6 +504,15 @@ class PortfolioProjection:
                 self._apply_cash_dividend(cursor, account_id, action)
             elif action["action_type"] == "STOCK_DIVIDEND":
                 self._apply_stock_dividend(cursor, account_id, action)
+            elif action["action_type"] == "SPLIT":
+                # 拆股對股數/成本/停損基準的調整與股票股利數學等價
+                # （qty 乘 factor、price 除 factor）；差異只在「無償配股」框架語意。
+                # stock_ratio 在此代表拆股後總股數倍數（例 2.0 = 1股拆2股），
+                # 故轉換為 _apply_stock_dividend 的「增量比例」(factor - 1) 重用同一套邏輯。
+                split_action = {**action, "stock_ratio": action["stock_ratio"] - 1}
+                self._apply_stock_dividend(cursor, account_id, split_action)
+            elif action["action_type"] == "CAPITAL_REDUCTION":
+                self._apply_capital_reduction(cursor, account_id, action)
 
     def _apply_cash_dividend(self, cursor, account_id: str, action: dict) -> None:
         """套用現金股利：price -= cash_per_share，watermark -= cash_per_share，現金 += qty * cash_per_share。"""
@@ -760,3 +769,135 @@ class PortfolioProjection:
                     new_close,
                 )
             )
+
+    def _apply_capital_reduction(self, cursor, account_id: str, action: dict) -> None:
+        """套用減資：qty *= ratio、price /= ratio（維持市值與停損基準連續性）。
+
+        ratio = 減資後/減資前股數比例（例 0.7 = 減資 30%）。若帶 cash_per_share（現金減資退還，
+        以減資前股數計算），額外入帳現金；彌補虧損減資則 cash_per_share 為 None，無現金流出。
+        """
+        symbol = action["symbol"]
+        ratio = action["stock_ratio"]
+        cash_per_share = action.get("cash_per_share")
+        action_id = action["action_id"]
+
+        cursor.execute(
+            "SELECT lot_id, quantity, price, strategy_id, is_long_term FROM position_lots WHERE account_id = ? AND symbol = ?",
+            (account_id, symbol)
+        )
+        lots = [dict(row) for row in cursor.fetchall()]
+
+        for lot in lots:
+            lot_id = lot["lot_id"]
+            old_qty = lot["quantity"]
+            old_price = lot["price"]
+            new_qty = int(old_qty * ratio)
+            new_price = int(old_price / ratio)
+            strategy_id = lot["strategy_id"]
+            cancelled_qty = old_qty - new_qty
+
+            cursor.execute(
+                "UPDATE position_lots SET quantity = ?, price = ? WHERE lot_id = ?",
+                (new_qty, new_price, lot_id)
+            )
+
+            # 合成 SELL fill（註銷股數），使 reconcile 的 fills 淨額 ↔ position_lots 數量維持平衡
+            # （與 _apply_stock_dividend 的合成 BUY fill 同一套手法，方向相反）。
+            if cancelled_qty > 0:
+                synth_fill_id = f"CAPITAL_REDUCTION_{action_id}_{lot_id}"
+                cursor.execute(
+                    """
+                    INSERT INTO fills
+                    (fill_id, account_id, run_id, order_id, execution_key, symbol, side,
+                     quantity, price, filled_at, created_at, is_long_term, source, strategy_id)
+                    VALUES (?, ?, ?, ?, ?, ?, 'SELL', ?, ?, ?, datetime('now'), ?, 'CORP_ACTION', ?)
+                    """,
+                    (
+                        synth_fill_id, account_id, f"corp-{action_id}",
+                        f"corp-order-{action_id}-{lot_id}", synth_fill_id, symbol,
+                        cancelled_qty, new_price, action["ex_date"], lot["is_long_term"], strategy_id,
+                    )
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO position_cost_adjustments
+                (adjustment_id, action_id, account_id, strategy_id, symbol, lot_id, field,
+                 before_value, after_value, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'LOT_QUANTITY', ?, ?, datetime('now'))
+                """,
+                (uuid.uuid4().hex, action_id, account_id, strategy_id, symbol, lot_id, old_qty, new_qty)
+            )
+            cursor.execute(
+                """
+                INSERT INTO position_cost_adjustments
+                (adjustment_id, action_id, account_id, strategy_id, symbol, lot_id, field,
+                 before_value, after_value, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'LOT_PRICE', ?, ?, datetime('now'))
+                """,
+                (uuid.uuid4().hex, action_id, account_id, strategy_id, symbol, lot_id, old_price, new_price)
+            )
+
+        # watermark 同步調整（移動停利停損基準）
+        cursor.execute(
+            """
+            SELECT account_id, strategy_id, symbol, trade_date, highest_close
+            FROM position_high_watermarks WHERE account_id = ? AND symbol = ?
+            """,
+            (account_id, symbol)
+        )
+        for wm in [dict(row) for row in cursor.fetchall()]:
+            old_close = wm["highest_close"]
+            new_close = int(old_close / ratio)
+            cursor.execute(
+                """
+                UPDATE position_high_watermarks SET highest_close = ?
+                WHERE account_id = ? AND strategy_id = ? AND symbol = ? AND trade_date = ?
+                """,
+                (new_close, wm["account_id"], wm["strategy_id"], wm["symbol"], wm["trade_date"])
+            )
+            cursor.execute(
+                """
+                INSERT INTO position_cost_adjustments
+                (adjustment_id, action_id, account_id, strategy_id, symbol, field,
+                 before_value, after_value, created_at)
+                VALUES (?, ?, ?, ?, ?, 'WATERMARK', ?, ?, datetime('now'))
+                """,
+                (uuid.uuid4().hex, action_id, wm["account_id"], wm["strategy_id"], symbol, old_close, new_close)
+            )
+
+        # 現金退還（僅現金減資；彌補虧損減資無此欄，cash_per_share 以減資前股數計算）
+        if lots and cash_per_share:
+            total_cash_back = sum(lot["quantity"] * cash_per_share for lot in lots) // 10000
+            if total_cash_back > 0:
+                cursor.execute(
+                    """
+                    INSERT INTO cash_ledger
+                    (ledger_id, account_id, run_id, event_type, amount, currency,
+                     source_type, source_id, occurred_at, idempotency_key, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    """,
+                    (
+                        uuid.uuid4().hex, account_id, "CORP_ACTION", "CAPITAL_REDUCTION_CASH",
+                        total_cash_back, "TWD", "CORPORATE_ACTION", action_id,
+                        action["ex_date"], f"{action_id}:{symbol}:{account_id}",
+                    )
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO cash_balances (account_id, balance, currency, updated_at)
+                    VALUES (?, ?, 'TWD', datetime('now'))
+                    ON CONFLICT(account_id) DO UPDATE SET
+                        balance = balance + ?, updated_at = datetime('now')
+                    """,
+                    (account_id, total_cash_back, total_cash_back)
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO position_cost_adjustments
+                    (adjustment_id, action_id, account_id, strategy_id, symbol, field,
+                     before_value, after_value, created_at)
+                    VALUES (?, ?, ?, '', ?, 'CASH', 0, ?, datetime('now'))
+                    """,
+                    (uuid.uuid4().hex, action_id, account_id, symbol, total_cash_back)
+                )

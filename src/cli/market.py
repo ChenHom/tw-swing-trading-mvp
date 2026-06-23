@@ -68,6 +68,80 @@ def cmd_market_backfill(args):
     conn.close()
 
 
+def cmd_market_backfill_history(args):
+    """research.db 深歷史回補（P0-T9）：FinMind 主 + 證交所補缺口，canonical raw bar + 股利事件。"""
+    from src.config import SymbolConfig
+    from src.market_data.finmind_provider import FinMindProvider
+    from src.market_data.twse_provider import TwseProvider
+
+    settings = common.get_settings()
+    db_path = args.db or "data/research.db"
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    repo = SqliteMarketBarRepository(conn)
+    calendar = ExchangeCalendarsTradingCalendar()
+
+    start_date = date.fromisoformat(args.start_date)
+    end_date = date.fromisoformat(args.end_date)
+    sessions = set(calendar.sessions_between(start_date, end_date))
+
+    if args.symbols:
+        codes = [c.strip() for c in args.symbols.split(",") if c.strip()]
+        known = {s.code: s for s in list(settings.universe.symbols) + list(settings.universe.indices)}
+        symbol_specs = [known.get(c, SymbolConfig(code=c, exchange="TSE", instrument_type="STOCK")) for c in codes]
+    else:
+        symbol_specs = list(settings.universe.indices) + list(settings.universe.symbols)
+
+    finmind = FinMindProvider() if args.source in ("finmind", "auto") else None
+    twse = TwseProvider() if args.source in ("twse", "auto") else None
+
+    excluded_symbols = []
+    fetched_counts = {}
+
+    for spec in symbol_specs:
+        symbol, exchange, instrument_type = spec.code, spec.exchange, spec.instrument_type
+        print(f"Backfilling {symbol} ({exchange}/{instrument_type}) {start_date} ~ {end_date}...")
+        bars_by_date = {}
+
+        if finmind is not None:
+            for bar in finmind.fetch_raw_price(symbol, start_date, end_date, exchange, instrument_type):
+                bars_by_date[bar.trade_date] = bar
+
+        missing = sessions - set(bars_by_date.keys())
+        if twse is not None and (args.source == "twse" or missing):
+            for bar in twse.fetch_range(symbol, start_date, end_date, exchange, instrument_type):
+                bars_by_date.setdefault(bar.trade_date, bar)
+
+        for bar in bars_by_date.values():
+            repo.upsert_canonical(bar)
+        fetched_counts[symbol] = len(bars_by_date)
+        if not bars_by_date:
+            excluded_symbols.append(symbol)
+
+        if finmind is not None:
+            for action in finmind.fetch_dividend_events(symbol, start_date, end_date):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO corporate_actions
+                    (action_id, symbol, action_type, ex_date, cash_per_share, stock_ratio,
+                     source, effective_date, known_at, ingested_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                    """,
+                    (
+                        action["action_id"], action["symbol"], action["action_type"], action["ex_date"],
+                        action.get("cash_per_share"), action.get("stock_ratio"), action["source"],
+                        action.get("effective_date"), action.get("known_at"),
+                    )
+                )
+            conn.commit()
+
+    print(f"\n回補完成：{len(symbol_specs)} 檔 x {len(sessions)} 交易日窗。")
+    for symbol, count in fetched_counts.items():
+        print(f"  {symbol}: {count}/{len(sessions)} 筆")
+    print(f"剔除清單（整窗無任何資料）：{', '.join(excluded_symbols) if excluded_symbols else '（無）'}")
+    conn.close()
+
+
 def cmd_market_sync(args):
     settings = common.get_settings()
     init_db(settings.trading.database_path)

@@ -27,8 +27,30 @@ class MarketBar(BaseModel):
     is_complete: int = 1
     source_fetched_at: str
     raw_payload_checksum: str
+    # 雙價模型：同一 (symbol, trade_date) 在 research.db 可有 raw 與 adjusted 兩筆 canonical bar。
+    # price_basis='raw' 時 open/high/low/close 為原始成交價；'adjusted' 時為還原權值後價格，
+    # adjustment_factor 為該日對 raw 的累積還原因子（adjusted = raw * adjustment_factor）。
+    price_basis: Literal["raw", "adjusted"] = "raw"
+    adjustment_factor: float = 1.0
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+class CorporateAction(BaseModel):
+    action_id: str
+    symbol: str
+    action_type: Literal["CASH_DIVIDEND", "STOCK_DIVIDEND", "SPLIT", "CAPITAL_REDUCTION"]
+    ex_date: date
+    cash_per_share: Optional[int] = None  # 元 x 10000
+    stock_ratio: Optional[float] = None
+    source: str
+    memo: Optional[str] = None
+    # PIT 時間語意：effective_date 為調整生效日（多數情況=ex_date）；known_at 為此事件
+    # 「公開可得」的時間點——回測 D 日只能讀 known_at <= D 的事件，避免用到日後才公告的公司行動。
+    effective_date: Optional[date] = None
+    known_at: Optional[str] = None
+    ingested_at: Optional[str] = None
+    source_payload_hash: Optional[str] = None
+    created_at: Optional[str] = None
 
 # Strategy parameters model (defined in section 9.3)
 class TrendPullbackParams(BaseModel):
@@ -73,6 +95,19 @@ class PullbackReboundParams(BaseModel):
     pullback_touch_buffer_bps: int = Field(default=200, ge=0, le=1000)  # low <= sma_short * 1.02
     index_ma_period: int = Field(default=60, ge=5)
     order_budget_twd: int = Field(default=20000, ge=1000)
+
+
+class TrendRiderParams(BaseModel):
+    """趨勢騎乘（讓贏家跑）進場參數。進場選「確立的中期上升趨勢」，出場交 risk_exit 以
+    寬鬆 exit config 實現「讓贏家跑」（time_stop 停用、寬移動停利、長均線跌破）。
+    保留 index 60MA 濾網作崩盤防守。"""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    trend_ma_period: int = Field(default=60, ge=5)          # close 須在此上升均線之上
+    breakout_lookback_days: int = Field(default=60, ge=10)  # 創 N 日新高＝確立趨勢（較 breakout 的 20 長）
+    index_ma_period: int = Field(default=60, ge=5)          # 大盤多頭濾網（崩盤防守）
+    order_budget_twd: int = Field(default=20000, ge=1000)
+
 
 class StrategyInfo(BaseModel):
     strategy_id: str

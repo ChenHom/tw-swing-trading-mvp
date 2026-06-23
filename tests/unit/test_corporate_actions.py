@@ -178,3 +178,67 @@ def test_reconcile_ok_after_stock_dividend(clean_db):
 
     assert proj.reconcile(account_id)["status"] == "RECONCILE_OK"
     conn.close()
+
+
+def test_split_adjustment(clean_db):
+    """拆股（1股拆2股，stock_ratio=2.0）：qty 倍增、price 減半，watermark 同步，reconcile 仍 OK。"""
+    conn, account_id, proj = clean_db
+
+    action = {
+        "action_id": "act-split-1", "symbol": "2330", "action_type": "SPLIT",
+        "ex_date": "2026-06-25", "stock_ratio": 2.0,
+    }
+    proj.apply_corporate_action(account_id, action)
+
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(quantity) as qty FROM position_lots WHERE account_id = ? AND symbol = '2330'", (account_id,))
+    assert cursor.fetchone()["qty"] == (100 + 50) * 2  # 原 150 股 -> 300 股
+
+    cursor.execute("SELECT price FROM position_lots WHERE fill_id = 'f1'")
+    assert cursor.fetchone()["price"] == int(1000000 / 2.0)
+
+    cursor.execute("SELECT highest_close FROM position_high_watermarks WHERE account_id = ?", (account_id,))
+    assert cursor.fetchone()["highest_close"] == int(1000000 / 2.0)
+
+    assert proj.reconcile(account_id)["status"] == "RECONCILE_OK"
+    conn.close()
+
+
+def test_capital_reduction_loss_offsetting(clean_db):
+    """彌補虧損減資（無現金退還，stock_ratio=0.7）：qty 減少、price 增加維持市值，現金不變。"""
+    conn, account_id, proj = clean_db
+
+    action = {
+        "action_id": "act-cr-1", "symbol": "2330", "action_type": "CAPITAL_REDUCTION",
+        "ex_date": "2026-06-25", "stock_ratio": 0.7,
+    }
+    cash_before = proj.get_cash_balance(account_id)
+    proj.apply_corporate_action(account_id, action)
+
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(quantity) as qty FROM position_lots WHERE account_id = ? AND symbol = '2330'", (account_id,))
+    assert cursor.fetchone()["qty"] == int(150 * 0.7)
+
+    cursor.execute("SELECT price FROM position_lots WHERE fill_id = 'f1'")
+    assert cursor.fetchone()["price"] == int(1000000 / 0.7)
+
+    assert proj.get_cash_balance(account_id) == cash_before  # 無現金退還
+    assert proj.reconcile(account_id)["status"] == "RECONCILE_OK"
+    conn.close()
+
+
+def test_capital_reduction_cash_back(clean_db):
+    """現金減資（退還現金，stock_ratio=0.7、cash_per_share=每股退 5 元）：現金入帳 + reconcile OK。"""
+    conn, account_id, proj = clean_db
+
+    action = {
+        "action_id": "act-cr-2", "symbol": "2330", "action_type": "CAPITAL_REDUCTION",
+        "ex_date": "2026-06-25", "stock_ratio": 0.7, "cash_per_share": 50000,
+    }
+    cash_before = proj.get_cash_balance(account_id)
+    proj.apply_corporate_action(account_id, action)
+
+    # 150 股（減資前）× 5 元 = 750 元
+    assert proj.get_cash_balance(account_id) - cash_before == 750
+    assert proj.reconcile(account_id)["status"] == "RECONCILE_OK"
+    conn.close()
