@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "approval_id": "approval-trend_rider-20260623152405",
+  "issuer_id": "manual-research-review",
+  "strategy": {
+    "strategy_id": "trend_rider",
+    "strategy_version": "1.0.0",
+    "params_canonicalization": "strategy-params-v1",
+    "params_hash": "sha256:1cd2b64582d7fd4629385b05a34814618c3cb07f24d086f0a38709830373368e"
+  },
+  "permissions": {
+    "execution_modes": [
+      "backtest",
+      "simulation"
+    ],
+    "risk_increasing_actions": [
+      "open_long",
+      "increase_long"
+    ]
+  },
+  "limits": {
+    "currency": "TWD",
+    "max_order_value": 35000,
+    "max_daily_buy_value": 150000,
+    "max_open_positions": 5
+  },
+  "validity": {
+    "valid_from": "2026-06-23T15:24:05.609596+08:00",
+    "expires_at": "2026-12-31"
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "manifest-v1",
+    "digest": "sha256:59f597150998bc736267f9c6de39ba6bf60661b9ab37078e65ba37d3d8fdeb5a"
+  }
+}

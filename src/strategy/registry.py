@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from src.config import AppSettings, StrategyConfig
 from src.contracts.models import (
-    TrendPullbackParams, TrendBreakoutParams, PullbackReboundParams, ExitParams
+    TrendPullbackParams, TrendBreakoutParams, PullbackReboundParams, TrendRiderParams, ExitParams
 )
 from src.strategy.canonicalizer import StrategyParameterCanonicalizer
 
@@ -28,6 +28,7 @@ PARAMS_MODELS: dict[str, type[BaseModel]] = {
     "trend_pullback": TrendPullbackParams,   # retired: exit-managed only, no new entries
     "trend_breakout": TrendBreakoutParams,
     "pullback_rebound": PullbackReboundParams,
+    "trend_rider": TrendRiderParams,
 }
 
 # Strategies whose entry logic can be instantiated (trend_pullback is retired
@@ -45,10 +46,15 @@ def _build_trend_pullback(params, universe_symbols, index_symbol):
     from src.strategy.trend_pullback import TrendPullbackStrategy
     return TrendPullbackStrategy(params, universe_symbols)
 
+def _build_trend_rider(params, universe_symbols, index_symbol):
+    from src.strategy.trend_rider import TrendRiderStrategy
+    return TrendRiderStrategy(params, universe_symbols, index_symbol)
+
 ENTRY_FACTORIES: dict[str, Callable] = {
     "trend_breakout": _build_trend_breakout,
     "pullback_rebound": _build_pullback_rebound,
     "trend_pullback": _build_trend_pullback,  # legacy; not part of the default pipeline
+    "trend_rider": _build_trend_rider,
 }
 
 

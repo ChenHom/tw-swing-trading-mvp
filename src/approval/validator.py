@@ -36,18 +36,23 @@ class ManifestValidator:
             raise ValueError(f"MANIFEST_REVOKED: approval {manifest.approval_id} is revoked")
             
         # 4. Validity time range check
-        valid_from = datetime.fromisoformat(manifest.validity.valid_from)
-        expires_at = datetime.fromisoformat(manifest.validity.expires_at)
-        
-        if current_time.tzinfo is None and valid_from.tzinfo is not None:
-            raise ValueError("Timezone mismatch: current_time is naive but manifest times are localized")
-            
-        if current_time < valid_from:
-            raise ValueError(f"MANIFEST_NOT_YET_VALID: manifest valid from {manifest.validity.valid_from}, current time is {current_time.isoformat()}")
-            
-        if current_time >= expires_at:
-            raise ValueError(f"MANIFEST_EXPIRED: manifest expired at {manifest.validity.expires_at}, current time is {current_time.isoformat()}")
-            
+        # backtest replay 歷史：current_time 是被重播的歷史 session 日，manifest 的「核准生效窗」
+        # 是 live 營運管制（這策略今天可不可下單），不該 gate 研究用的歷史回放——否則整段歷史
+        # 都被「核准尚未生效」擋掉（R-T3 實測 863 筆 APPROVAL_INVALID）。digest/issuer/revocation/
+        # mode 檢查仍保留，確保 manifest 為真且允許 backtest。
+        if execution_mode != "backtest":
+            valid_from = datetime.fromisoformat(manifest.validity.valid_from)
+            expires_at = datetime.fromisoformat(manifest.validity.expires_at)
+
+            if current_time.tzinfo is None and valid_from.tzinfo is not None:
+                raise ValueError("Timezone mismatch: current_time is naive but manifest times are localized")
+
+            if current_time < valid_from:
+                raise ValueError(f"MANIFEST_NOT_YET_VALID: manifest valid from {manifest.validity.valid_from}, current time is {current_time.isoformat()}")
+
+            if current_time >= expires_at:
+                raise ValueError(f"MANIFEST_EXPIRED: manifest expired at {manifest.validity.expires_at}, current time is {current_time.isoformat()}")
+
         # 5. Execution mode permission check
         if execution_mode not in manifest.permissions.execution_modes:
             raise ValueError(f"EXECUTION_MODE_NOT_ALLOWED: mode {execution_mode} is not allowed by manifest")

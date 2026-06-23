@@ -6,5 +6,9 @@
   "pullback_rebound": {
     "approval_id": "approval-pullback_rebound-20260612100032",
     "activated_at": "2026-06-12T10:00:32.669405+08:00"
+  },
+  "trend_rider": {
+    "approval_id": "approval-trend_rider-20260623152405",
+    "activated_at": "2026-06-23T15:24:20.094705+08:00"
   }
 }

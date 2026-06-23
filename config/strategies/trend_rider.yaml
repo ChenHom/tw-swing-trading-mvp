@@ -1,0 +1,19 @@
+strategy_id: trend_rider
+strategy_version: 1.0.0
+
+parameters:
+  trend_ma_period: 60           # close 須在上升 60MA 之上（確立中期趨勢）
+  breakout_lookback_days: 60    # 創 60 日新高＝趨勢確立（較 breakout 的 20 長）
+  index_ma_period: 60           # 大盤多頭濾網（崩盤防守，與現役一致）
+  order_budget_twd: 20000
+
+# 「讓贏家跑」exit：與現役策略的關鍵差異全在這裡（reuse risk_exit 引擎，無引擎改動）。
+# 參數依標準趨勢跟蹤慣例設死，非為補抓任何已看過的年度而調。
+exit:
+  fixed_stop_loss_bps: 1200       # 災難停損 -12%（單筆崩壞才砍，比現役 -5/-7% 寬）
+  trailing_stop_bps: 2500         # 寬移動停利 -25%：讓贏家在大趨勢中呼吸、不被洗出
+  ma_break_period: 60             # 長均線跌破才認定趨勢真破（非 20 日）
+  ma_break_buffer_bps: 0
+  ma_break_confirm_days: 3        # 連 3 日收盤跌破才觸發（防單日假跌破）
+  time_stop_days: 999             # 時間停損實質停用＝核心：不再 20 天砍掉還在跑的贏家
+  time_stop_min_return_bps: 0
