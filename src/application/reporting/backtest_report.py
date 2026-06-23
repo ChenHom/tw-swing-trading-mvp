@@ -64,11 +64,19 @@ def write_backtest_result(
         "end_date": end_iso,
         "initial_cash": initial_cash,
         "created_at": created_at,
+        # equity_curve 每點已含 equity（策略）+ benchmark_close（0050）兩條序列，供同圖比較。
         "equity_curve": [
             {**point, "date": _iso(point["date"])}
             for point in result["equity_curve"]
         ],
         "statistics": stats,
+        # benchmark 對照表（P1-T3 四條）+ 分年表（P1-T6）+ 裁決狀態（P1-T7）。
+        "benchmarks": result["benchmarks"],
+        "return_layers": result["return_layers"],
+        "robustness": result["robustness"],
+        "cost_ratio": result["cost_ratio"],
+        "yearly_breakdown": result["yearly_breakdown"],
+        "verdict": result["verdict"],
     }
 
     result_path = (out_dir / f"{strategy_id}_{run_id}.json").resolve()
@@ -80,7 +88,8 @@ def write_backtest_result(
     with open(index_path, "a", encoding="utf-8") as f:
         f.write(
             f"{created_at}\t{strategy_id}\t{run_id}\t{start_iso}\t{end_iso}\t"
-            f"{stats['final_equity']}\t{stats['total_pnl_bps']}\t{stats['max_drawdown']}\t{result_path}\n"
+            f"{stats['final_equity']}\t{stats['total_pnl_bps']}\t{stats['max_drawdown']}\t"
+            f"{result['verdict']['verdict']}\t{result_path}\n"
         )
 
     return result_path

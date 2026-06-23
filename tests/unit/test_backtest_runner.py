@@ -136,3 +136,130 @@ def test_backtest_runner_simple(backtest_setup):
     assert len(result["equity_curve"]) == 6
     assert result["statistics"]["initial_cash"] == 300000
     assert result["statistics"]["trade_count"] == 0 # no trades closed yet (just BUY signal generated on day 6)
+
+
+def test_backtest_skips_missing_symbol_without_aborting(backtest_setup):
+    """P0-T6：缺檔標的（如新上市股，整窗無資料）不可中止整個回測，且須出現在剔除清單。"""
+    conn, repo, projection, calendar = backtest_setup
+
+    sessions = calendar.sessions_between(date(2026, 6, 8), date(2026, 6, 15))
+    assert len(sessions) == 6
+
+    params = TrendPullbackParams(ma_short=2, ma_long=5, order_budget_twd=20000)
+    params_hash = StrategyParameterCanonicalizer.compute_hash(params)
+
+    # 只有 2330 有資料；3231（模擬新上市股）整窗完全無 bar
+    prices_2330 = [100.0, 101.0, 102.0, 115.0, 116.0, 110.0]
+    for i, s in enumerate(sessions):
+        p_2330 = prices_2330[i]
+        repo.upsert(MarketBar(
+            symbol="2330", exchange="TSE", instrument_type="STOCK",
+            trade_date=s, open=int(p_2330 * 10000), high=int((p_2330 + 1) * 10000),
+            low=int((p_2330 - 1) * 10000), close=int(p_2330 * 10000),
+            volume=1000, amount=100000,
+            source="shioaji", source_timezone="Asia/Taipei",
+            is_complete=1, source_fetched_at="now", raw_payload_checksum="chk"
+        ))
+
+    manifest_dict = {
+        "schema_version": "1.0", "approval_id": "app-v1", "issuer_id": "manual-research-review",
+        "strategy": {
+            "strategy_id": "trend_pullback", "strategy_version": "1.0.0",
+            "params_canonicalization": "strategy-params-v1", "params_hash": params_hash
+        },
+        "permissions": {"execution_modes": ["backtest"], "risk_increasing_actions": ["open_long", "increase_long"]},
+        "limits": {"currency": "TWD", "max_order_value": 30000, "max_daily_buy_value": 60000, "max_open_positions": 2},
+        "validity": {"valid_from": "2026-06-01T00:00:00+08:00", "expires_at": "2026-07-01T00:00:00+08:00"},
+        "integrity": {"algorithm": "sha256", "canonicalization": "manifest-v1", "digest": ""}
+    }
+    canonical_str = json.dumps(manifest_dict, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
+    manifest_dict["integrity"]["digest"] = f"sha256:{digest}"
+    manifest = StrategyApprovalManifest(**manifest_dict)
+
+    runner = BacktestRunner(
+        db_conn=conn, calendar=calendar, market_repo=repo, projection=projection,
+        allowed_issuers=["manual-research-review"], revoked_approvals=[],
+        manifest=manifest, strategy_budget=20000, slippage_bps=10
+    )
+    entry_spec = EntryStrategySpec(
+        definition=StrategyDefinition(
+            strategy_id="trend_pullback", strategy_version="1.0.0", params=params,
+            exit_params=None, params_hash=params_hash, order_budget_twd=params.order_budget_twd
+        ),
+        strategy=TrendPullbackStrategy(params, ["2330", "3231"])
+    )
+
+    result = runner.run(
+        start_date=sessions[0], end_date=sessions[-1], initial_cash=300000,
+        universe_symbols=["2330", "3231"], entry_spec=entry_spec
+    )
+
+    assert len(result["equity_curve"]) == 6  # 整窗未被縮短
+    assert result["excluded_symbols"] == ["3231"]
+    assert result["data_availability"]["3231"]["missing_days"] == 6
+    assert result["data_availability"]["3231"]["missing_ratio"] == 1.0
+    assert result["data_availability"]["2330"]["missing_days"] == 0
+
+
+def test_backtest_same_fingerprint_yields_same_result(backtest_setup):
+    """P0-T8：同一份資料/設定下重跑兩次，指紋（除 run_id 外）與統計結果須一致（重現性）。"""
+    conn, repo, projection, calendar = backtest_setup
+
+    sessions = calendar.sessions_between(date(2026, 6, 8), date(2026, 6, 15))
+    params = TrendPullbackParams(ma_short=2, ma_long=5, order_budget_twd=20000)
+    params_hash = StrategyParameterCanonicalizer.compute_hash(params)
+
+    prices_2330 = [100.0, 101.0, 102.0, 115.0, 116.0, 110.0]
+    for i, s in enumerate(sessions):
+        p_2330 = prices_2330[i]
+        repo.upsert(MarketBar(
+            symbol="2330", exchange="TSE", instrument_type="STOCK",
+            trade_date=s, open=int(p_2330 * 10000), high=int((p_2330 + 1) * 10000),
+            low=int((p_2330 - 1) * 10000), close=int(p_2330 * 10000),
+            volume=1000, amount=100000,
+            source="shioaji", source_timezone="Asia/Taipei",
+            is_complete=1, source_fetched_at="now", raw_payload_checksum="chk"
+        ))
+
+    manifest_dict = {
+        "schema_version": "1.0", "approval_id": "app-v1", "issuer_id": "manual-research-review",
+        "strategy": {
+            "strategy_id": "trend_pullback", "strategy_version": "1.0.0",
+            "params_canonicalization": "strategy-params-v1", "params_hash": params_hash
+        },
+        "permissions": {"execution_modes": ["backtest"], "risk_increasing_actions": ["open_long", "increase_long"]},
+        "limits": {"currency": "TWD", "max_order_value": 30000, "max_daily_buy_value": 60000, "max_open_positions": 2},
+        "validity": {"valid_from": "2026-06-01T00:00:00+08:00", "expires_at": "2026-07-01T00:00:00+08:00"},
+        "integrity": {"algorithm": "sha256", "canonicalization": "manifest-v1", "digest": ""}
+    }
+    canonical_str = json.dumps(manifest_dict, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
+    manifest_dict["integrity"]["digest"] = f"sha256:{digest}"
+    manifest = StrategyApprovalManifest(**manifest_dict)
+
+    def run_once():
+        runner = BacktestRunner(
+            db_conn=conn, calendar=calendar, market_repo=repo, projection=projection,
+            allowed_issuers=["manual-research-review"], revoked_approvals=[],
+            manifest=manifest, strategy_budget=20000, slippage_bps=10
+        )
+        entry_spec = EntryStrategySpec(
+            definition=StrategyDefinition(
+                strategy_id="trend_pullback", strategy_version="1.0.0", params=params,
+                exit_params=None, params_hash=params_hash, order_budget_twd=params.order_budget_twd
+            ),
+            strategy=TrendPullbackStrategy(params, ["2330"])
+        )
+        return runner.run(
+            start_date=sessions[0], end_date=sessions[-1], initial_cash=300000,
+            universe_symbols=["2330"], entry_spec=entry_spec
+        )
+
+    result1 = run_once()
+    result2 = run_once()
+
+    fp1 = {k: v for k, v in result1["fingerprint"].items() if k != "run_id"}
+    fp2 = {k: v for k, v in result2["fingerprint"].items() if k != "run_id"}
+    assert fp1 == fp2
+    assert result1["statistics"] == result2["statistics"]

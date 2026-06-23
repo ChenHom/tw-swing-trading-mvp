@@ -159,7 +159,7 @@ class TradeExecutionEngine:
 
         # Execute with FakeBroker
         broker = FakeBroker(self.market_repo)
-        fills, status = broker.execute_orders(planned_orders, context.execution_date, self.slippage_bps)
+        fills, status, unfilled_orders = broker.execute_orders(planned_orders, context.execution_date, self.slippage_bps)
 
         if status == "WAITING_MARKET_DATA":
             return {
@@ -214,7 +214,8 @@ class TradeExecutionEngine:
             "status": "COMPLETED",
             "fills": applied_fills,
             "signal_results": signal_results,
-            "events": events
+            "events": events,
+            "unfilled_orders": unfilled_orders
         }
 
     def _order_bundles(self, bundles: list[DailySignalBundle]) -> list[DailySignalBundle]:

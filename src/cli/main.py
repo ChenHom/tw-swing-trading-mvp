@@ -33,14 +33,14 @@ from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
-from src.cli.market import cmd_market_backfill, cmd_market_sync, cmd_market_validate
+from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_validate
 from src.cli.strategy import cmd_strategy_inspect
 from src.cli.approval import cmd_approval_create, cmd_approval_validate, cmd_approval_activate, cmd_approval_deactivate, cmd_approval_list, cmd_approval_status
 from src.cli.account import cmd_account_init, cmd_account_adjust_cash, cmd_account_adjust
 from src.cli.backtest import cmd_backtest_run
 from src.cli.simulation import cmd_simulation_run_daily, cmd_simulation_reset, cmd_simulation_execute_pending
 from src.cli.signal import cmd_signal_generate, cmd_signal_list
-from src.cli.trade import cmd_trade_plan, cmd_trade_reject_signal, cmd_trade_un_reject_signal, cmd_trade_record_fill, cmd_trade_close_all, cmd_trade_exit_check, cmd_trade_set_long_term
+from src.cli.trade import cmd_trade_plan, cmd_trade_reject_signal, cmd_trade_un_reject_signal, cmd_trade_record_fill, cmd_trade_close_all, cmd_trade_exit_check, cmd_trade_set_long_term, cmd_trade_backfill_names
 from src.cli.portfolio import cmd_portfolio_reconcile, cmd_portfolio_rebuild_projections
 from src.cli.report import cmd_report_pnl, cmd_report_daily
 from src.cli.corporate_action import cmd_corporate_action_record, cmd_corporate_action_apply, cmd_corporate_action_list, cmd_corporate_action_check
@@ -62,6 +62,17 @@ def main():
     
     parser_validate = market_subs.add_parser("validate", help="驗證資料庫中的日 K 線行情")
     parser_validate.add_argument("--last-sessions", type=int, default=60, help="驗證最近幾筆交易日的行情數據")
+
+    parser_backfill_history = market_subs.add_parser(
+        "backfill-history", help="research.db 深歷史回補（雙價/CA 帳本，含 2022）"
+    )
+    parser_backfill_history.add_argument("--from", dest="start_date", required=True, help="起始日期 YYYY-MM-DD")
+    parser_backfill_history.add_argument("--to", dest="end_date", required=True, help="結束日期 YYYY-MM-DD")
+    parser_backfill_history.add_argument("--symbols", type=str, default=None, help="逗號分隔標的代碼，預設用 universe.yaml")
+    parser_backfill_history.add_argument("--db", type=str, default="data/research.db", help="research SQLite 路徑")
+    parser_backfill_history.add_argument(
+        "--source", type=str, choices=["finmind", "twse", "auto"], default="auto", help="資料來源"
+    )
     
     # 2. strategy group
     parser_strategy = subparsers.add_parser("strategy", help="策略輔助指令")
@@ -123,6 +134,7 @@ def main():
     parser_bt_run.add_argument("--to", type=str, required=True, help="回測結束日期 YYYY-MM-DD")
     parser_bt_run.add_argument("--initial-cash", type=int, default=300000, help="初始現金金額")
     parser_bt_run.add_argument("--strategy", type=str, default="trend_breakout", help="進場策略 ID（出場由 risk_exit 依該策略 exit: 參數執行）")
+    parser_bt_run.add_argument("--db", type=str, default=None, help="回測資料庫路徑（預設用 settings 的 app.db；研究用 data/research.db）")
     
     # 6. simulation group
     parser_sim = subparsers.add_parser("simulation", help="模擬交易執行器指令")
@@ -191,6 +203,12 @@ def main():
     )
     parser_trade_un_reject.add_argument("--signal-id", type=str, required=True, help="要恢復的訊號 ID")
     
+    parser_trade_backfill = trade_subs.add_parser(
+        "backfill-names",
+        help="掃所有持倉，把名稱空白的代號自 Shioaji 查補進 config/stock_names_auto.yaml（修復顯示空白）"
+    )
+    parser_trade_backfill.add_argument("--account", type=str, default=None, help="目標帳戶名稱（保留參數；持倉掃描為全帳戶）")
+
     parser_trade_close = trade_subs.add_parser("close-all", help="強制平倉所有持有部位（緊急避險退出）")
     parser_trade_close.add_argument("--broker", type=str, default="fake", help="券商介面名稱")
     parser_trade_close.add_argument("--reason", type=str, required=True, help="緊急平倉的原因")
@@ -271,6 +289,7 @@ def main():
 
     handlers = {
         ("market", "backfill"): cmd_market_backfill,
+        ("market", "backfill-history"): cmd_market_backfill_history,
         ("market", "sync"): cmd_market_sync,
         ("market", "validate"): cmd_market_validate,
         ("strategy", "inspect"): cmd_strategy_inspect,
@@ -291,6 +310,7 @@ def main():
         ("signal", "list"): cmd_signal_list,
         ("trade", "plan"): cmd_trade_plan,
         ("trade", "record-fill"): cmd_trade_record_fill,
+        ("trade", "backfill-names"): cmd_trade_backfill_names,
         ("trade", "close-all"): cmd_trade_close_all,
         ("trade", "reject-signal"): cmd_trade_reject_signal,
         ("trade", "un-reject-signal"): cmd_trade_un_reject_signal,

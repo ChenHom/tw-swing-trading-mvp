@@ -34,7 +34,7 @@ from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
 from src.application.services import exit_check
-from src.contracts.stock_names import stock_name
+from src.contracts.stock_names import stock_name, ensure_stock_name
 
 _MONITOR_NOTES = {
     "long_term_excluded": "（長期持有，結構性排除於 risk_exit 監控）",
@@ -351,8 +351,67 @@ def cmd_trade_record_fill(args):
         else:
             total_cost = trade_value + broker_fee
             print(f"  - 估計總付出成本：{total_cost:,} TWD")
+
+        # 新建倉位（BUY）且名稱空白 → 自 Shioaji 補名。fill 已 commit，
+        # 補名純屬附加：任何失敗只提醒、絕不讓本指令失敗。
+        if side == "BUY" and not stock_name(args.symbol):
+            try:
+                provider = ShioajiMarketDataProvider(
+                    settings.shioaji_api_key, settings.shioaji_secret_key
+                )
+                name = ensure_stock_name(args.symbol, provider.resolve_name)
+                if name:
+                    print(f"  - 已補股票名稱：{args.symbol} {name}")
+                else:
+                    print(f"  - 提醒：查無 {args.symbol} 的股票名稱，名稱仍空白。")
+            except Exception as e:
+                print(f"  - 提醒：自動補名失敗（{e}），名稱仍空白。")
     finally:
         conn.close()
+
+
+def cmd_trade_backfill_names(args):
+    """一次性掃所有持倉，把名稱空白者自 Shioaji 補進 config/stock_names_auto.yaml。"""
+    settings = common.get_settings()
+    conn = get_db_connection(settings.trading.database_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT symbol FROM position_lots
+            GROUP BY symbol HAVING SUM(quantity) > 0
+            ORDER BY symbol
+            """
+        )
+        symbols = [r["symbol"] for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+    missing = [s for s in symbols if not stock_name(s)]
+    if not missing:
+        print(f"所有持倉（{len(symbols)} 檔）皆已有名稱，無需補名。")
+        return
+
+    print(f"持倉 {len(symbols)} 檔，其中 {len(missing)} 檔缺名稱，向 Shioaji 查詢中…")
+    provider = ShioajiMarketDataProvider(settings.shioaji_api_key, settings.shioaji_secret_key)
+    filled, not_found = [], []
+    for symbol in missing:
+        try:
+            name = ensure_stock_name(symbol, provider.resolve_name)
+        except Exception as e:
+            print(f"  - {symbol}：查詢失敗（{e}）")
+            not_found.append(symbol)
+            continue
+        if name:
+            filled.append((symbol, name))
+            print(f"  - 已補 {symbol} {name}")
+        else:
+            not_found.append(symbol)
+            print(f"  - 查無 {symbol}（下市/指數/不存在），維持空白")
+
+    print(f"\n完成：補上 {len(filled)} 檔，查無 {len(not_found)} 檔。")
+    if filled:
+        print("（已寫入 config/stock_names_auto.yaml；web 將於下次查表自動帶入。）")
 
 
 def cmd_trade_close_all(args):

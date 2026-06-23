@@ -143,17 +143,17 @@ def test_trade_execution_engine_e2e(test_setup):
     assert result["status"] == "COMPLETED"
     
     # Verify cash balance, positions, and reconcile
-    # Strategy budget 25000 / 100.0 = 250 shares.
-    # Cost = 250 * 100.1 = 25025 TWD
-    # Fee = max(20, round(25025 * 0.001425)) = 36 TWD
-    # Final cash = 300,000 - 25,061 = 274,939
+    # Strategy budget 25000 / 100.0 = 250 shares（全數零股，< 1000 股一張）。
+    # 零股折損（FakeBroker 3x 滑價，P0-T7）：100.0 x (1 + 30bps) = 100.3
+    # Cost = 250 * 100.3 = 25075 TWD; Fee = max(20, round(25075 * 0.001425)) = 36 TWD
+    # Final cash = 300,000 - (25,075 + 36) = 274,889
     balance = projection.get_cash_balance("acc-main")
-    assert balance == 274939
-    
+    assert balance == 274889
+
     lots = projection.get_position_lots("acc-main", "2330")
     assert len(lots) == 1
     assert lots[0]["quantity"] == 250
-    assert lots[0]["price"] == 1001000  # 100.1 x 10000
+    assert lots[0]["price"] == 1003000  # 100.3 x 10000（零股折損後）
     
     reconcile_res = projection.reconcile("acc-main")
     assert reconcile_res["status"] == "RECONCILE_OK"

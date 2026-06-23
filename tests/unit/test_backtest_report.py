@@ -27,6 +27,12 @@ def _result(**stats_overrides):
             {"date": date(2025, 1, 3), "cash": 280000, "position_value": 32345, "equity": 312345},
         ],
         "statistics": stats,
+        "benchmarks": {"buy_hold_0050_return": 0.05},
+        "return_layers": {"modeled_executable_return": 0.04},
+        "robustness": {"effective_sample_size": 3},
+        "cost_ratio": {"cost_to_gross_pnl_ratio": 0.1},
+        "yearly_breakdown": [{"year": 2025, "year_return": 0.04}],
+        "verdict": {"verdict": "INVALID", "diagnostic_result": "today universe", "reasons": []},
     }
 
 
@@ -53,6 +59,9 @@ def test_write_backtest_result_creates_files(tmp_path):
     assert payload["equity_curve"][0]["date"] == "2025-01-02"
     assert payload["equity_curve"][1]["equity"] == 312345
     assert payload["statistics"]["final_equity"] == 312345
+    assert payload["benchmarks"]["buy_hold_0050_return"] == 0.05
+    assert payload["yearly_breakdown"][0]["year"] == 2025
+    assert payload["verdict"]["verdict"] == "INVALID"
 
     latest = (out / "LATEST.txt").read_text(encoding="utf-8").strip()
     assert latest == str(path)
@@ -65,7 +74,8 @@ def test_write_backtest_result_creates_files(tmp_path):
     assert parts[4] == "2025-01-03"
     assert parts[5] == "312345"
     assert parts[6] == "411"
-    assert parts[8] == str(path)
+    assert parts[8] == "INVALID"
+    assert parts[9] == str(path)
 
 
 def test_profit_factor_inf_becomes_null(tmp_path):

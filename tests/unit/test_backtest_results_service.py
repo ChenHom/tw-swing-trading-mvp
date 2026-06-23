@@ -25,6 +25,8 @@ def _seed(base_dir, run_id, strategy_id="trend_breakout", final_equity=312345, t
             "avg_loss": -500.0,
             "trade_count": 5,
         },
+        "benchmarks": {}, "return_layers": {}, "robustness": {}, "cost_ratio": {},
+        "yearly_breakdown": [], "verdict": {"verdict": "INVALID", "diagnostic_result": None, "reasons": []},
     }
     return write_backtest_result(
         result, strategy_id=strategy_id, start_date=date(2025, 1, 1),

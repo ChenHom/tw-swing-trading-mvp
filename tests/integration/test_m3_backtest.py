@@ -146,7 +146,10 @@ def test_milestone_3_long_backtest(tmp_path):
         revoked_approvals=[],
         manifest=manifest,
         strategy_budget=30000,
-        slippage_bps=10
+        slippage_bps=10,
+        # 帶非空 index_symbols（真實 CLI 路徑會傳指數設定）→ _normalize_symbol_spec 轉 dict，
+        # 守住「fingerprint 取 code 字串、非整個 dict」（避免 set(dict) TypeError 回歸）。
+        index_symbols=["TSE"]
     )
     
     # Run backtest (legacy trend_pullback entry strategy via explicit spec)

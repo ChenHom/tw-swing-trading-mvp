@@ -38,8 +38,10 @@ from src.cli import common
 
 def cmd_backtest_run(args):
     settings = common.get_settings()
-    init_db(settings.trading.database_path)
-    conn = get_db_connection(settings.trading.database_path)
+    # --db：研究回測指向 data/research.db（與 live app.db 隔離）；預設仍用 settings 的 app.db。
+    db_path = getattr(args, "db", None) or settings.trading.database_path
+    init_db(db_path)
+    conn = get_db_connection(db_path)
 
     strategy_id = args.strategy
     manifests = common.load_active_manifests(settings)
@@ -78,7 +80,7 @@ def cmd_backtest_run(args):
     start_date = date.fromisoformat(args.start)
     end_date = date.fromisoformat(args.to)
 
-    print(f"Running backtest [{strategy_id}] from {start_date} to {end_date}...")
+    print(f"Running backtest [{strategy_id}] from {start_date} to {end_date} (db={db_path})...")
     result = runner.run(
         start_date=start_date,
         end_date=end_date,
@@ -95,6 +97,9 @@ def cmd_backtest_run(args):
     print(f"Trades count: {stats['trade_count']}")
     print(f"Win Rate: {stats['win_rate']*100:.2f}%")
     print(f"Profit Factor: {stats['profit_factor']:.2f}")
+
+    verdict = result["verdict"]
+    print(f"Verdict: {verdict['verdict']}" + (f" ({verdict['diagnostic_result']})" if verdict["diagnostic_result"] else ""))
 
     result_path = write_backtest_result(
         result,

@@ -151,6 +151,8 @@ def test_backtests_list_and_detail(client, monkeypatch, tmp_path):
             "avg_loss": 0.0,
             "trade_count": 5,
         },
+        "benchmarks": {}, "return_layers": {}, "robustness": {}, "cost_ratio": {},
+        "yearly_breakdown": [], "verdict": {"verdict": "INVALID", "diagnostic_result": None, "reasons": []},
     }
     write_backtest_result(
         result, strategy_id="trend_breakout", start_date=date(2025, 1, 1),

@@ -186,9 +186,10 @@ def test_daily_simulation_flow_integration(temp_db):
     assert total_qty == 2830
     
     # Check remaining cash
-    # 1,000,000 - (trade_value + broker_fee) = 1,000,000 - (303113 + 432) = 696,455 TWD
+    # 零股（800 股部分）滑價放大 3 倍（FakeBroker 零股折損模型，P0-T7），
+    # 故零股成交價較整股略高、現金支出較整股同價模型多一些。
     cash = projection.get_cash_balance(account_id)
-    assert cash == 696455
+    assert cash == 696278
     
     # Position Projection
     cursor.execute("SELECT symbol, quantity FROM position_lots WHERE account_id = ?", (account_id,))
