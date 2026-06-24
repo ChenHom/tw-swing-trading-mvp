@@ -352,20 +352,45 @@ def cmd_trade_record_fill(args):
             total_cost = trade_value + broker_fee
             print(f"  - 估計總付出成本：{total_cost:,} TWD")
 
-        # 新建倉位（BUY）且名稱空白 → 自 Shioaji 補名。fill 已 commit，
-        # 補名純屬附加：任何失敗只提醒、絕不讓本指令失敗。
-        if side == "BUY" and not stock_name(args.symbol):
-            try:
-                provider = ShioajiMarketDataProvider(
-                    settings.shioaji_api_key, settings.shioaji_secret_key
-                )
-                name = ensure_stock_name(args.symbol, provider.resolve_name)
-                if name:
-                    print(f"  - 已補股票名稱：{args.symbol} {name}")
-                else:
-                    print(f"  - 提醒：查無 {args.symbol} 的股票名稱，名稱仍空白。")
-            except Exception as e:
-                print(f"  - 提醒：自動補名失敗（{e}），名稱仍空白。")
+        # 新建倉位（BUY）的附加補資料：名稱（空白時）+ 最新行情 bar（全無 bar 時，
+        # 讓儀表板「最後收盤」不留空）。fill 已 commit，純附加：任何失敗只提醒、絕不讓本指令失敗。
+        if side == "BUY":
+            repo = SqliteMarketBarRepository(conn)
+            needs_name = not stock_name(args.symbol)
+            needs_bar = conn.execute(
+                "SELECT 1 FROM market_bars WHERE symbol = ? LIMIT 1", (args.symbol,)
+            ).fetchone() is None
+            if needs_name or needs_bar:
+                try:
+                    provider = ShioajiMarketDataProvider(
+                        settings.shioaji_api_key, settings.shioaji_secret_key
+                    )
+                    if needs_name:
+                        name = ensure_stock_name(args.symbol, provider.resolve_name)
+                        print(f"  - 已補股票名稱：{args.symbol} {name}" if name
+                              else f"  - 提醒：查無 {args.symbol} 的股票名稱，名稱仍空白。")
+                    if needs_bar:
+                        runner = DailySimulationRunner(
+                            db_conn=conn, calendar=ExchangeCalendarsTradingCalendar(),
+                            market_provider=provider, market_repo=repo,
+                            projection=PortfolioProjection(conn),
+                            allowed_issuers=[], revoked_approvals=[],
+                        )
+                        spec = {"code": args.symbol, "exchange": "TSE", "instrument_type": "STOCK"}
+                        # 由今日往回找最近一個有資料的交易日；sync_market_data 對未過 14:00 的
+                        # 當日會自動跳過（回 False、不落 bar），故隔日的回退能取到前一交易日收盤。
+                        d = date.today()
+                        for _ in range(7):
+                            runner.sync_market_data(d, [spec], skip_missing_symbols=True)
+                            bar = repo.find(args.symbol, d)
+                            if bar:
+                                print(f"  - 已補最後收盤：{args.symbol} {d.isoformat()} {bar.close / 10000:.2f}")
+                                break
+                            d -= timedelta(days=1)
+                        else:
+                            print(f"  - 提醒：查無 {args.symbol} 近期行情，最後收盤仍空白。")
+                except Exception as e:
+                    print(f"  - 提醒：自動補資料失敗（{e}），名稱/收盤可能仍空白。")
     finally:
         conn.close()
 
