@@ -186,7 +186,8 @@ class BacktestRunner:
         end_date: date,
         initial_cash: int,
         universe_symbols: list[str],
-        entry_spec: EntryStrategySpec
+        entry_spec: EntryStrategySpec,
+        universe_policy_version: Optional[str] = None
     ) -> dict:
         run_id = f"bt-{uuid.uuid4().hex[:8]}"
         account_id = f"backtest:{run_id}"
@@ -363,6 +364,7 @@ class BacktestRunner:
             initial_cash=initial_cash,
             manifest_digest=self.manifest.integrity.digest,
             random_seed=BOOTSTRAP_RANDOM_SEED,
+            universe_policy_version=universe_policy_version,
         )
         persist_fingerprint(self.db_conn, fingerprint)
 

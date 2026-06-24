@@ -80,6 +80,36 @@ class FinMindProvider:
         rows = self._get("TaiwanStockPrice", data_id, start_date, end_date)
         return [self._row_to_bar(row, symbol, exchange, instrument_type) for row in rows]
 
+    def fetch_twse_roster(self, max_retries: int = 5) -> list[str]:
+        """全市場 roster（TaiwanStockInfo，不帶日期）→ type=='twse' 的 stock_id 清單。
+
+        供 PIT 流動性 universe 枚舉候選股用；此快照保留部分已下市代碼（如 2384/6702），
+        故能納入下市股、大幅降低 survivorship。**殘留限制**：TaiwanStockInfo 是單一快照、
+        不保證涵蓋所有早期下市股（如 3662 已不在），亦無 per-date 上/下市日，屬已知偏誤。
+        注意：`_get` 一律帶 start/end_date 會讓此 dataset 回空，故此處獨立無日期呼叫。
+        """
+        params = {"dataset": "TaiwanStockInfo"}
+        if self.token:
+            params["token"] = self.token
+        backoff = 1.0
+        for attempt in range(max_retries):
+            resp = requests.get(self.base_url, params=params, timeout=30)
+            if resp.status_code == 429:
+                if attempt == max_retries - 1:
+                    return []
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            resp.raise_for_status()
+            rows = resp.json().get("data", []) or []
+            # TaiwanStockInfo 的 twse 列混有產業指數名稱（ShippingTransportation/TAIEX/Textiles…），
+            # 非股票代碼；台股代碼一律數字開頭（含 ETF 如 0050/00400A），故以此過濾掉非標的列。
+            return sorted({
+                r["stock_id"] for r in rows
+                if r.get("type") == "twse" and (r.get("stock_id") or "")[:1].isdigit()
+            })
+        return []
+
     def _row_to_bar(self, row: dict, symbol: str, exchange: str, instrument_type: str) -> MarketBar:
         checksum = hashlib.sha256(repr(sorted(row.items())).encode("utf-8")).hexdigest()[:16]
         return MarketBar(

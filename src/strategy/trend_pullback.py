@@ -5,11 +5,12 @@ from src.contracts.decision_codes import DecisionCode
 from src.contracts.models import TrendPullbackParams
 from src.market_data.repository import PointInTimeMarketData
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot, PositionSnapshot
+from src.strategy.universe import coerce_universe
 
 class TrendPullbackStrategy:
     def __init__(self, params: TrendPullbackParams, universe_symbols: list[str]):
         self.params = params
-        self.universe_symbols = universe_symbols
+        self.universe = coerce_universe(universe_symbols)
 
     def generate(
         self,
@@ -20,7 +21,7 @@ class TrendPullbackStrategy:
         signals = []
         required_bars = max(self.params.ma_short, self.params.ma_long)
         
-        for symbol in self.universe_symbols:
+        for symbol in self.universe.symbols_as_of(context.as_of_date):
             history = market_data.history(symbol, limit=required_bars)
             
             # Check for insufficient history

@@ -62,9 +62,27 @@ def cmd_backtest_run(args):
     symbols = [s.code for s in settings.universe.symbols]
     index_symbol = settings.trading.pipeline.index_symbol
 
+    # PIT 流動性 universe：--universe-policy 指定 policy_version 時，策略改吃 per-date 成分股；
+    # runner 的 universe_symbols（缺檔/benchmark/fingerprint 用）取該 policy 成分股的聯集。
+    policy_version = getattr(args, "universe_policy", None)
+    if policy_version:
+        from src.strategy.universe import PolicyUniverseProvider
+        universe_arg = PolicyUniverseProvider(conn, policy_version)
+        rows = conn.execute(
+            "SELECT DISTINCT symbol FROM universe_policy WHERE policy_version = ? ORDER BY symbol",
+            (policy_version,),
+        ).fetchall()
+        symbols = [r["symbol"] for r in rows]
+        if not symbols:
+            print(f"Error: universe_policy '{policy_version}' 無成分股，請先執行 'market build-universe'。")
+            sys.exit(1)
+        print(f"PIT universe: policy='{policy_version}', {len(symbols)} 檔成分股聯集")
+    else:
+        universe_arg = symbols
+
     entry_spec = EntryStrategySpec(
         definition=defn,
-        strategy=common.strategy_registry.build_entry_strategy(defn, symbols, index_symbol)
+        strategy=common.strategy_registry.build_entry_strategy(defn, universe_arg, index_symbol)
     )
     exit_definitions = common.strategy_registry.load_exit_managed_definitions(settings)
 
@@ -86,7 +104,8 @@ def cmd_backtest_run(args):
         end_date=end_date,
         initial_cash=args.initial_cash,
         universe_symbols=symbols,
-        entry_spec=entry_spec
+        entry_spec=entry_spec,
+        universe_policy_version=policy_version,
     )
     
     stats = result["statistics"]

@@ -85,15 +85,26 @@ def cmd_market_backfill_history(args):
     end_date = date.fromisoformat(args.end_date)
     sessions = set(calendar.sessions_between(start_date, end_date))
 
-    if args.symbols:
+    finmind = FinMindProvider() if args.source in ("finmind", "auto") else None
+    twse = TwseProvider() if args.source in ("twse", "auto") else None
+
+    # roster 模式：用 FinMind 全市場 roster（含部分下市股）枚舉候選股，供 PIT 流動性 universe；
+    # raw-only、跳股利（廣度池只需 raw 成交額排名，CA 之後按需補；核心 universe.yaml 那批已有股利）。
+    roster_mode = getattr(args, "roster", None) == "twse"
+    if roster_mode:
+        if finmind is None:
+            print("ERROR: --roster 需要 FinMind 來源（--source finmind 或 auto）")
+            conn.close()
+            return
+        roster = finmind.fetch_twse_roster()
+        print(f"Roster: TaiwanStockInfo twse = {len(roster)} 檔（含部分下市股；raw-only、跳股利）")
+        symbol_specs = [SymbolConfig(code=c, exchange="TSE", instrument_type="STOCK") for c in roster]
+    elif args.symbols:
         codes = [c.strip() for c in args.symbols.split(",") if c.strip()]
         known = {s.code: s for s in list(settings.universe.symbols) + list(settings.universe.indices)}
         symbol_specs = [known.get(c, SymbolConfig(code=c, exchange="TSE", instrument_type="STOCK")) for c in codes]
     else:
         symbol_specs = list(settings.universe.indices) + list(settings.universe.symbols)
-
-    finmind = FinMindProvider() if args.source in ("finmind", "auto") else None
-    twse = TwseProvider() if args.source in ("twse", "auto") else None
 
     excluded_symbols = []
     fetched_counts = {}
@@ -118,7 +129,7 @@ def cmd_market_backfill_history(args):
         if not bars_by_date:
             excluded_symbols.append(symbol)
 
-        if finmind is not None:
+        if finmind is not None and not roster_mode:
             for action in finmind.fetch_dividend_events(symbol, start_date, end_date):
                 conn.execute(
                     """
@@ -139,6 +150,34 @@ def cmd_market_backfill_history(args):
     for symbol, count in fetched_counts.items():
         print(f"  {symbol}: {count}/{len(sessions)} 筆")
     print(f"剔除清單（整窗無任何資料）：{', '.join(excluded_symbols) if excluded_symbols else '（無）'}")
+    conn.close()
+
+
+def cmd_market_build_universe(args):
+    """建 PIT 流動性 top-N universe_policy（R-T4b Track 2）：月再平衡、成交額排序、known_at<=as_of。"""
+    from src.market_data.liquidity_universe import build_liquidity_policy
+
+    db_path = args.db or "data/research.db"
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    try:
+        stats = build_liquidity_policy(
+            conn,
+            policy_version=args.policy_version,
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            top_n=args.top_n,
+            lookback_sessions=args.lookback,
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        conn.close()
+        sys.exit(1)
+    print(
+        f"universe_policy 建立完成：policy='{stats['policy_version']}' "
+        f"再平衡 {stats['rebalances']} 次、寫入 {stats['rows']} 列、涵蓋 {stats['distinct_symbols']} 檔不同標的"
+        + (f"（{stats.get('first_rebalance')} ~ {stats.get('last_rebalance')}）" if stats['rebalances'] else "")
+    )
     conn.close()
 
 

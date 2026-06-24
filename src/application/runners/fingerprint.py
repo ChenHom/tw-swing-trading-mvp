@@ -53,6 +53,7 @@ def compute_fingerprint(
     initial_cash: int,
     manifest_digest: str,
     random_seed: Optional[int] = None,
+    universe_policy_version: Optional[str] = None,
 ) -> dict:
     cursor = conn.cursor()
     symbols = sorted(set(universe_symbols) | set(index_symbols))
@@ -90,7 +91,13 @@ def compute_fingerprint(
         for r in ca_rows
     ])
 
-    universe_snapshot_id = "diagnostic:" + _sha256(symbols)[:12]
+    # 固定清單（universe.yaml）無 policy 或 diagnostic policy → 保留 "diagnostic:" 前綴，verdict 一律
+    # INVALID（後見之明手挑池不得晉級）。真 PIT policy（如 liquidity-top150-v1）→ 落 policy 前綴的
+    # 真 snapshot id，verdict 的 is_diagnostic 閘門（startswith("diagnostic:")）即放行進入正式裁決。
+    if universe_policy_version and "diagnostic" not in universe_policy_version.lower():
+        universe_snapshot_id = f"{universe_policy_version}:" + _sha256(symbols)[:12]
+    else:
+        universe_snapshot_id = "diagnostic:" + _sha256(symbols)[:12]
     config_hash = _sha256([str(slippage_bps), str(initial_cash), manifest_digest, params_hash, strategy_version])
 
     return {

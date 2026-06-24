@@ -2,6 +2,7 @@ from src.contracts.models import DailySignalBundle, SignalItem, StrategyInfo, Tr
 from src.market_data.repository import PointInTimeMarketData
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot
 from src.strategy.filters import index_above_ma
+from src.strategy.universe import coerce_universe
 
 
 class TrendBreakoutStrategy:
@@ -11,7 +12,7 @@ class TrendBreakoutStrategy:
 
     def __init__(self, params: TrendBreakoutParams, universe_symbols: list[str], index_symbol: str):
         self.params = params
-        self.universe_symbols = universe_symbols
+        self.universe = coerce_universe(universe_symbols)
         self.index_symbol = index_symbol
 
     def generate(
@@ -28,7 +29,7 @@ class TrendBreakoutStrategy:
         market_ok = index_above_ma(market_data, self.index_symbol, p.index_ma_period)
 
         if market_ok:
-            for symbol in self.universe_symbols:
+            for symbol in self.universe.symbols_as_of(context.as_of_date):
                 if symbol in portfolio.positions and portfolio.positions[symbol].quantity > 0:
                     continue
 
