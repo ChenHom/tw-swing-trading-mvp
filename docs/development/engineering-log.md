@@ -394,3 +394,33 @@
 **優缺點**：優 — 根治兩類跨帳號污染、SELL 安全補上、stale-peak 連帶消失、migration 加性冪等對 live 零破壞。缺 — entry/exit 全域 vs 私有的非對稱稍增認知成本（已於程式註解與本 log 說明）。
 
 **驗證**：`pytest tests` **314 passed**（+ allocator no-add ×2、finder per-account scope ×1、risk_exit exit-id 斷言收緊）；對 `data/app.db` 副本跑 `init_db` 二次 → account_id 加成功、既有 bundle 全 NULL、資料筆數不變、冪等；副本上 `_find_bundles_for_execution('simulation-main', 06-24)` 確認待執行 3090 exit 仍會被 sim 執行（63 股照賣）。sim 那 63 股依使用者指示不攔、讓 06-24 照常執行。
+
+---
+
+## 2026-06-24 ｜ R-T4b Track 2 完成：首批 PIT 公平裁決（專案首個非 INVALID）
+
+**背景／觸發**：固定 21 檔 universe 是今日手挑＝後見之明，所有回測只能 diagnostic→INVALID。Track 2 用「每月再平衡、依當下已知成交額 top-N」的 PIT 流動性 universe 取代，首次能對策略下正式裁決，公平回答「+122% 是真 edge 還是後見之明」。
+
+**怎麼動（B1→B4 全鏈路在 research.db，gitignored）**：
+1. **B1 擴大回補**（睡眠期間並行完成）：research.db 從 ~45k bars/25 檔 → **929,831 bars / 587 檔 / 2018~2026，amount 已填**。
+2. **B2 建 PIT policy**：`market build-universe --policy-version liquidity-top150-v1 --top-n 150 --lookback 20`→ 102 次月再平衡、15,150 列、**451 檔**不同標的；PIT 驗證（成分隨時間變、known_at<=R、首 rebalance 前回 0 檔無外洩）。
+3. **B4b 註冊 regime_gate**：`scripts/register_regime_gates.py` 忠實轉錄三支 thesis **看結果前已寫死**的門檻（write-once）。
+4. **B4a 三支 PIT 重跑**（copy-per-run，--universe-policy liquidity-top150-v1，2018~2026，初始 30 萬）。
+
+**結果（決勝 gate＝逐筆期望值 bootstrap 5% CI 下界 ≥ 0）**：
+| 策略 | diagnostic（後見之明） | **PIT 總報酬** | maxDD | 有效樣本 | **期望值 CI 下界** | **裁決** |
+|---|---|---|---|---|---|---|
+| trend_breakout | +32.9% | **+8.75%** | 27.67% | 366 | **+1.35** ✓ | **RESEARCH_PASS** |
+| pullback_rebound | +44.2% | +0.47% | 16.07% | 285 | −56.75 ✗ | REJECTED |
+| trend_rider | **+121.9%** | +12.51% | 15.91% | 122 | −196.85 ✗ | REJECTED |
+
+**為什麼這結果重要（report ≠ edge）**：
+- **大反轉**：diagnostic 下最不起眼的 trend_breakout（曾判「edge≈5 筆運氣」）是**唯一**逐筆 edge 撐過公平、無倖存者偏誤、廣標的池的策略（366 有效筆、期望值下界正、HHI 0.023 極分散）。
+- diagnostic 下的明星 trend_rider（+121.9%、Sharpe 1.20）PIT 崩到 +12.51% 且 **REJECTED**——「讓贏家跑」的寬停損在 PIT 會夾帶下跌到底的輸家、期望值 CI 下界 −196.85（最差）。**+122% 幾乎全是後見之明污染，治理如預測抓到了**。
+- 注意 trend_rider PIT 總報酬（+12.51%）> trend_breakout（+8.75%）卻被否決：gate 看的是**逐筆期望值穩健性**（CI 下界），非帳面報酬。trend_rider 的正報酬來自少數集中交易、可能輕易翻負＝不穩健。
+
+**trend_breakout RESEARCH_PASS 的誠實註腳（過 gate 但經濟邊際）**：+8.75%/8.5 年（CAGR ~1%）；**成本吃毛利 68.7%**；去最佳 5 筆 PnL 轉負（−2,115）；年化報酬 CI 跨零（−4.2%~+8.5%）；輸 0050 buy-hold（+34.6%）、被等權 universe（+118.9%）輾壓。RESEARCH_PASS＝「逐筆 edge 統計穩健、可進影子驗證」，**非**「會賺大錢」。
+
+**優缺點**：優 — 專案首批正式裁決、北極星「驗證是否真賺錢」首次有公平答案；治理價值實證（擋掉兩支後見之明明星、放行唯一穩健者）。缺 — 殘留 survivorship（roster 單一快照漏部分早期下市股，已揭露）；regime/bear gate 因 regime 偵測未建仍未評估。
+
+**驗證**：三支報告於 `artifacts/reports/backtest/`（gitignored）；裁決＝五級狀態之一、非 INVALID；`register_regime_gates.py` 可重現門檻。`pytest tests` 321 passed（PIT 程式碼）。
