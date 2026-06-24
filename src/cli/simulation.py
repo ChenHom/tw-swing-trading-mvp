@@ -54,8 +54,9 @@ def cmd_simulation_run_daily(args):
 
         manifests = common.load_active_manifests(settings)
         symbols = [s.code for s in settings.universe.symbols]
+        account_id = common.resolve_account_id(conn, args.account)
         try:
-            entry_specs, exit_definitions = common.build_pipeline(settings, symbols)
+            entry_specs, exit_definitions = common.build_pipeline(settings, symbols, account_id)
         except (FileNotFoundError, ValueError) as e:
             print(f"載入策略管線失敗: {e}")
             sys.exit(1)
@@ -79,7 +80,6 @@ def cmd_simulation_run_daily(args):
         )
 
         run_date = date.fromisoformat(args.date) if args.date else date.today()
-        account_id = common.resolve_account_id(conn, args.account)
 
         # Per-strategy manifest preflight check
         print("--- 策略授權 preflight 查驗 ---")

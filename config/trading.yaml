@@ -13,6 +13,13 @@ pipeline:
     - trend_breakout
     - pullback_rebound
   index_symbol: "TSE"
+  # Per-account 進場策略 override（PIT 公平裁決後的治理，2026-06-24）：
+  # pullback_rebound 已 PIT REJECTED → 從真實帳號（國泰）退役、不再產生新 BUY 建議；
+  # trend_breakout（唯一 RESEARCH_PASS）續留。simulation-main（影子）未列入＝回退全域
+  # 兩支，繼續 forward 觀察 pullback。既有持倉不受影響：risk_exit 全策略載入、照常出場。
+  account_overrides:
+    國泰:
+      - trend_breakout
 
 # 全局帳戶風控（per-strategy 限額由各策略 manifest 定義）
 global_limits:

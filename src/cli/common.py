@@ -99,11 +99,18 @@ def build_global_limits(settings: AppSettings) -> GlobalLimits:
     )
 
 
-def build_pipeline(settings: AppSettings, universe_symbols: list[str]):
-    """Load entry strategy specs (in configured order) and exit-managed definitions."""
-    index_symbol = settings.trading.pipeline.index_symbol
+def build_pipeline(settings: AppSettings, universe_symbols: list[str], account_id: str | None = None):
+    """Load entry strategy specs (in configured order) and exit-managed definitions.
+
+    account_id selects a per-account entry-strategy override when one exists
+    (pipeline.account_overrides), else falls back to the global entry_strategies.
+    exit_definitions are always loaded in full — risk_exit is per-account and must
+    keep managing every held position regardless of which entries an account runs."""
+    pipeline = settings.trading.pipeline
+    index_symbol = pipeline.index_symbol
+    strategy_ids = pipeline.account_overrides.get(account_id, pipeline.entry_strategies)
     entry_specs = []
-    for sid in settings.trading.pipeline.entry_strategies:
+    for sid in strategy_ids:
         defn = strategy_registry.load_strategy_definition(settings, sid)
         entry_specs.append(EntryStrategySpec(
             definition=defn,

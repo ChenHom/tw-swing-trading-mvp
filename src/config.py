@@ -34,6 +34,12 @@ class PipelineConfig(BaseModel):
     # Deterministic daily order: risk_exit runs first, then these entry strategies.
     entry_strategies: list[str] = Field(default_factory=lambda: ["trend_breakout", "pullback_rebound"])
     index_symbol: str = "TSE"
+    # Per-account entry-strategy override (account_id -> strategy list). Lets the real
+    # account (國泰) and the shadow account run different strategies — e.g. retire a
+    # REJECTED strategy from real while keeping it observable on shadow. Falls back to
+    # entry_strategies when an account isn't listed. SELL/risk_exit is unaffected
+    # (exits are per-account and never gated by this).
+    account_overrides: dict[str, list[str]] = Field(default_factory=dict)
 
 class GlobalLimitsConfig(BaseModel):
     max_open_positions: int = 8
