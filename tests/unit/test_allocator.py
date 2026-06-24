@@ -132,3 +132,42 @@ def test_strategy_daily_buy_limit():
     )
     # 剩餘額度 50 元買不起 1 股 100 元
     assert isinstance(results["b1"], str)
+
+
+def test_no_add_blocks_buy_when_already_holding():
+    """已持有的策略/標的收到 BUY → 擋下（ALREADY_HOLDING），不加碼。
+    防守全域共用 bundle：別的帳號（無此持倉）產出的 BUY 流到本帳號時，
+    本帳號 allocator 仍以自己活的持倉為準拒絕加碼（3090 日電貿事件根因）。"""
+    portfolio = MultiPortfolioState(
+        available_cash=500000,
+        strategy_positions={("trend_breakout", "3090"): 4},  # 已持有 4 股
+    )
+    buys = [sig("b1", "3090", "BUY", 320.0, "trend_breakout")]
+
+    orders, results, events = MultiStrategyAllocator.plan(
+        [], buys, portfolio,
+        strategy_budgets={"trend_breakout": 20000},
+        strategy_limits={"trend_breakout": limits()},
+        global_limits=GLOBAL,
+    )
+
+    assert isinstance(results["b1"], str) and results["b1"].startswith("ALREADY_HOLDING")
+    assert orders == []  # 沒有任何加碼單
+
+
+def test_no_add_still_allows_fresh_symbol():
+    """同策略對「未持有」標的的 BUY 不受影響，照常開倉。"""
+    portfolio = MultiPortfolioState(
+        available_cash=500000,
+        strategy_positions={("trend_breakout", "3090"): 4},
+    )
+    buys = [sig("b1", "2330", "BUY", 100.0, "trend_breakout")]  # 未持有 2330
+
+    orders, results, events = MultiStrategyAllocator.plan(
+        [], buys, portfolio,
+        strategy_budgets={"trend_breakout": 20000},
+        strategy_limits={"trend_breakout": limits()},
+        global_limits=GLOBAL,
+    )
+
+    assert any(o["action"] == "open_long" and o["symbol"] == "2330" for o in orders)

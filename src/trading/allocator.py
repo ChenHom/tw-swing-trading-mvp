@@ -133,6 +133,20 @@ class MultiStrategyAllocator:
                 continue
 
             is_new_position = local_positions.get(key, 0) == 0
+            # No-add invariant, enforced here at the per-account execution boundary.
+            # Signal bundles are account-agnostic (no account_id) and shared across
+            # accounts; whichever account's run generates a bundle first bakes ITS
+            # position view into the strategy's generate()-time no-add filter, so the
+            # other account would otherwise execute a BUY for a symbol it already
+            # holds. The only authoritative "do I already hold this?" check is against
+            # this account's live positions, which is exactly local_positions here.
+            # ponytail: all current strategies are enter-once (no scaling-in). If a
+            # scaling strategy is ever added, gate this on a per-strategy allow_add flag.
+            if not is_new_position:
+                signal_results[sig.signal_id] = (
+                    f"ALREADY_HOLDING: 策略 {strategy_id} 已持有 {symbol}，不加碼"
+                )
+                continue
             if is_new_position:
                 # Per-strategy open positions
                 strategy_open = sum(
