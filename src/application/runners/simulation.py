@@ -207,7 +207,7 @@ class DailySimulationRunner:
             # auto_execute=False（真實帳號）：跳過自動成交，僅標記完成後續跑規劃(Stage 3)。
             if run_record["execution_status"] != "COMPLETED":
                 if auto_execute:
-                    bundles = self._find_bundles_for_execution(run_date)
+                    bundles = self._find_bundles_for_execution(run_date, account_id)
                     if bundles:
                         context = ExecutionContext(
                             run_id=run_id,
@@ -255,7 +255,8 @@ class DailySimulationRunner:
                 # 3a. risk_exit first (deterministic pipeline order, §2.9)
                 risk_exit = RiskExitEngine(self.exit_definitions, self.projection, self.calendar)
                 for bundle in risk_exit.generate_exit_bundles(run_date, account_id, pit_data, run_id):
-                    self._save_bundle(bundle, target_execution_date)
+                    # Exit bundles are private to this account (per-account exit facts).
+                    self._save_bundle(bundle, target_execution_date, account_id=account_id)
 
                 # 3b. entry strategies in configured order with per-strategy position view
                 strategy_positions = self.projection.get_strategy_positions(account_id, include_long_term=True)
@@ -352,7 +353,7 @@ class DailySimulationRunner:
         carry the block reason. Pure read of projection/db — no broker, no fills, no writes
         outside order_intents. The dashboard reads these for the "下次執行" plan.
         """
-        bundles = self._find_bundles_for_execution(target_execution_date)
+        bundles = self._find_bundles_for_execution(target_execution_date, account_id)
         cursor = self.db_conn.cursor()
         # Idempotent refresh: re-running run-daily for the same target date rewrites intents.
         cursor.execute(
@@ -597,19 +598,34 @@ class DailySimulationRunner:
         )
         self.db_conn.commit()
 
-    def _find_bundles_for_execution(self, execution_date: date) -> list[DailySignalBundle]:
-        """All bundles targeting execution_date, in deterministic creation order.
-        The engine re-orders them (exits first, pipeline order) before planning."""
+    def _find_bundles_for_execution(self, execution_date: date, account_id: Optional[str] = None) -> list[DailySignalBundle]:
+        """Bundles targeting execution_date, in deterministic creation order.
+        The engine re-orders them (exits first, pipeline order) before planning.
+
+        account_id filters to global bundles (account_id IS NULL, e.g. shared entry
+        signals) plus this account's own private bundles (exit bundles). Passing None
+        returns every bundle (legacy / preview callers)."""
         cursor = self.db_conn.cursor()
-        cursor.execute(
-            """
-            SELECT bundle_id, run_id, approval_id, strategy_id, strategy_version, params_hash, signal_date, target_execution_date, market_data_cutoff
-            FROM signal_bundles
-            WHERE target_execution_date = ?
-            ORDER BY bundle_id ASC
-            """,
-            (execution_date.isoformat(),)
-        )
+        if account_id is None:
+            cursor.execute(
+                """
+                SELECT bundle_id, run_id, approval_id, strategy_id, strategy_version, params_hash, signal_date, target_execution_date, market_data_cutoff
+                FROM signal_bundles
+                WHERE target_execution_date = ?
+                ORDER BY bundle_id ASC
+                """,
+                (execution_date.isoformat(),)
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT bundle_id, run_id, approval_id, strategy_id, strategy_version, params_hash, signal_date, target_execution_date, market_data_cutoff
+                FROM signal_bundles
+                WHERE target_execution_date = ? AND (account_id IS NULL OR account_id = ?)
+                ORDER BY bundle_id ASC
+                """,
+                (execution_date.isoformat(), account_id)
+            )
         bundles = []
         for r in cursor.fetchall():
             bundle = self._load_bundle_row(r)
@@ -662,7 +678,9 @@ class DailySimulationRunner:
             signals=items
         )
 
-    def _save_bundle(self, bundle: DailySignalBundle, target_execution_date: date) -> None:
+    def _save_bundle(self, bundle: DailySignalBundle, target_execution_date: date, account_id: Optional[str] = None) -> None:
+        # account_id=None => global bundle (entry signals, shared across accounts).
+        # account_id set => private exit bundle owned by that account.
         cursor = self.db_conn.cursor()
         # Idempotent re-run: a bundle already saved for this id is left untouched
         # (regeneration is deterministic, so the content is identical).
@@ -673,8 +691,8 @@ class DailySimulationRunner:
             """
             INSERT INTO signal_bundles (
                 bundle_id, run_id, approval_id, strategy_id, strategy_version,
-                params_hash, signal_date, target_execution_date, market_data_cutoff, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                params_hash, signal_date, target_execution_date, market_data_cutoff, created_at, account_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
             """,
             (
                 bundle.bundle_id,
@@ -685,7 +703,8 @@ class DailySimulationRunner:
                 bundle.strategy.params_hash,
                 bundle.signal_date.isoformat(),
                 target_execution_date.isoformat(),
-                bundle.market_data_cutoff.isoformat()
+                bundle.market_data_cutoff.isoformat(),
+                account_id,
             )
         )
         for sig in bundle.signals:

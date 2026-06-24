@@ -178,19 +178,19 @@ def cmd_simulation_execute_pending(args):
 
     run_date = date.fromisoformat(args.execution_date) if args.execution_date else date.today()
 
-    # Reuse the orchestrator's bundle loader (all bundles targeting run_date)
+    account_id = common.resolve_account_id(conn, args.account)
+
+    # Reuse the orchestrator's bundle loader (global bundles + this account's own)
     loader = DailySimulationRunner(
         db_conn=conn, calendar=calendar, market_provider=None,
         market_repo=repo, projection=projection,
         allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals
     )
-    bundles = loader._find_bundles_for_execution(run_date)
+    bundles = loader._find_bundles_for_execution(run_date, account_id)
     if not bundles:
         print(f"No pending signal bundle found targeting execution date {run_date}")
         conn.close()
         return
-
-    account_id = common.resolve_account_id(conn, args.account)
 
     strategy_budgets = {}
     for sid in {b.strategy.strategy_id for b in bundles}:

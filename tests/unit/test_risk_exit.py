@@ -103,7 +103,9 @@ def test_fixed_stop_exit(setup):
     assert len(bundles) == 1
     b = bundles[0]
     assert b.strategy.strategy_id == "trend_breakout"
-    assert b.bundle_id.endswith("-exit")
+    # Exit bundle id is account-scoped so two accounts never collide on the
+    # idempotent _save_bundle (each owns its own exit facts).
+    assert b.bundle_id == "bundle-20260610-trend_breakout-acc-1-exit"
     assert len(b.signals) == 1
     sig = b.signals[0]
     assert sig.action == "SELL"

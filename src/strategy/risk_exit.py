@@ -79,7 +79,10 @@ class RiskExitEngine:
             bundles.append(
                 DailySignalBundle(
                     schema_version="1.0",
-                    bundle_id=f"bundle-{date_tag}-{strategy_id}-exit",
+                    # account in the id keeps each account's exit bundle distinct, so the
+                    # idempotent _save_bundle no longer lets the first account to run clobber
+                    # the second account's exits (a per-account fact: cost / high-watermark).
+                    bundle_id=f"bundle-{date_tag}-{strategy_id}-{account_id}-exit",
                     run_id=run_id,
                     # SELLs are never approval-gated (§2.7); placeholder id keeps schema satisfied.
                     approval_id="risk-exit",

@@ -371,3 +371,26 @@
 **優缺點**：優 — go-live gate #3 全鏈路（程式 + 設定 + 實測）皆完成。缺 — 無。
 
 **驗證**：`pytest tests/unit/test_discord_alert.py` 9 項全綠（新增 1 項覆蓋 openclaw env fallback）；Discord 實際收到測試告警。
+
+---
+
+## 2026-06-24 ｜ 全域 signal bundle 跨帳號污染修補（no-add + exit leakage）
+
+**背景／觸發**：simulation-main（影子）3090 日電貿出現「均價 321.86、今日收盤 302 小虧卻觸發移動停利」。追根（全程 DB 查證）發現**不是 risk_exit 或 no-add 邏輯錯，而是架構錯位**。
+
+**根因（三層因果鏈）**：
+1. `signal_bundles` **無 `account_id` 欄 → 訊號 bundle 全域共用**；兩條 cron（國泰 15:10 先、simulation-main 15:12 後）以 `bundle_id` 為 PK 走 idempotent `_save_bundle`（已存在即跳過不重產）。⇒ **誰先跑就把誰的持倉視角烤進共用 bundle**，另一帳號盲目重用。
+2. **進場(no-add)**：06-22 國泰先跑、其 trend_breakout 名下無 3090（碰過的是 MANUAL、06-16 已賣光）→ no-add 對它不該觸發 → 3090 創 20 日新高 → 吐 BUY 進共用 bundle；sim idempotent 重用 → 自己持 4 股卻照單 → 06-23 allocator 算出 `is_new_position=False` 仍走 `increase_long` 加買 59 股 → 新 59 股繼承舊 lot 峰值 335.50、隔日即被移動停利停在虧損。
+3. **出場(exit leakage，同根因更危險)**：exit bundle_id `bundle-{date}-{strategy}-exit` 也 account-agnostic，且只在「有出場訊號」時建。兩帳號同日同策略不同持倉時，先跑者的 exit bundle 被後跑者 idempotent 重用 → 後者**漏掉自己該觸發的停損**（或被迫執行不屬於自己的 SELL）。目前沒爆只因國泰幾乎無 strategy 持倉＝靠運氣。
+
+**正解原則**：進場訊號＝市場事實（突破發生了）→ 全域共用 OK，per-account 在 allocator 把關；出場訊號＝帳號專屬事實（成本/高水位/持有天數）→ 本就不該全域共用，必須 per-account。
+
+**怎麼動（兩部分）**：
+1. **no-add 移到 allocator（commit 1）**：[allocator.py](../../src/trading/allocator.py) `MultiStrategyAllocator.plan` 算出 `is_new_position` 後若 `not is_new_position` → `ALREADY_HOLDING` 擋下 BUY + `continue`。位置不變式的權威執行點＝動錢當下對本帳號活的持倉；allocator 本就有 per-account `local_positions`、本就算出 `is_new_position`，只差沒擋。唯一 chokepoint（回測 + 兩 live 帳號全走 `engine → allocator.plan`），一處全蓋；SELL 在 BUY 段前處理不受影響（S5）；順帶治掉 stale-peak。`increase_long` 自然成 dead code（留 ternary + `ponytail:` 註記，未來加碼策略才開 per-strategy `allow_add`）。
+2. **exit bundle account-scope（commit 2）**：`signal_bundles` 加 nullable `account_id`（NULL=全域 entry；set=私有 exit；沿用 [db.py](../../src/portfolio/db.py) 既有 idempotent `PRAGMA→ALTER` 慣例）；exit bundle_id → `bundle-{date}-{strategy}-{account}-exit`（消跨帳號 idempotent 碰撞 → 修漏停損）；`_save_bundle(...,account_id=None)` 落地、Stage 3a 出場傳 account、3b 進場傳 None；`_find_bundles_for_execution(date, account_id)` → `WHERE target_execution_date=? AND (account_id IS NULL OR account_id=?)`（修執行到別人的 SELL），更新 3 呼叫點。回測走 run-scoped finder、天生隔離、不動。
+
+**為什麼這樣動**：entry 全域共用是對的（突破是市場事實，避免重產），錯只在「位置相關閘放在共用層」；把 no-add 下放到 per-account 的 allocator、把 exit 上移成 per-account 私有 bundle，各歸其位。`account_id` 用 nullable 欄而非改 bundle_id 解析（國泰/strategy 名含 `-`/`_`，suffix 解析脆弱）；NULL=全域確保存量/待執行的舊 bundle 仍照常執行（使用者要求「讓 sim 那 63 股 06-24 移動停利跑完」不受影響，已用 app.db 副本驗證）。
+
+**優缺點**：優 — 根治兩類跨帳號污染、SELL 安全補上、stale-peak 連帶消失、migration 加性冪等對 live 零破壞。缺 — entry/exit 全域 vs 私有的非對稱稍增認知成本（已於程式註解與本 log 說明）。
+
+**驗證**：`pytest tests` **314 passed**（+ allocator no-add ×2、finder per-account scope ×1、risk_exit exit-id 斷言收緊）；對 `data/app.db` 副本跑 `init_db` 二次 → account_id 加成功、既有 bundle 全 NULL、資料筆數不變、冪等；副本上 `_find_bundles_for_execution('simulation-main', 06-24)` 確認待執行 3090 exit 仍會被 sim 執行（63 股照賣）。sim 那 63 股依使用者指示不攔、讓 06-24 照常執行。

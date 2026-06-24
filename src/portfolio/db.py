@@ -189,10 +189,11 @@ def init_db(db_path: str) -> None:
         signal_date TEXT NOT NULL,
         target_execution_date TEXT NOT NULL,
         market_data_cutoff TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        account_id TEXT
     );
     """)
-    
+
     # 10. signal_items
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS signal_items (
@@ -321,6 +322,16 @@ def init_db(db_path: str) -> None:
     pnl_columns = [row["name"] for row in cursor.fetchall()]
     if "strategy_id" not in pnl_columns:
         cursor.execute("ALTER TABLE realized_pnl ADD COLUMN strategy_id TEXT NOT NULL DEFAULT '';")
+
+    # Migration: per-account scoping for signal_bundles.
+    # NULL = global (entry signals are market facts, shared across accounts);
+    # a set value = private exit bundle owned by that account. See risk_exit /
+    # _find_bundles_for_execution. NULL stays "global" so pre-existing bundles
+    # keep executing for whichever account holds the position.
+    cursor.execute("PRAGMA table_info(signal_bundles);")
+    bundle_columns = [row["name"] for row in cursor.fetchall()]
+    if "account_id" not in bundle_columns:
+        cursor.execute("ALTER TABLE signal_bundles ADD COLUMN account_id TEXT;")
 
     # Migration: Add user_override column to signal_items if it doesn't exist
     # Allowed values: NULL (no override) | 'REJECTED' (human rejected, skip execution)

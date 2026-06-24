@@ -439,3 +439,54 @@ def test_engine_skips_sell_blocked_by_long_term_position():
         conn.close()
     finally:
         os.unlink(db_path)
+
+
+def _mk_bundle(bundle_id, strategy_id, sig_date, target_date):
+    return DailySignalBundle(
+        schema_version="1.0",
+        bundle_id=bundle_id,
+        run_id="run-x",
+        approval_id="app-x",
+        strategy=StrategyInfo(
+            strategy_id=strategy_id, strategy_version="1.0.0",
+            params_canonicalization="strategy-params-v1", params_hash="h",
+        ),
+        signal_date=sig_date,
+        target_execution_date=target_date,
+        market_data_cutoff=sig_date,
+        signals=[],
+    )
+
+
+def test_find_bundles_scopes_exits_per_account(temp_db):
+    """全域 entry bundle（account_id NULL）兩帳號都看得到；exit bundle 私有：
+    各帳號只執行自己的，不會撈到別人的 exit（修跨帳號 SELL 污染根因）。"""
+    calendar = ExchangeCalendarsTradingCalendar()
+    repo = SqliteMarketBarRepository(temp_db)
+    projection = PortfolioProjection(temp_db)
+    runner = DailySimulationRunner(
+        db_conn=temp_db, calendar=calendar, market_provider=MagicMock(),
+        market_repo=repo, projection=projection,
+        allowed_issuers=["manual-research-review"], revoked_approvals=[],
+    )
+    sig_d, tgt = date(2026, 6, 22), date(2026, 6, 23)
+
+    # 全域 entry（account_id=None） + 兩帳號各自的 exit
+    runner._save_bundle(_mk_bundle("bundle-20260622-trend_breakout", "trend_breakout", sig_d, tgt), tgt)
+    runner._save_bundle(_mk_bundle("bundle-20260622-trend_breakout-國泰-exit", "trend_breakout", sig_d, tgt), tgt, account_id="國泰")
+    runner._save_bundle(_mk_bundle("bundle-20260622-trend_breakout-sim-exit", "trend_breakout", sig_d, tgt), tgt, account_id="sim")
+
+    sim_ids = {b.bundle_id for b in runner._find_bundles_for_execution(tgt, "sim")}
+    cathay_ids = {b.bundle_id for b in runner._find_bundles_for_execution(tgt, "國泰")}
+    all_ids = {b.bundle_id for b in runner._find_bundles_for_execution(tgt)}
+
+    # 全域 entry 兩邊都有
+    assert "bundle-20260622-trend_breakout" in sim_ids
+    assert "bundle-20260622-trend_breakout" in cathay_ids
+    # exit 各自私有，不交叉
+    assert "bundle-20260622-trend_breakout-sim-exit" in sim_ids
+    assert "bundle-20260622-trend_breakout-國泰-exit" not in sim_ids
+    assert "bundle-20260622-trend_breakout-國泰-exit" in cathay_ids
+    assert "bundle-20260622-trend_breakout-sim-exit" not in cathay_ids
+    # 無帳號參數 = 全撈（legacy/preview）
+    assert len(all_ids) == 3
