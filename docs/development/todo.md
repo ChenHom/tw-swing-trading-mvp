@@ -61,8 +61,9 @@
 - ✅ **誠實回測實驗室 milestone**（2026-06-23，311 tests）：Phase 0（雙價/CA 帳本、FinMind/TWSE provider、PIT universe 骨架）+ Phase 1（風險/穩健指標、四 benchmark、五級裁決）+ Phase 2（Thesis/Research Ledger/lockbox/參數高原）首度在**真實資料**上跑通。回補 research.db（44,959 bars, 2018-2026, 含 2022）、修 3 個整合 bug。commits `277c096`/`08b09a5`/`4cdd1d3`。
 - ✅ **trend_rider「順勢交易者」Challenger**（2026-06-23）：「讓贏家跑」exit config（不動現役兩支）。回測亮眼（+121.9%/Sharpe 1.20/成本 5.6%、崩盤防守保住）但 **+122% 受後見之明污染、報酬 edge 未證實**。
 - ✅ **儀表板 UI**：持倉部位加「最後收盤」欄 + 策略別損益顯示中文名（commit `443ce86`）。
-- 🔄 **R-T4b Track 1 — trend_rider 影子上線驗證**：per-account 策略範圍（simulation-main 跑、國泰維持兩支不污染），累積零偏差 forward 證據。**lean、優先**。
-- ⬜ **R-T4b Track 2 — PIT 流動性排名 universe**：消除後見之明/survivorship（方案 B 流動性 top-N、下市股可查）→ 解 fingerprint 寫死 diagnostic、backtest 接 policy + per-date universe → 首個非 INVALID 裁決。**較重、後排**。
+- ✅ **R-T4b Track 2 — PIT 流動性排名 universe**（2026-06-24）：`liquidity-top150-v1`（451 檔/月再平衡）+ 三支 regime_gate 註冊 → **專案首批非 INVALID 裁決**：trend_breakout=RESEARCH_PASS（唯一），pullback_rebound/trend_rider=REJECTED（CI 下界為負）。commits `40eb1ef`/`c48b391`，詳見 engineering-log 2026-06-24。殘留缺口：survivorship（roster 單一快照）、regime/bear gate 未評估。
+- ⬜ **R-T4b Track 1 — 影子上線 forward-test（retarget 為 trend_breakout）**：原規劃跑 trend_rider，但其已 PIT REJECTED → 改以 trend_breakout（唯一 RESEARCH_PASS）累積零偏差證據。`account_overrides` 尚未實作。
+- ⬜ **優化迴圈**：pullback_rebound/trend_rider 已 REJECTED → 新假設＝新 strategy_version、重跑 PIT。
 - ⬜ **backtest 冪等**：signal `bundle_id` 改 run-scoped（現以 copy-per-run 繞過）。
 
 ---

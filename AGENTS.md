@@ -82,11 +82,11 @@ MVP 流程閉環的不變式：
 
 ## Next Development Priority (下一步開發優先順序)
 
-當前處於「誠實回測實驗室建成、trend_rider 識別為有潛力 Challenger」的里程碑之後。下一段＝ plan `2455-cosmic-fountain.md` 的 **R-T4b**：
+當前處於「**Track 2 PIT 公平裁決完成、專案首批非 INVALID 裁決已出**」的里程碑之後（2026-06-24）。三支 PIT 重跑（liquidity-top150-v1、451 檔）：**trend_breakout = RESEARCH_PASS（唯一）**，pullback_rebound / trend_rider = **REJECTED**（後兩支逐筆期望值 bootstrap CI 下界為負；trend_rider diagnostic +122% 幾乎全是後見之明）。詳見 engineering-log 2026-06-24。下一段：
 
-1. **Track 1（優先、輕）— trend_rider 影子上線驗證**：per-account 策略範圍（`config/trading.yaml` 加 `account_overrides`，`simulation-main` 跑 trend_rider、`國泰` 維持兩支不污染），累積**零偏差** live forward 證據（S4 唯一真乾淨證據，比歷史 PIT 更直接答「真有 edge？」）。
-2. **Track 2（較重、後排）— PIT 流動性排名 universe**：消除後見之明/survivorship（FinMind 探測：指數成分史不可行/付費；**流動性 top-N 可行、下市股歷史可查 → survivorship 可消除**）。需解 `fingerprint.py` 寫死 `diagnostic:` 前綴、backtest 接 `UniversePolicy`、backtest 支援 per-date 變動 universe → 首個非 `INVALID` 裁決。
-3. **backtest 冪等**：signal `bundle_id` 改 run-scoped（現以 copy-per-run 繞過）；成本歸因拆解（P3-T5）。
+1. **Track 1（retarget）— 影子上線 forward-test**：原規劃跑 trend_rider，但它已 PIT REJECTED → **改以 trend_breakout（唯一 RESEARCH_PASS）為影子 forward-test 對象**累積零偏差證據。機制仍是 per-account 策略範圍（`config/trading.yaml` 加 `account_overrides`，`simulation-main` 跑、`國泰` 維持兩支不污染）。**`account_overrides` 尚未實作**。
+2. **優化迴圈**：pullback_rebound / trend_rider 已 REJECTED → 出新假設、改參數＝新 `strategy_version`（舊版保留），重跑 PIT 公平裁決。
+3. **backtest 冪等 + 殘留缺口**：signal `bundle_id` 改 run-scoped（現以 copy-per-run 繞過）；PIT 殘留 survivorship（roster 單一快照漏部分早期下市股）；regime/bear gate 未評估（需 regime 偵測）；成本歸因拆解（P3-T5）。
 
 > 歷史 backlog（公司行動處理、零股撮合分流、權益曲線等）多已於 Phase 0/2026-06 完成或併入研究層；治理護欄（Phase 3A kill-switch/lineage、Phase 3-5）延後到驗證出會賺錢策略之後。
 
@@ -115,8 +115,8 @@ MVP 流程閉環的不變式：
    - 零股與整張股票採用相同的成交滑價模型；未追蹤除權息等公司行動（會使加權均價與 `position_high_watermarks` 失真，多策略上線後此風險被放大）；缺乏詳細的排程異常告警閉環。
 3. **進場策略相關性高 + 上升趨勢低捕獲**:
    - `trend_breakout` 與 `pullback_rebound` 皆為 long-only 順勢策略，大盤 60MA 濾網可規避空頭但無法規避高檔盤整鈍刀。真實回測（2018-2026）另證實：兩支在持續上升趨勢中**嚴重低捕獲**（緊出場太早砍贏家，2024 AI 年幾乎零捕獲）。研究 Challenger `trend_rider`（讓贏家跑）即針對此缺口，但尚未上線/未證實 edge。
-4. **尚未證實任何策略「會賺錢」（最重要的研究限制）**:
-   - 今日固定 21 檔 universe 是 **diagnostic（非 PIT）**，回測只能判 `INVALID`，只能淘汰、不能晉級。所有 diagnostic 回測的**報酬數字受後見之明/survivorship bias 污染**（手挑已知大贏家），不可當賺錢證據。可信的只有「不受標的池影響」的結構面（崩盤防守、成本占比）。要正式裁決需 PIT universe（見 plan R-T4b）。
+4. **尚無策略證明「會賺大錢」（PIT 公平裁決後更新，2026-06-24）**:
+   - 已用 PIT 流動性 universe（liquidity-top150-v1、451 檔、無後見之明）對三支正式裁決：**僅 trend_breakout = RESEARCH_PASS**（逐筆期望值 bootstrap CI 下界 +1.35、366 有效筆），pullback_rebound / trend_rider **REJECTED**。trend_breakout 的 PASS 是**統計穩健但經濟邊際**（PIT 僅 +8.75%/8.5 年、成本吃毛利 68.7%、去最佳5筆轉負、輸 0050 buy-hold +34.6%）＝「可進影子驗證」非「會賺大錢」。diagnostic（固定 21 檔）回測數字受後見之明污染，僅結構面（崩盤防守、成本占比）可信。
 5. **舊 `trend_pullback` 授權檔 digest 不一致（升級前即存在）**:
    - `artifacts/approvals/approval-trend_pullback-20260610202219.json` 的 digest 與其內容不符（preflight 顯示 INVALID）。該策略已退役且 SELL 不受授權閘門影響，無實際風險；存量倉位出清後可清理。
 
