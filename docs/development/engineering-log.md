@@ -424,3 +424,25 @@
 **優缺點**：優 — 專案首批正式裁決、北極星「驗證是否真賺錢」首次有公平答案；治理價值實證（擋掉兩支後見之明明星、放行唯一穩健者）。缺 — 殘留 survivorship（roster 單一快照漏部分早期下市股，已揭露）；regime/bear gate 因 regime 偵測未建仍未評估。
 
 **驗證**：三支報告於 `artifacts/reports/backtest/`（gitignored）；裁決＝五級狀態之一、非 INVALID；`register_regime_gates.py` 可重現門檻。`pytest tests` 321 passed（PIT 程式碼）。
+
+---
+
+## 2026-06-24 ｜ 優化迴圈（誠實負面）+ account_overrides 治理退役
+
+**背景／觸發**：PIT 公平裁決後（trend_breakout RESEARCH_PASS、pullback_rebound / trend_rider REJECTED），依使用者指示「先 (b) 優化迴圈、再 (a) 影子上線」。
+
+**(b) 優化迴圈 — trend_rider 不對稱停損假設（誠實負面結論）**：
+- 診斷（成本是主因，與標的池無關）：round-trip 成本 ~0.585%（費 0.1425%×2 + 稅 0.3%）。pullback_rebound 成本=毛利 **146%**（費稅 > 毛利）、trend_rider 88%、trend_breakout 68.7%（毛利夠厚才撐過）。trend_rider 去最佳5筆 −33,038＝「讓贏家跑」在 PIT 上也讓輸家流血。
+- 結構性假設（config-only、保留 thesis）：收緊災難停損（快砍輸家）、寬移動停利 −25% 不動（讓贏家跑）＝不對稱。測**參數高原** fixed_stop ∈ {700,800,900}（v1.1.0、同 gate）。
+- 結果：**整片 REJECTED**，期望值 CI 下界 700=−164.8 / 800=−303.5 / 900=−334.4（基準 1200=−196.8），無單調改善、無過關高原。**「讓贏家跑」在公平 PIT 不成立，結構性修補救不了**。pullback_rebound 成本>毛利、無乾淨 config 槓桿 → **不調**（調＝過擬合，違反 S4）。
+- 治理價值：測高原、整片失敗、誠實接受、不繼續 fishing＝**governance 如設計地擋住過擬合**。優化迴圈正確輸出「淘汰、不晉級」。
+
+**(a) account_overrides — per-account 進場策略 + PIT 裁決後治理退役**：
+- 機制（plan R-T4b Track 1）：`config.py` PipelineConfig 加 `account_overrides: dict[str,list[str]]`；`build_pipeline(settings, symbols, account_id)` 用 `account_overrides.get(account_id, entry_strategies)`；`cli/simulation.py` account_id 上移、傳入。**exit_definitions 仍全載入**＝既有持倉照常出場、SELL 不受 override 影響。
+- 治理配置：原 Track 1 規劃讓 sim 加跑 trend_rider 影子驗證，但 trend_rider 已 REJECTED → retarget。改為 **pullback_rebound（REJECTED）從真實帳號國泰退役**（`account_overrides: {國泰: [trend_breakout]}`）、不再產生新 BUY 建議；trend_breakout（唯一 RESEARCH_PASS）續留兩帳號。simulation-main 回退全域兩支＝繼續 forward 觀察 pullback。國泰既有 pullback 持倉由 risk_exit 照常出場。
+
+**為什麼這樣動**：PIT 裁決是「看結果前定門檻」的正式裁決，REJECTED 即不應在真錢帳號繼續產生進場建議（即便國泰 plan-only、人工執行）。account_overrides 讓「真實帳號只跑過關策略、影子保留觀察」一行 config 達成，無需動策略碼或 manifest。
+
+**優缺點**：優 — 優化迴圈守住不過擬合、治理對齊（過關上、淘汰下）、機制 reuse 既有 build_pipeline。缺 — pullback_rebound 退役改變國泰每日建議（reversible config，下次 cron 15:10 生效）；trend_rider 1.1.0 gate 殘留 research.db（gitignored，無害）。
+
+**驗證**：`pytest tests` **322 passed**（+`test_account_overrides`）；config 載入確認 國泰=[trend_breakout]、simulation-main=[trend_breakout,pullback_rebound]、exit 仍含 pullback_rebound；trend_rider 高原實驗後 config 已還原（git clean）。

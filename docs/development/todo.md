@@ -62,8 +62,8 @@
 - ✅ **trend_rider「順勢交易者」Challenger**（2026-06-23）：「讓贏家跑」exit config（不動現役兩支）。回測亮眼（+121.9%/Sharpe 1.20/成本 5.6%、崩盤防守保住）但 **+122% 受後見之明污染、報酬 edge 未證實**。
 - ✅ **儀表板 UI**：持倉部位加「最後收盤」欄 + 策略別損益顯示中文名（commit `443ce86`）。
 - ✅ **R-T4b Track 2 — PIT 流動性排名 universe**（2026-06-24）：`liquidity-top150-v1`（451 檔/月再平衡）+ 三支 regime_gate 註冊 → **專案首批非 INVALID 裁決**：trend_breakout=RESEARCH_PASS（唯一），pullback_rebound/trend_rider=REJECTED（CI 下界為負）。commits `40eb1ef`/`c48b391`，詳見 engineering-log 2026-06-24。殘留缺口：survivorship（roster 單一快照）、regime/bear gate 未評估。
-- ⬜ **R-T4b Track 1 — 影子上線 forward-test（retarget 為 trend_breakout）**：原規劃跑 trend_rider，但其已 PIT REJECTED → 改以 trend_breakout（唯一 RESEARCH_PASS）累積零偏差證據。`account_overrides` 尚未實作。
-- ⬜ **優化迴圈**：pullback_rebound/trend_rider 已 REJECTED → 新假設＝新 strategy_version、重跑 PIT。
+- ✅ **R-T4b Track 1 — account_overrides + 治理退役**（2026-06-24）：per-account 進場策略 override 機制；pullback_rebound（REJECTED）從國泰退役（`account_overrides: {國泰: [trend_breakout]}`）、不再產生新 BUY 建議，既有持倉由 risk_exit 照常出場；trend_breakout 兩帳號續留、simulation-main 回退兩支續觀察 pullback。詳見 engineering-log 2026-06-24。
+- 🔄 **優化迴圈（首輪誠實負面）**：trend_rider 不對稱停損高原（fixed_stop 700/800/900）**整片 REJECTED**＝「讓贏家跑」PIT 不成立、結構性修補救不了；pullback 成本>毛利不調（避免過擬合）。下一步：若要救須**新 thesis/新策略**（非 tweak），或接受兩支淘汰。
 - ⬜ **backtest 冪等**：signal `bundle_id` 改 run-scoped（現以 copy-per-run 繞過）。
 
 ---

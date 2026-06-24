@@ -84,8 +84,8 @@ MVP 流程閉環的不變式：
 
 當前處於「**Track 2 PIT 公平裁決完成、專案首批非 INVALID 裁決已出**」的里程碑之後（2026-06-24）。三支 PIT 重跑（liquidity-top150-v1、451 檔）：**trend_breakout = RESEARCH_PASS（唯一）**，pullback_rebound / trend_rider = **REJECTED**（後兩支逐筆期望值 bootstrap CI 下界為負；trend_rider diagnostic +122% 幾乎全是後見之明）。詳見 engineering-log 2026-06-24。下一段：
 
-1. **Track 1（retarget）— 影子上線 forward-test**：原規劃跑 trend_rider，但它已 PIT REJECTED → **改以 trend_breakout（唯一 RESEARCH_PASS）為影子 forward-test 對象**累積零偏差證據。機制仍是 per-account 策略範圍（`config/trading.yaml` 加 `account_overrides`，`simulation-main` 跑、`國泰` 維持兩支不污染）。**`account_overrides` 尚未實作**。
-2. **優化迴圈**：pullback_rebound / trend_rider 已 REJECTED → 出新假設、改參數＝新 `strategy_version`（舊版保留），重跑 PIT 公平裁決。
+1. ✅ **Track 1 / account_overrides + 治理退役（2026-06-24 完成）**：per-account 進場策略 override 已實作；pullback_rebound（REJECTED）從國泰退役、trend_breakout（RESEARCH_PASS）兩帳號續留、simulation-main 續觀察 pullback。既有持倉由 risk_exit 照常出場。
+2. **優化迴圈（首輪誠實負面）**：trend_rider 不對稱停損高原（fixed_stop 700/800/900）整片 REJECTED＝「讓贏家跑」PIT 不成立、結構性修補救不了；pullback 成本(146%)>毛利、不調（調＝過擬合，違反 S4）。**下一步要救須新 thesis/新策略（非 tweak），或接受兩支淘汰、專注 trend_breakout**。連虧/REJECTED 非自動調參理由。
 3. **backtest 冪等 + 殘留缺口**：signal `bundle_id` 改 run-scoped（現以 copy-per-run 繞過）；PIT 殘留 survivorship（roster 單一快照漏部分早期下市股）；regime/bear gate 未評估（需 regime 偵測）；成本歸因拆解（P3-T5）。
 
 > 歷史 backlog（公司行動處理、零股撮合分流、權益曲線等）多已於 Phase 0/2026-06 完成或併入研究層；治理護欄（Phase 3A kill-switch/lineage、Phase 3-5）延後到驗證出會賺錢策略之後。
