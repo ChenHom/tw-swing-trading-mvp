@@ -647,6 +647,22 @@ class DailySimulationRunner:
         for row in cursor.fetchall():
             if row["user_override"] == "REJECTED":
                 continue
+            signal_source = row["signal_source"] or "ENTRY"
+            # Per-account entry gate: drop ENTRY signals for a strategy retired from
+            # this account's pipeline (e.g. PIT-REJECTED pullback leaking into 國泰 via
+            # the shared global entry bundle). RISK_EXIT always survives — a retired
+            # strategy's existing positions still need their stops (S5: SELL never blocked).
+            # self.pipeline_order is already account-filtered by build_pipeline(account_id);
+            # empty => preview / execute-pending loader with no pipeline configured, so skip the gate.
+            # ponytail: execute-pending's loader (cli/simulation.py) passes no entry_specs,
+            # so its pipeline_order is empty and this gate no-ops there; that manual recovery
+            # path stays ungated until it forwards the account's entry_specs.
+            if (
+                signal_source == "ENTRY"
+                and self.pipeline_order
+                and r["strategy_id"] not in self.pipeline_order
+            ):
+                continue
             items.append(
                 SignalItem(
                     signal_id=row["signal_id"],
@@ -655,7 +671,7 @@ class DailySimulationRunner:
                     reference_price=float(row["reference_price"] / 10000.0),
                     reason_code=row["reason_code"],
                     strategy_id=r["strategy_id"],
-                    signal_source=row["signal_source"] or "ENTRY"
+                    signal_source=signal_source
                 )
             )
 

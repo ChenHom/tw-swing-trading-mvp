@@ -441,7 +441,7 @@ def test_engine_skips_sell_blocked_by_long_term_position():
         os.unlink(db_path)
 
 
-def _mk_bundle(bundle_id, strategy_id, sig_date, target_date):
+def _mk_bundle(bundle_id, strategy_id, sig_date, target_date, signals=None):
     return DailySignalBundle(
         schema_version="1.0",
         bundle_id=bundle_id,
@@ -454,7 +454,7 @@ def _mk_bundle(bundle_id, strategy_id, sig_date, target_date):
         signal_date=sig_date,
         target_execution_date=target_date,
         market_data_cutoff=sig_date,
-        signals=[],
+        signals=signals or [],
     )
 
 
@@ -490,3 +490,58 @@ def test_find_bundles_scopes_exits_per_account(temp_db):
     assert "bundle-20260622-trend_breakout-sim-exit" not in cathay_ids
     # 無帳號參數 = 全撈（legacy/preview）
     assert len(all_ids) == 3
+
+
+def test_load_bundle_drops_retired_entry_keeps_exit_per_account(temp_db):
+    """執行時 per-account 進場閘（修 account_overrides leak）：已從帳號 pipeline
+    退役的策略，其全域 ENTRY 訊號不再進該帳號的執行計畫；但 RISK_EXIT 永遠保留
+    （退役策略既有持倉仍須停損，S5 鐵律），含 pullback 的帳號則照常吃。"""
+    from types import SimpleNamespace
+    calendar = ExchangeCalendarsTradingCalendar()
+    repo = SqliteMarketBarRepository(temp_db)
+    projection = PortfolioProjection(temp_db)
+
+    def _runner(pipeline_ids):
+        return DailySimulationRunner(
+            db_conn=temp_db, calendar=calendar, market_provider=MagicMock(),
+            market_repo=repo, projection=projection,
+            allowed_issuers=["manual-research-review"], revoked_approvals=[],
+            entry_specs=[
+                SimpleNamespace(definition=SimpleNamespace(strategy_id=sid), strategy=None)
+                for sid in pipeline_ids
+            ],
+        )
+
+    sig_d, tgt = date(2026, 6, 24), date(2026, 6, 25)
+
+    # 全域 pullback ENTRY（account_id NULL，跨帳號共用）
+    pullback_entry = _mk_bundle(
+        "bundle-20260624-pullback_rebound", "pullback_rebound", sig_d, tgt,
+        signals=[SignalItem(
+            signal_id="sig-pb-entry", symbol="2324", action="BUY",
+            reference_price=23.5, reason_code="PULLBACK_BUY", signal_source="ENTRY",
+        )],
+    )
+    # 國泰自己的 pullback RISK_EXIT（既有持倉的停損，必須照跑）
+    pullback_exit = _mk_bundle(
+        "bundle-20260624-pullback_rebound-國泰-exit", "pullback_rebound", sig_d, tgt,
+        signals=[SignalItem(
+            signal_id="sig-pb-exit", symbol="1234", action="SELL",
+            reference_price=50.0, reason_code="STOP_LOSS_EXIT", signal_source="RISK_EXIT",
+        )],
+    )
+    runner = _runner(["trend_breakout"])
+    runner._save_bundle(pullback_entry, tgt)                 # 全域
+    runner._save_bundle(pullback_exit, tgt, account_id="國泰")  # 私有 exit
+
+    # 國泰 pipeline 只剩 trend_breakout → pullback ENTRY 被丟、RISK_EXIT 保留
+    cathay_bundles = {b.bundle_id: b for b in runner._find_bundles_for_execution(tgt, "國泰")}
+    entry_sigs = cathay_bundles["bundle-20260624-pullback_rebound"].signals
+    exit_sigs = cathay_bundles["bundle-20260624-pullback_rebound-國泰-exit"].signals
+    assert entry_sigs == []                                  # 退役進場被擋
+    assert [s.signal_id for s in exit_sigs] == ["sig-pb-exit"]  # 停損永留
+
+    # 影子（pipeline 含 pullback）→ 進場照吃
+    sim_runner = _runner(["trend_breakout", "pullback_rebound"])
+    sim_entry = {b.bundle_id: b for b in sim_runner._find_bundles_for_execution(tgt, "sim")}
+    assert [s.signal_id for s in sim_entry["bundle-20260624-pullback_rebound"].signals] == ["sig-pb-entry"]

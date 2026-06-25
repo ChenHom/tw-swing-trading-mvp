@@ -446,3 +446,19 @@
 **優缺點**：優 — 優化迴圈守住不過擬合、治理對齊（過關上、淘汰下）、機制 reuse 既有 build_pipeline。缺 — pullback_rebound 退役改變國泰每日建議（reversible config，下次 cron 15:10 生效）；trend_rider 1.1.0 gate 殘留 research.db（gitignored，無害）。
 
 **驗證**：`pytest tests` **322 passed**（+`test_account_overrides`）；config 載入確認 國泰=[trend_breakout]、simulation-main=[trend_breakout,pullback_rebound]、exit 仍含 pullback_rebound；trend_rider 高原實驗後 config 已還原（git clean）。
+
+---
+
+## 2026-06-25 ｜ 執行時 per-account 進場閘（修 account_overrides leak）
+
+**背景／觸發**：前一日 account_overrides 讓 pullback_rebound 從國泰退役，但 DB 查證發現 leak 仍在——國泰 2026-06-25 的 order_intents 還含 pullback 的 `2324 BUY(PENDING 237)`、`2609 BUY(BLOCKED)`。account_overrides 只擋帳號**自己產**訊號（signal generation），沒擋**執行** sim 產的**全域** pullback entry bundle（`account_id=NULL`，兩帳號共用）。本 session 第三次撞「全域 vs per-account」同一面牆（前兩次：no-add→allocator、exit bundle account-scope）。
+
+**根因**：訊號全域共用是對的（突破＝市場事實、避免重產），但「哪些策略要**動錢**」是 per-account 決策，過去只在訊號**生成**邊界把關、沒在**執行**邊界把關 → 已 PIT REJECTED 的 pullback 全域 bundle 照樣流進國泰執行計畫。
+
+**怎麼動（只動一處）**：[simulation.py](../../src/application/runners/simulation.py) `_load_bundle_row` 加 per-signal 進場閘——載入每個 signal_item 時：`signal_source=='RISK_EXIT'` **永遠保留**（S5 鐵律：退役策略既有持倉的停損仍須跑，否則孤兒部位沒人停損＝比 leak 嚴重）；`signal_source=='ENTRY'` 且 `bundle.strategy_id ∉ self.pipeline_order` → **丟棄**。`pipeline_order` 早已被 `build_pipeline(account_id)` 帳號過濾（國泰=[trend_breakout]），直接 reuse，不需注入 account_overrides。唯一 chokepoint：`_load_bundle_row` 同時餵 Stage 2 執行 + `_persist_next_execution_intents`（儀表板下次執行）；回測走 run-scoped finder、不受影響。
+
+**為什麼這樣動 / 邊界**：per-signal（非 per-bundle）判別，用 `signal_source` 不用 bundle_id pattern（名稱含 `-`/`_` 解析脆）。閘對「空 pipeline_order」短路——execute-pending 的 loader 不帶 entry_specs（pipeline_order=[]），不該誤刪全部進場，故 `self.pipeline_order` 為空時不 gate（`ponytail:` 註記該手動復原路徑待日後 forward 帳號 entry_specs 才收口）。既有全域 `user_override=='REJECTED'` 跳過邏輯原樣保留（per-account reject 是延後的 B）。
+
+**範圍決策（grilling/ceo-review 後 SCOPE REDUCTION）**：只做 A（執行閘）；B（account-scoped 人工 reject，新表 `signal_account_decisions`）+ C（判斷層驗證報表）延後。C 的「影子當反事實」被 grilling 推翻（影子也有 cash/部位限制、portfolio 不可比、出場方法不同、拒絕樣本人選偏誤、樣本要幾個月）→ 改用合成機械反事實，與 B 同延。
+
+**驗證**：`pytest tests` **323 passed**（+`test_load_bundle_drops_retired_entry_keeps_exit_per_account`）；對 live `data/app.db` 唯讀驗證——國泰（pipeline=[trend_breakout]）載入 2026-06-25 pullback bundle → `signals=[]`（2324/2609 ENTRY 被擋）；simulation-main（pipeline 含 pullback）→ pullback ENTRY 2324/2609 保留、其 RISK_EXIT 2301/2454 SELL 也保留。既有 leak 的 order_intents 為修補前舊 run 殘留，order_intents 每次 run-daily DELETE+重建，下次國泰 cron（15:10）即自癒。
