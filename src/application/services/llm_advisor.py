@@ -27,7 +27,8 @@ def _lots(shares: int) -> int:
 
 
 def _chip_lines(conn, symbol: str, d: date) -> list[str]:
-    """籌碼段（單位張；正=買超/增、負=賣超/減）。無資料回 []（提示詞優雅省略）。"""
+    """籌碼段（單位張；正=買超/增、負=賣超/減）。無資料回 []（提示詞優雅省略）。
+    讀 chip_* 表（盤後 21:00 排程 sync_chips 同步的 cache），**不即時打 FinMind API**。"""
     chips = get_chips(conn, symbol, d)
     if not chips:
         return []

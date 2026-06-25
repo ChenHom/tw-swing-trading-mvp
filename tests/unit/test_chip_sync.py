@@ -60,4 +60,15 @@ def test_sync_and_get_chips_pit(tmp_path):
 
     # 無資料的標的回 None
     assert chip_sync.get_chips(conn, "9999", date(2026, 6, 23)) is None
+
+    # finmind_cache：記錄了原始 API 回應（兩 dataset × 1 檔）
+    import json
+    cache = conn.execute(
+        "SELECT dataset, data_id, response_json, row_count FROM finmind_cache ORDER BY dataset").fetchall()
+    assert {r["dataset"] for r in cache} == {
+        "TaiwanStockInstitutionalInvestorsBuySell", "TaiwanStockMarginPurchaseShortSale"}
+    inst_cache = next(r for r in cache if r["dataset"].startswith("TaiwanStockInstitutional"))
+    assert inst_cache["data_id"] == "2330"
+    assert inst_cache["row_count"] == 2
+    assert json.loads(inst_cache["response_json"])[0]["name"] == "Foreign_Investor"  # 原始未聚合
     conn.close()

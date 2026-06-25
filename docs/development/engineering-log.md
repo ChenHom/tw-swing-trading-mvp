@@ -497,3 +497,19 @@
 **驗證**：`pytest tests` **329 passed**（+`test_chip_sync` ×2：類別聚合正確/未知類別忽略、sync→get PIT 過濾；+`test_llm_advisor` 提示詞含籌碼）；真實回補 live universe（23 檔×90 天）→ app.db 得 1354 法人列/22 檔 + 1374 融資券列/23 檔；真實訊號（00994A）提示詞已帶真籌碼（近5日三大法人 +19,386 張、外資/投信/自營分項、融資餘額 7,355 張）；CLI `python3 -m app market sync-chips` 接線正常。
 
 **待辦（給使用者）**：cron 要加一行 `market sync-chips --days 5`（盤後、FinMind 發布三大法人/融資券後）才能讓提示詞每日有最新籌碼；目前已手動回補近 90 天。**P3（驗證報表）資料夠才做。**
+
+---
+
+## 2026-06-25 ｜ LLM 進場顧問 P2.1（API 回應 cache + 21:00 盤後排程 + .venv 依賴修補）
+
+**使用者需求**：① API 回應要在系統上 cache 記錄；② 三大法人資料官方週一~五 20:30 更新，排 21:00 全抓回；③ LLM 用的資料從 cache 抓（不即時打 API）。
+
+**怎麼動**：
+- `finmind_cache` 表（dataset, data_id, response_json, row_count, fetched_at；PK(dataset,data_id)）記錄 FinMind 原始回應；`chip_sync.sync_chips` 抓回後先 `_cache_record` 寫原始 JSON，再聚合進 chip_*。
+- LLM 顧問**本就只讀 DB**（`build_prompt`→`get_chips`→chip_* 表、價量→market_bars 表，零即時 API），加註解明示「讀 cache、不打 API」。✅ 需求③本就成立。
+- `scripts/sync_chips.sh`（仿 shadow_daily.sh：venv python、`-m app market sync-chips --days 7`、log、失敗發 Discord）。
+- crontab 加 `0 21 * * 1-5 .../scripts/sync_chips.sh >> logs/sync_chips_cron.log 2>&1`（週一~五 21:00，官方 20:30 更新後）。
+
+**🐛 連帶修掉 .venv 依賴缺漏**：cron 走 `.venv/bin/python`（uv，py3.11），但 `.venv` **沒裝 `requests`**（finmind_provider 用 requests 卻未宣告依賴）。先前 FinMind 回補都跑系統 python3（有 requests）才沒暴露；run-daily 走 Shioaji 不碰 requests 也沒暴露——**本籌碼 cron 是第一個在 .venv 下用 requests 的路徑**，故現在才炸。修：`requirements.txt` 補 `requests>=2.31.0` + `uv pip install requests` 進 .venv。
+
+**驗證**：`pytest tests` **329 passed**（test_chip_sync 加驗 finmind_cache 記錄原始回應）；`scripts/sync_chips.sh 7` 在 .venv 下 exit 0 → finmind_cache 46 列（23 檔×2 dataset）、chip_* 刷新、2330 法人 cache row_count 30 帶 fetched_at。整條 cron 路徑（.venv → -m app → FinMind → cache → chip_*）打通。

@@ -482,6 +482,19 @@ def init_db(db_path: str) -> None:
     );
     """)
 
+    # finmind_cache：FinMind API 原始回應快取（記錄 api 回應資料）。盤後排程一次抓回，
+    # 之後 LLM 顧問/聚合一律讀 DB（chip_* 表），不再即時打 API。response_json=原始列 JSON。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS finmind_cache (
+        dataset TEXT NOT NULL,
+        data_id TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        row_count INTEGER NOT NULL,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (dataset, data_id)
+    );
+    """)
+
     # 籌碼（FinMind，免費 register 層即可取）。供 LLM 進場顧問提示詞補多因子。
     # chip_institutional：三大法人「合計買賣超」聚合，單位＝股（外資=Foreign_Investor+
     # Foreign_Dealer_Self；投信=Investment_Trust；自營=Dealer_self+Dealer_Hedging；net=buy−sell）。

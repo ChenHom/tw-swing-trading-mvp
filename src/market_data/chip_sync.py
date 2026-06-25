@@ -5,11 +5,15 @@ PIT 讀取（get_chips 只回 ≤ as_of 的列），與行情同口徑、提示�
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 
 from src.market_data.finmind_provider import FinMindProvider
+
+_INST_DS = "TaiwanStockInstitutionalInvestorsBuySell"
+_MARG_DS = "TaiwanStockMarginPurchaseShortSale"
 
 # 三大法人類別 → 聚合桶（net = buy − sell，單位股）
 _FOREIGN = {"Foreign_Investor", "Foreign_Dealer_Self"}
@@ -42,21 +46,34 @@ def aggregate_institutional(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
+def _cache_record(conn: sqlite3.Connection, dataset: str, data_id: str, rows: list[dict], now: str) -> None:
+    """記錄 FinMind 原始回應（記憶體最新一份；audit + 之後一律讀 DB 不再打 API）。"""
+    conn.execute(
+        """INSERT OR REPLACE INTO finmind_cache (dataset, data_id, response_json, row_count, fetched_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (dataset, data_id, json.dumps(rows, ensure_ascii=False), len(rows), now))
+
+
 def sync_chips(conn: sqlite3.Connection, symbols: list[str], start: date, end: date,
                provider: Optional[FinMindProvider] = None) -> dict:
-    """抓 symbols 在 [start,end] 的籌碼，聚合後 upsert。回傳每類寫入筆數摘要。"""
+    """抓 symbols 在 [start,end] 的籌碼 → 記錄原始回應到 finmind_cache → 聚合 upsert chip_*。
+    盤後排程呼叫一次；之後 LLM 顧問只讀 chip_* 表，不再即時打 API。"""
     provider = provider or FinMindProvider()
     n_inst = n_marg = 0
     now = _now()
     for sym in symbols:
-        for d, a in aggregate_institutional(provider.fetch_institutional(sym, start, end)).items():
+        inst_rows = provider.fetch_institutional(sym, start, end)
+        _cache_record(conn, _INST_DS, sym, inst_rows, now)
+        for d, a in aggregate_institutional(inst_rows).items():
             conn.execute(
                 """INSERT OR REPLACE INTO chip_institutional
                    (symbol, trade_date, foreign_net, trust_net, dealer_net, total_net, source, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, 'finmind', ?)""",
                 (sym, d, a["foreign"], a["trust"], a["dealer"], a["total"], now))
             n_inst += 1
-        for r in provider.fetch_margin(sym, start, end):
+        marg_rows = provider.fetch_margin(sym, start, end)
+        _cache_record(conn, _MARG_DS, sym, marg_rows, now)
+        for r in marg_rows:
             if not r.get("date"):
                 continue
             conn.execute(
