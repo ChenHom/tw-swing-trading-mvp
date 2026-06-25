@@ -33,7 +33,7 @@ from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
-from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_validate, cmd_market_build_universe
+from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_validate, cmd_market_build_universe
 from src.cli.strategy import cmd_strategy_inspect
 from src.cli.approval import cmd_approval_create, cmd_approval_validate, cmd_approval_activate, cmd_approval_deactivate, cmd_approval_list, cmd_approval_status
 from src.cli.account import cmd_account_init, cmd_account_adjust_cash, cmd_account_adjust
@@ -59,6 +59,11 @@ def main():
     
     parser_sync = market_subs.add_parser("sync", help="同步特定日期的 K 線行情")
     parser_sync.add_argument("--date", type=str, help="指定日期 YYYY-MM-DD")
+
+    parser_sync_chips = market_subs.add_parser("sync-chips", help="同步籌碼（三大法人/融資券）供 LLM 顧問")
+    parser_sync_chips.add_argument("--days", type=int, default=90, help="往回追溯日曆天數（預設 90）")
+    parser_sync_chips.add_argument("--symbols", type=str, default=None, help="逗號分隔代碼，預設用 universe.yaml")
+    parser_sync_chips.add_argument("--date", type=str, default=None, help="結束日期 YYYY-MM-DD（預設今天）")
     
     parser_validate = market_subs.add_parser("validate", help="驗證資料庫中的日 K 線行情")
     parser_validate.add_argument("--last-sessions", type=int, default=60, help="驗證最近幾筆交易日的行情數據")
@@ -307,6 +312,7 @@ def main():
         ("market", "backfill-history"): cmd_market_backfill_history,
         ("market", "build-universe"): cmd_market_build_universe,
         ("market", "sync"): cmd_market_sync,
+        ("market", "sync-chips"): cmd_market_sync_chips,
         ("market", "validate"): cmd_market_validate,
         ("strategy", "inspect"): cmd_strategy_inspect,
         ("approval", "create"): cmd_approval_create,

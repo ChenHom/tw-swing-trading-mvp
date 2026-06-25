@@ -477,4 +477,23 @@
 
 **為什麼這樣切**：① 系統不接 LLM API＝零整合、零洩漏、人用哪家都行；② forward 記帳是驗證命脈（出場後既有 fifo realized_pnl 接得回 → 鏈「訊號→LLM→決定→結果」可查，日後比「LLM 說進 vs 不進 vs 全收」誰賺）；③ 紅線寫進 UI 文案：未達樣本前 LLM 判斷只是「多資訊的輸入」非已證 edge。
 
-**驗證**：`pytest tests` **326 passed**（+`test_llm_advisor` ×3：提示詞用自家真資料/PIT、查無訊號回 None、回填覆寫保留 created_at + 帳號隔離）；對 live `app.db` 端到端 smoke——app 載入、改過的 next-execution 查詢、真實訊號（00994A：收 18.02、均線 18.12/17.98/18.05/16.65、量比 0.56 全為自家資料）組提示詞、回填往返；TestClient HTTP：`GET /llm` 200 渲染提示詞+表單、`POST /llm` 303、儀表板出現「問 LLM」鈕（smoke 資料已清）。**已對 live app.db 跑冪等 init_db 補上新表**（既定加表方式）。**P2（接籌碼，先驗 FinMind token）、P3（驗證報表，資料夠才做）延後。**
+**驗證**：`pytest tests` **326 passed**（+`test_llm_advisor` ×3：提示詞用自家真資料/PIT、查無訊號回 None、回填覆寫保留 created_at + 帳號隔離）；對 live `app.db` 端到端 smoke——app 載入、改過的 next-execution 查詢、真實訊號（00994A：收 18.02、均線 18.12/17.98/18.05/16.65、量比 0.56 全為自家資料）組提示詞、回填往返；TestClient HTTP：`GET /llm` 200 渲染提示詞+表單、`POST /llm` 303、儀表板出現「問 LLM」鈕（smoke 資料已清）。**已對 live app.db 跑冪等 init_db 補上新表**（既定加表方式）。
+
+---
+
+## 2026-06-25 ｜ LLM 進場顧問 P2（接籌碼：三大法人 + 融資券）
+
+**先驗 token（解掉 P1 留的風險旗標）**：直接打 FinMind API 實測——`TaiwanStockInstitutionalInvestorsBuySell`（三大法人買賣超）+ `TaiwanStockMarginPurchaseShortSale`（融資券）皆 **HTTP 200 success、免費 register 層可得**；被鎖的只有 `TaiwanStockPriceAdj`（還原股價，回 400「Your level is register, please update」＝**會員等級不夠、非次數滿**；本系統不用）。⇒ **P2 不需付費升級**。
+
+**單位實測確認（防幻覺紅線）**：三大法人 buy/sell＝**股**（外資 2330 買 2470 萬股）→ ÷1000 成張；融資券餘額＝**張**（2330 融資 28,223 張）。
+
+**怎麼動**：
+- `db.py` 加 `chip_institutional`（三大法人合計買賣超聚合：foreign/trust/dealer/total_net，單位股）+ `chip_margin`（margin_balance/short_balance，單位張）兩表（init_db 冪等）。
+- `finmind_provider` 加 `fetch_institutional` / `fetch_margin`（reuse `_get`）。
+- 新 `src/market_data/chip_sync.py`：`aggregate_institutional`（外資=Foreign_Investor+Foreign_Dealer_Self、投信=Investment_Trust、自營=Dealer_self+Dealer_Hedging，net=buy−sell；未知類別忽略）、`sync_chips`（抓→聚合→INSERT OR REPLACE）、`get_chips`（**PIT：只回 ≤ as_of**，近5日法人 + 最新融資券）。
+- `llm_advisor.build_prompt` 加【籌碼】段（近5日三大法人合計+分項、融資/融券餘額，股÷1000 成張；無資料優雅省略）。
+- CLI `market sync-chips --days --symbols --date`（cli/market.py + main.py 註冊）。
+
+**驗證**：`pytest tests` **329 passed**（+`test_chip_sync` ×2：類別聚合正確/未知類別忽略、sync→get PIT 過濾；+`test_llm_advisor` 提示詞含籌碼）；真實回補 live universe（23 檔×90 天）→ app.db 得 1354 法人列/22 檔 + 1374 融資券列/23 檔；真實訊號（00994A）提示詞已帶真籌碼（近5日三大法人 +19,386 張、外資/投信/自營分項、融資餘額 7,355 張）；CLI `python3 -m app market sync-chips` 接線正常。
+
+**待辦（給使用者）**：cron 要加一行 `market sync-chips --days 5`（盤後、FinMind 發布三大法人/融資券後）才能讓提示詞每日有最新籌碼；目前已手動回補近 90 天。**P3（驗證報表）資料夠才做。**

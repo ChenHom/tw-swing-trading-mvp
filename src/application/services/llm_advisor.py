@@ -13,11 +13,38 @@ import sqlite3
 from datetime import date, datetime, timezone, timedelta
 
 from src.market_data.repository import SqliteMarketBarRepository
+from src.market_data.chip_sync import get_chips
 from src.contracts.stock_names import stock_name
 from src.contracts.reason_codes import signal_reason_text
 from src.contracts.strategy_names import strategy_name
 
 DECISIONS = ["進場", "小部位試單", "不進場"]
+
+
+def _lots(shares: int) -> int:
+    """股 → 張（四捨五入）。"""
+    return round(shares / 1000.0)
+
+
+def _chip_lines(conn, symbol: str, d: date) -> list[str]:
+    """籌碼段（單位張；正=買超/增、負=賣超/減）。無資料回 []（提示詞優雅省略）。"""
+    chips = get_chips(conn, symbol, d)
+    if not chips:
+        return []
+    lines = ["", "【籌碼】（單位：張；正=買超/增，負=賣超/減）"]
+    inst = chips["institutional"]
+    if inst:
+        tot5 = sum(r["total_net"] for r in inst)
+        lines.append(f"近 {len(inst)} 日三大法人合計：{_lots(tot5):+,} 張")
+        for r in inst:
+            lines.append(
+                f"  {r['trade_date']}  外資 {_lots(r['foreign_net']):+,} 投信 {_lots(r['trust_net']):+,} "
+                f"自營 {_lots(r['dealer_net']):+,}  合計 {_lots(r['total_net']):+,}"
+            )
+    m = chips["margin"]
+    if m:
+        lines.append(f"融資餘額 {m['margin_balance']:,} 張；融券餘額 {m['short_balance']:,} 張（截至 {m['trade_date']}）")
+    return lines
 
 
 def _fetch_signal(conn: sqlite3.Connection, signal_id: str):
@@ -102,6 +129,7 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
         "【量能】（單位：張）",
         f"當日成交量：{vol_lots} 張"
         + (f"；近20日均量 {avg20_lots} 張（量比 {vol_ratio}）" if avg20_lots else ""),
+        *_chip_lines(conn, symbol, d),
         "",
         "【近 12 日日K】",
         *kbars,

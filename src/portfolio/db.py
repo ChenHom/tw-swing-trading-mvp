@@ -482,6 +482,35 @@ def init_db(db_path: str) -> None:
     );
     """)
 
+    # 籌碼（FinMind，免費 register 層即可取）。供 LLM 進場顧問提示詞補多因子。
+    # chip_institutional：三大法人「合計買賣超」聚合，單位＝股（外資=Foreign_Investor+
+    # Foreign_Dealer_Self；投信=Investment_Trust；自營=Dealer_self+Dealer_Hedging；net=buy−sell）。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS chip_institutional (
+        symbol TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        foreign_net INTEGER NOT NULL,
+        trust_net INTEGER NOT NULL,
+        dealer_net INTEGER NOT NULL,
+        total_net INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (symbol, trade_date)
+    );
+    """)
+    # chip_margin：融資/融券餘額，單位＝張（FinMind 原值，TWSE 同口徑）。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS chip_margin (
+        symbol TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        margin_balance INTEGER NOT NULL,
+        short_balance INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (symbol, trade_date)
+    );
+    """)
+
     # signal_llm_reviews：LLM 進場顧問的 forward 記帳。系統不呼叫 LLM——它組好
     # PIT-safe 提示詞、人手動丟去 LLM、把回應與決定回填這裡。出場後既有 fifo_matches
     # realized_pnl 接得回，構成「訊號 → LLM 判斷 → 決定 → 結果」可查鏈，供日後驗證

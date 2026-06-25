@@ -58,6 +58,20 @@ def test_build_prompt_unknown_signal(tmp_path):
     conn.close()
 
 
+def test_build_prompt_includes_chips_when_present(tmp_path):
+    conn, repo = _seed(tmp_path)
+    # 籌碼（PIT：≤ 訊號日 2026-03-06；單位股，提示詞會 ÷1000 成張）
+    conn.execute("INSERT INTO chip_institutional VALUES ('2330','2026-03-06',-2726298,165097,1192045,-1369156,'finmind','now')")
+    conn.execute("INSERT INTO chip_margin VALUES ('2330','2026-03-06',28223,84,'finmind','now')")
+    conn.commit()
+    p = llm_advisor.build_prompt(conn, repo, "sig-2330-buy")["prompt"]
+    assert "【籌碼】" in p
+    assert "三大法人合計：-1,369 張" in p
+    assert "外資 -2,726 投信 +165 自營 +1,192" in p
+    assert "融資餘額 28,223 張；融券餘額 84 張" in p
+    conn.close()
+
+
 def test_save_and_get_review_overwrites_keeps_created_at(tmp_path):
     conn, _ = _seed(tmp_path)
     llm_advisor.save_review(conn, "sig-2330-buy", "國泰", "PROMPT", "回應A", "進場", "ChatGPT")

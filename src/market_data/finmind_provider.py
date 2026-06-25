@@ -80,6 +80,14 @@ class FinMindProvider:
         rows = self._get("TaiwanStockPrice", data_id, start_date, end_date)
         return [self._row_to_bar(row, symbol, exchange, instrument_type) for row in rows]
 
+    def fetch_institutional(self, symbol: str, start_date: date, end_date: date) -> list[dict]:
+        """三大法人買賣超原始列（每日每法人類別一列；buy/sell 單位＝股）。"""
+        return self._get("TaiwanStockInstitutionalInvestorsBuySell", symbol, start_date, end_date)
+
+    def fetch_margin(self, symbol: str, start_date: date, end_date: date) -> list[dict]:
+        """融資融券原始列（每日一列；餘額單位＝張）。"""
+        return self._get("TaiwanStockMarginPurchaseShortSale", symbol, start_date, end_date)
+
     def fetch_twse_roster(self, max_retries: int = 5) -> list[str]:
         """全市場 roster（TaiwanStockInfo，不帶日期）→ type=='twse' 的 stock_id 清單。
 

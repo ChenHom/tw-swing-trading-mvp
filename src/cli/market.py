@@ -208,6 +208,24 @@ def cmd_market_sync(args):
     conn.close()
 
 
+def cmd_market_sync_chips(args):
+    """同步籌碼（三大法人合計買賣超 + 融資券餘額）到 app.db，供 LLM 進場顧問提示詞。"""
+    from src.market_data import chip_sync
+    settings = common.get_settings()
+    init_db(settings.trading.database_path)
+    conn = get_db_connection(settings.trading.database_path)
+    if args.symbols:
+        symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    else:
+        symbols = [s.code for s in settings.universe.symbols]
+    end = date.fromisoformat(args.date) if args.date else date.today()
+    start = end - timedelta(days=args.days)
+    print(f"Syncing chips for {len(symbols)} symbols, {start}~{end} (FinMind)...")
+    summary = chip_sync.sync_chips(conn, symbols, start, end)
+    print(f"Done: {summary}")
+    conn.close()
+
+
 def cmd_market_validate(args):
     settings = common.get_settings()
     conn = get_db_connection(settings.trading.database_path)
