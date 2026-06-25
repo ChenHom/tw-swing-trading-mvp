@@ -118,8 +118,9 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
         )
 
     lines = [
-        f"請以台股波段交易角度，判斷 {name}（{symbol}）目前是否適合進場。",
-        f"策略訊號：{sig['strategy']} / {sig['reason']}（{sig['action']}）。",
+        f"請以台股交易角度，判斷 {name}（{symbol}）目前是否適合進場，"
+        "並**分別**評估【短期波段（數日~數週）】與【中長期（數月以上）】兩種持有週期。",
+        f"策略訊號：{sig['strategy']} / {sig['reason']}（{sig['action']}；此訊號本身屬短期波段）。",
         f"資料截止＝{row['signal_date']} 收盤（D），次一交易日 {row['target_execution_date']} 開盤執行。",
         "",
         "【價格與均線】（單位：元）",
@@ -137,8 +138,10 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
         "【近 12 日日K】",
         *kbars,
         "",
-        "請依上列資料評估：均線排列與回踩/突破位置、量能是否健康、是否有追高風險；",
-        "並給出結論〔進場 / 小部位試單 / 不進場〕＋低接區間、停損位、轉強確認位。",
+        "請依上列資料評估：均線排列與回踩/突破位置、量能是否健康、籌碼動向（三大法人/融資券）、是否有追高風險。",
+        "**分別**給出兩種週期的結論：",
+        "　【短期波段（數日~數週）】：〔進場 / 小部位試單 / 不進場〕＋低接區間、停損位、轉強確認位。",
+        "　【中長期（數月以上）】：〔適合佈局 / 分批佈局 / 觀望 / 不宜〕＋理由（趨勢結構、籌碼方向）。",
         "（僅依上述資料判斷，勿臆測未提供的消息面或未來走勢。）",
     ]
     return {"signal": sig, "prompt": "\n".join(lines)}
