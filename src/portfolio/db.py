@@ -482,5 +482,23 @@ def init_db(db_path: str) -> None:
     );
     """)
 
+    # signal_llm_reviews：LLM 進場顧問的 forward 記帳。系統不呼叫 LLM——它組好
+    # PIT-safe 提示詞、人手動丟去 LLM、把回應與決定回填這裡。出場後既有 fifo_matches
+    # realized_pnl 接得回，構成「訊號 → LLM 判斷 → 決定 → 結果」可查鏈，供日後驗證
+    # 「LLM 說進 vs 說不進 vs 全收」誰賺。一個訊號每帳號一筆（重填覆寫）。
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS signal_llm_reviews (
+        signal_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        llm_response TEXT,
+        decision TEXT,
+        model_note TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (signal_id, account_id)
+    );
+    """)
+
     conn.commit()
     conn.close()

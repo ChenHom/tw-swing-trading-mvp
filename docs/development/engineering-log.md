@@ -462,3 +462,19 @@
 **範圍決策（grilling/ceo-review 後 SCOPE REDUCTION）**：只做 A（執行閘）；B（account-scoped 人工 reject，新表 `signal_account_decisions`）+ C（判斷層驗證報表）延後。C 的「影子當反事實」被 grilling 推翻（影子也有 cash/部位限制、portfolio 不可比、出場方法不同、拒絕樣本人選偏誤、樣本要幾個月）→ 改用合成機械反事實，與 B 同延。
 
 **驗證**：`pytest tests` **323 passed**（+`test_load_bundle_drops_retired_entry_keeps_exit_per_account`）；對 live `data/app.db` 唯讀驗證——國泰（pipeline=[trend_breakout]）載入 2026-06-25 pullback bundle → `signals=[]`（2324/2609 ENTRY 被擋）；simulation-main（pipeline 含 pullback）→ pullback ENTRY 2324/2609 保留、其 RISK_EXIT 2301/2454 SELL 也保留。既有 leak 的 order_intents 為修補前舊 run 殘留，order_intents 每次 run-daily DELETE+重建，下次國泰 cron（15:10）即自癒。
+
+---
+
+## 2026-06-25 ｜ LLM 進場顧問 P1（提示詞產生 + 回填記帳）
+
+**背景／一連串釐清**：北極星定為「證明價格型態波段這套能賺」。PIT 已證 trend_breakout 為**薄 edge**（Sharpe≈0.1、年報酬 bootstrap CI 跨零），純價格 3 因子濾網看不到籌碼/套牢/量質。決定用 LLM 補多因子進場判斷。CEO review 關鍵結論：① **LLM 歷史回放有記憶洩漏**（模型權重已知歷史結果）→ 合成反事實對 LLM 評審無效；② 「講得好≠測得準」+ 檢定力物理沒被繞過。⇒ 改 **forward/live 用法**：系統組準資料成提示詞、人手動問 LLM、回填記帳做 forward 乾淨驗證。國泰本就 plan-only 手動，天生契合。
+
+**P1 怎麼動（系統不呼叫 LLM——只組提示詞 + 記帳）**：
+- 新表 `signal_llm_reviews(signal_id, account_id, prompt, llm_response, decision, model_note, created_at, updated_at)`（[db.py](../../src/portfolio/db.py) init_db 冪等建表；PK=(signal_id,account_id)，重填覆寫、created_at 保留）。
+- 新服務 [llm_advisor.py](../../src/application/services/llm_advisor.py)：`build_prompt` 用 `market_repo.as_of(D)`（**PIT，只 ≤D**）抓自家真價量算 5/10/20/60 均線+量比+近12日K，組成可貼提示詞（**防幻覺：數字一律系統餵，不靠 LLM 自查**）；`save_review/get_review` 回填往返。
+- 儀表板「下次執行」每筆**進場**訊號加「問 LLM」鈕（[dashboard.html](../../src/web/templates/dashboard.html)）；`_next_execution_signals` 補 `signal_id` + LEFT JOIN `signal_llm_reviews` 顯示已決定（[dashboard.py](../../src/application/services/dashboard.py)）。
+- [server.py](../../src/web/server.py) 加 `GET /llm/{signal_id}`（顯示提示詞+回填表單）、`POST /llm/{signal_id}`（存回填，303 轉址）；新 [llm_review.html](../../src/web/templates/llm_review.html)。EXIT/SELL 不顯示鈕（出場非裁量進場）。
+
+**為什麼這樣切**：① 系統不接 LLM API＝零整合、零洩漏、人用哪家都行；② forward 記帳是驗證命脈（出場後既有 fifo realized_pnl 接得回 → 鏈「訊號→LLM→決定→結果」可查，日後比「LLM 說進 vs 不進 vs 全收」誰賺）；③ 紅線寫進 UI 文案：未達樣本前 LLM 判斷只是「多資訊的輸入」非已證 edge。
+
+**驗證**：`pytest tests` **326 passed**（+`test_llm_advisor` ×3：提示詞用自家真資料/PIT、查無訊號回 None、回填覆寫保留 created_at + 帳號隔離）；對 live `app.db` 端到端 smoke——app 載入、改過的 next-execution 查詢、真實訊號（00994A：收 18.02、均線 18.12/17.98/18.05/16.65、量比 0.56 全為自家資料）組提示詞、回填往返；TestClient HTTP：`GET /llm` 200 渲染提示詞+表單、`POST /llm` 303、儀表板出現「問 LLM」鈕（smoke 資料已清）。**已對 live app.db 跑冪等 init_db 補上新表**（既定加表方式）。**P2（接籌碼，先驗 FinMind token）、P3（驗證報表，資料夠才做）延後。**

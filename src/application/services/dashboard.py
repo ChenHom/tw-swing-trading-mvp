@@ -153,17 +153,20 @@ def _next_execution_signals(conn, account_id):
     """
     rows = conn.execute(
         """
-        SELECT si.action, si.symbol, si.reason_code, si.reference_price,
+        SELECT si.signal_id, si.action, si.symbol, si.reason_code, si.reference_price,
                si.user_override, si.override_reason,
                sb.strategy_id, sb.bundle_id, sb.target_execution_date,
-               oi.quantity AS planned_qty, oi.status AS intent_status, oi.reason AS block_reason
+               oi.quantity AS planned_qty, oi.status AS intent_status, oi.reason AS block_reason,
+               lr.decision AS llm_decision
         FROM signal_items si JOIN signal_bundles sb ON si.bundle_id = sb.bundle_id
         LEFT JOIN order_intents oi
                ON oi.signal_id = si.signal_id AND oi.account_id = ?
               AND oi.target_execution_date = sb.target_execution_date
+        LEFT JOIN signal_llm_reviews lr
+               ON lr.signal_id = si.signal_id AND lr.account_id = ?
         WHERE sb.signal_date = (SELECT MAX(signal_date) FROM signal_bundles)
         ORDER BY sb.target_execution_date, sb.strategy_id, si.action, si.symbol
-        """, (account_id,)).fetchall()
+        """, (account_id, account_id)).fetchall()
     out = []
     for r in rows:
         qty = r["planned_qty"]
@@ -171,6 +174,8 @@ def _next_execution_signals(conn, account_id):
         rejected = r["user_override"] == "REJECTED"
         blocked = (not rejected) and r["intent_status"] == "BLOCKED"
         out.append({
+            "signal_id": r["signal_id"],
+            "llm_decision": r["llm_decision"],
             "action": r["action"], "symbol": r["symbol"], "name": stock_name(r["symbol"]),
             "reason_text": signal_reason_text(r["reason_code"]),
             "strategy_id": r["strategy_id"],

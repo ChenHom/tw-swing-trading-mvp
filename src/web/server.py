@@ -13,8 +13,8 @@ import os
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Query
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi import FastAPI, Request, Query, Form
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -23,6 +23,7 @@ from src.portfolio.db import get_db_connection
 from src.portfolio.projection import PortfolioProjection
 from src.market_data.repository import SqliteMarketBarRepository
 from src.application.services import dashboard as dash
+from src.application.services import llm_advisor
 from src.strategy import registry as strategy_registry
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -110,6 +111,44 @@ def backtest_detail(request: Request, name: str):
             status_code=404,
         )
     return templates.TemplateResponse(request, "backtest_detail.html", {"result": result, "name": name})
+
+
+@app.get("/llm/{signal_id}", response_class=HTMLResponse)
+def llm_review(request: Request, signal_id: str, account: str | None = Query(default=None)):
+    """LLM 進場顧問：顯示某訊號的 PIT-safe 提示詞（可複製去問 LLM）+ 回填表單。"""
+    conn = _conn()
+    try:
+        account_id = account or "國泰"
+        market_repo = SqliteMarketBarRepository(conn)
+        pd = llm_advisor.build_prompt(conn, market_repo, signal_id)
+        if pd is None:
+            return HTMLResponse("訊號不存在。", status_code=404)
+        review = llm_advisor.get_review(conn, signal_id, account_id)
+        return templates.TemplateResponse(
+            request, "llm_review.html",
+            {"signal": pd["signal"], "prompt": pd["prompt"], "review": review,
+             "account": account_id, "decisions": llm_advisor.DECISIONS},
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/llm/{signal_id}")
+def llm_review_save(signal_id: str, account: str = Form("國泰"),
+                    llm_response: str = Form(""), decision: str = Form(""),
+                    model_note: str = Form("")):
+    """回填 LLM 回應與決定。提示詞由系統重建（確定性，與顯示一致）後一併存檔。"""
+    conn = _conn()
+    try:
+        market_repo = SqliteMarketBarRepository(conn)
+        pd = llm_advisor.build_prompt(conn, market_repo, signal_id)
+        if pd is None:
+            return HTMLResponse("訊號不存在。", status_code=404)
+        llm_advisor.save_review(conn, signal_id, account, pd["prompt"], llm_response, decision, model_note)
+        base = ROOT_PATH.rstrip("/")
+        return RedirectResponse(f"{base}/llm/{signal_id}?account={account}", status_code=303)
+    finally:
+        conn.close()
 
 
 @app.get("/healthz", response_class=PlainTextResponse)

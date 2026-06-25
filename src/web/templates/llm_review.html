@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}LLM 進場顧問 — {{ signal.symbol }}{% endblock %}
+{% block content %}
+
+<section>
+  <h2>LLM 進場顧問 — {{ signal.symbol }}
+    {% if signal.name %}<span class="tag-muted">{{ signal.name }}</span>{% endif %}</h2>
+  <p>
+    策略 {{ signal.strategy }}｜{{ signal.reason }}（{{ signal.action }}）｜
+    資料截止 {{ signal.signal_date }}（D）→ 執行日 {{ signal.target_date }}｜帳戶 {{ account }}
+  </p>
+  <p class="muted" style="font-size:.9em">
+    系統只組好「截至 D 收盤」的真實價量提示詞；請複製去問你的 LLM，再把回應與決定貼回下方。
+    這份記帳之後會用來驗證「LLM 說進 vs 說不進 vs 全收」誰賺——所以每筆都要記。
+    ⚠️ 未累積足夠樣本前，LLM 的分析只是「多了資訊的判斷」，不是已證明的優勢。
+  </p>
+</section>
+
+<section>
+  <h2>提示詞（複製去問 LLM）</h2>
+  <textarea id="prompt" readonly rows="22" style="width:100%;font-family:monospace;font-size:.9em">{{ prompt }}</textarea>
+  <button type="button" class="btn" onclick="copyPrompt()">複製提示詞</button>
+  <span id="copied" style="display:none">已複製 ✓</span>
+</section>
+
+<section>
+  <h2>回填 LLM 回應 + 你的決定</h2>
+  <form method="post" action="{{ base }}/llm/{{ signal.signal_id }}">
+    <input type="hidden" name="account" value="{{ account }}">
+    <p>
+      <label>決定
+        <select name="decision">
+          <option value="">（未決）</option>
+          {% for opt in decisions %}
+          <option value="{{ opt }}" {% if review and review.decision == opt %}selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label style="margin-left:1em">用哪個 LLM
+        <input type="text" name="model_note" placeholder="如 ChatGPT o3 / Claude"
+               value="{{ review.model_note if review else '' }}">
+      </label>
+    </p>
+    <p>
+      <label>LLM 回應全文<br>
+        <textarea name="llm_response" rows="12" style="width:100%">{{ review.llm_response if review else '' }}</textarea>
+      </label>
+    </p>
+    <button type="submit" class="btn">儲存</button>
+    {% if review %}<span class="muted">　上次更新 {{ review.updated_at }}</span>{% endif %}
+    <a class="btn" href="{{ base }}/?account={{ account }}" style="margin-left:1em">← 回儀表板</a>
+  </form>
+</section>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function copyPrompt() {
+  const t = document.getElementById('prompt');
+  t.select();
+  navigator.clipboard.writeText(t.value).then(function () {
+    const c = document.getElementById('copied');
+    c.style.display = 'inline';
+    setTimeout(function () { c.style.display = 'none'; }, 1500);
+  });
+}
+</script>
+{% endblock %}
