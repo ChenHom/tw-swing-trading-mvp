@@ -46,7 +46,7 @@ def test_build_prompt_uses_own_real_data(tmp_path):
     assert "2330" in p
     assert "最新收盤：100.0" in p
     assert "60 日均線：約 100.0（收盤站上）" in p  # 100>=100 → 站上
-    assert "當日成交量：2.0 張" in p
+    assert "當日成交量：2,000 張" in p  # Shioaji 量已是張，不再除 1000
     assert p.count("開") >= 12  # 近 12 日 K 線
     assert out["signal"]["target_date"] == "2026-03-07"  # 訊號日次日
     conn.close()

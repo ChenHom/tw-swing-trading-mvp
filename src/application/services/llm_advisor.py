@@ -97,8 +97,10 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
 
     latest_close = round(closes[-1], 2)
     ma5, ma10, ma20, ma60 = _ma(closes, 5), _ma(closes, 10), _ma(closes, 20), _ma(closes, 60)
-    vol_lots = round(volumes[-1] / 1000.0, 1)
-    avg20_lots = round(sum(volumes[-21:-1]) / 20 / 1000.0, 1) if len(volumes) >= 21 else None
+    # ⚠️ market_bars.volume 在 live app.db（Shioaji）單位＝張，直接用、不除 1000
+    # （research.db 用 FinMind 才是股；此提示詞只跑 live app.db）。
+    vol_lots = volumes[-1]
+    avg20_lots = round(sum(volumes[-21:-1]) / 20) if len(volumes) >= 21 else None
     vol_ratio = round(volumes[-1] / (sum(volumes[-21:-1]) / 20), 2) if len(volumes) >= 21 and sum(volumes[-21:-1]) > 0 else None
 
     def _ma_line(label, v):
@@ -112,7 +114,7 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
     for b in history[-12:]:
         kbars.append(
             f"  {b.trade_date}  開{b.open/10000:.2f} 高{b.high/10000:.2f} "
-            f"低{b.low/10000:.2f} 收{b.close/10000:.2f}  量{b.volume/1000:.1f}張"
+            f"低{b.low/10000:.2f} 收{b.close/10000:.2f}  量{b.volume:,}張"
         )
 
     lines = [
@@ -128,8 +130,8 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
         _ma_line("60 日均線", ma60),
         "",
         "【量能】（單位：張）",
-        f"當日成交量：{vol_lots} 張"
-        + (f"；近20日均量 {avg20_lots} 張（量比 {vol_ratio}）" if avg20_lots else ""),
+        f"當日成交量：{vol_lots:,} 張"
+        + (f"；近20日均量 {avg20_lots:,} 張（量比 {vol_ratio}）" if avg20_lots else ""),
         *_chip_lines(conn, symbol, d),
         "",
         "【近 12 日日K】",
