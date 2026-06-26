@@ -16,7 +16,7 @@ body {
   box-shadow: 0 1px 3px rgba(0,0,0,.02);
 }
 .topbar .brand { font-weight: 700; color: #2b6cb0; text-decoration: none; font-size: 1.15rem; letter-spacing: -0.02em; }
-.brand-text-mobile { display: none; }
+.brand-text-mobile, .nav-text-mobile { display: none; }
 .info-tip-container { display: inline-flex; align-items: center; gap: 0.25rem; }
 .topbar nav { display: flex; gap: 1.25rem; }
 .topbar nav a { color: #4a5568; text-decoration: none; font-size: .95rem; font-weight: 500; transition: color .15s; }
@@ -333,14 +333,14 @@ a.sym-link:hover { color: #1a0dab; text-decoration: underline; }
     box-shadow: none;
   }
 
-  /* 手機版品牌 LOGO 優化：隱藏圖標，文字改為 trading */
+  /* 手機版品牌 LOGO 與導覽文字優化：隱藏圖標，文字改為簡短版 */
   .topbar .brand-icon {
     display: none !important;
   }
-  .topbar .brand-text-desktop {
+  .topbar .brand-text-desktop, .topbar .nav-text-desktop {
     display: none;
   }
-  .topbar .brand-text-mobile {
+  .topbar .brand-text-mobile, .topbar .nav-text-mobile {
     display: inline;
   }
 }
