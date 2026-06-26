@@ -18,9 +18,9 @@
 - ✅ git tag `v0.1.0-pre-golive` 回滾錨點（commit fc432d4）
 - ✅ 清理殘留 `active-approval.json`（commit fc432d4）
 - ✅ 每日影子報告 + `shadow_daily.sh`（commit a833141）
-- 🔄 **B1 影子先行 ≥3 個交易日**並人工核對（2026-06-15 實施）。`docs/shadow-signoff.md` 簽核表已備。
+- 🔄 **B1 影子先行 ≥3 個交易日**並人工核對（2026-06-15 實施）。`docs/shadow-signoff.md` 簽核表已備。⚠️ **狀態恐過時**：自 06-15 起交易日早已超過 3 天、影子每日照跑，技術上達標，僅 `shadow-signoff.md` 人工核對欄可能未補登；待確認後標 ✅。
 - ✅ **B2 cron 失敗告警接 Discord**（2026-06-15）：`src/notification/discord_alert.py` 模組已就位（httpx），`shadow_daily.sh` 已改進，`config/alert.local.yaml.example` 與 `.gitignore` 已備。Token 走 `~/.openclaw/.env`，channel_id 走 gitignored 的 `config/alert.local.yaml`，測試全綠（9 項）。**go-live 啟用步驟已完成並實測**：`config/alert.local.yaml` 已建立、實際發送成功收到 Discord 告警；修正 `DiscordAlertConfig` 的 dotenv 載入缺口（改用 `dotenv_values` 讀取 `~/.openclaw/.env`）。
-- ⬜ **B3 開實單起步**：B1+B2+D2 全綠後，建議路徑 C（先單策略 `trend_breakout`、限額小量），再放第二支。
+- 🔄 **B3 開實單起步（框架已隨「全手動」改寫）**：⚠️ 原案「限額小量**自動**執行」與後來拍板的「下單全手動、不接券商 API」衝突，作廢。**現況**：國泰真實帳號自 2026-06-15 起即以 `run-daily --no-auto-execute`（plan-only 產訊號）+ 人工 `record-fill` 在跑真倉，等於 B3 已用人工形式起步。剩餘＝持續累積實際成交紀錄、人工核對訊號品質（與 LLM 顧問 H 線並行）。見記憶 `manual-only-execution`、`real-shadow-account-split`。
 
 詳見記憶 `ceo-review-golive-2026-06-14`。
 
@@ -34,7 +34,8 @@
   - ✅ **C3-1 資金管理卡 + 持倉資產配置圓環圖**（2026-06-15）：儀表板新增「淨投入本金/可用現金/持倉總市值/總權益/總報酬率%」5 卡 + doughnut（含現金一塊，分母=總權益）。純讀 `cash_ledger/cash_balances/position_lots/market_bars`，無寫入/無新表/無回測觸發。市值 `int(qty*close//10000)`、當日無 bar 以均價 fallback 標「估算」；報酬率分母=`INITIAL_DEPOSIT` 合計（0 顯示「—」）。新 service `dashboard.build_capital_overview`、market_repo 由路由注入。Chart.js v4 **self-host** 於 `static/js/`（零 CDN，區網可用）。對拍 report.py 市值差異 0。測試：`test_capital_overview.py` 9 項 + `test_web_server.py` 補渲染斷言，unit 全綠 160。
   - ✅ **C3-2a 回測權益曲線持久化 + Web 顯示**（2026-06-15）：`cmd_backtest_run` 跑完後落檔 `equity_curve`/`statistics`/meta 成 JSON（仿 `write_daily_report` 三件套：結果檔 + `LATEST.txt` + `INDEX.tsv`，`profit_factor` inf→null），印 `BACKTEST_RESULT_PATH=`。Web 新增 `/backtests`（列表）與 `/backtests/{name}`（統計卡 + equity curve 折線圖，Chart.js self-host，`profit_factor=null`顯示「∞」）。新 service `list_backtest_results`/`read_backtest_result`（防目錄穿越）。不碰 DB schema、不碰 daily run、不影響 B1 影子驗證。測試：`test_backtest_report.py` 3 項 + `test_backtest_results_service.py` 5 項 + `test_web_server.py` 補 5 項，unit 全綠 173。實測一次回測（2026-04-09~06-12）驗證落檔與頁面渲染正常。
   - ⬜ **C3-2b 實盤/影子每日權益曲線**：需新增 `equity_snapshots` 表並改動 `DailySimulationRunner.run_daily()`（B1 驗證中的核心路徑），留待 B1 完成後再做。
-  - ✅ **C3-3 持倉股票名稱顯示**（2026-06-15）：儀表板 5 張表格（持倉／今日成交／下次執行／公司行動／執行事件）顯示中文股名。`STOCK_NAMES` 由 `src/cli/common.py` 搬至共用 `src/contracts/stock_names.py`（cli 與 service 共用、不反向依賴）。持倉表獨立「名稱」欄；其餘 4 表代號後接 `.tag-muted` 小字。圓環圖 label 不改。測試：`test_web_server.py` 補名稱斷言。
+  - ✅ **C3-3 持倉股票名稱顯示**（2026-06-15）：儀表板 5 張表格（持倉／今日成交／下次執行／公司行動／執行事件）顯示中文股名。`STOCK_NAMES` 由 `src/cli/common.py` 搬至共用 `src/contracts/stock_names.py`（cli 與 service 共用、不反向依賴）。持倉表原獨立「名稱」欄（**2026-06-26 已併入代號同格，見 C5**）；其餘 4 表代號後接 `.tag-muted` 小字。圓環圖 label 不改。測試：`test_web_server.py` 補名稱斷言。
+- ✅ **C5 代號可點開 Yahoo 行情 + 格式統一**（2026-06-26，commit `b4dd10c`）：新 Jinja macro `symcell(symbol, name)` 渲染「可點代號＋灰字名稱同格」，連 `tw.stock.yahoo.com/quote/{symbol}`（**無後綴，Yahoo 自動解析上市/上櫃**；live `app.db` 的 `exchange` 欄全標 'TSE' 不可靠故不自行判後綴），hover 浮現另開頁 icon（觸控常駐、桌機 `@media(hover:hover)` 才隱藏）。套用持倉/今日成交/下次執行/公司行動/執行事件五表（持倉表兩欄併一格）。連帶修 CSS 永久快取：`server.py` 加 `static_v`=style.css mtime、`base.html` 改 `style.css?v=`（**改 CSS 後須 `systemctl restart trading-web`**）。測試：`test_web_server.py` 改斷言（329 綠）。
 - ⬜ **C4 neumorphism 風格**：套用指定設計稿（只動 `static/style.css` 與模板 class，不動資料層）。非現在。
 
 詳見 [`ui-development.md`](ui-development.md) §1、§9。
@@ -63,10 +64,23 @@
 - ✅ **儀表板 UI**：持倉部位加「最後收盤」欄 + 策略別損益顯示中文名（commit `443ce86`）。
 - ✅ **R-T4b Track 2 — PIT 流動性排名 universe**（2026-06-24）：`liquidity-top150-v1`（451 檔/月再平衡）+ 三支 regime_gate 註冊 → **專案首批非 INVALID 裁決**：trend_breakout=RESEARCH_PASS（唯一），pullback_rebound/trend_rider=REJECTED（CI 下界為負）。commits `40eb1ef`/`c48b391`，詳見 engineering-log 2026-06-24。殘留缺口：survivorship（roster 單一快照）、regime/bear gate 未評估。
 - ✅ **R-T4b Track 1 — account_overrides + 治理退役**（2026-06-24）：per-account 進場策略 override 機制；pullback_rebound（REJECTED）從國泰退役（`account_overrides: {國泰: [trend_breakout]}`）、不再產生新 BUY 建議，既有持倉由 risk_exit 照常出場；trend_breakout 兩帳號續留、simulation-main 回退兩支續觀察 pullback。詳見 engineering-log 2026-06-24。
+- ✅ **全域 signal bundle 跨帳號污染修補**（2026-06-24）：根因＝`signal_bundles` 全域共用 × 兩帳號 cron 先後 × `_save_bundle` idempotent。Part 1 no-add 位置閘下放 allocator（動錢當下對本帳號活倉把關，`increase_long` 成 dead code）；Part 2 exit bundle account-scope（`signal_bundles` 加 `account_id`、exit bundle_id 帶帳號、執行端 `account_id IS NULL OR =?` 過濾）→ 修「漏自己停損/執行到別人 SELL」。進場 bundle 維持全域。詳見 engineering-log 2026-06-24。
+- ✅ **執行時 per-account 進場閘（修 account_overrides leak）**（2026-06-25，323 tests）：`_load_bundle_row` 加 per-signal 閘——`RISK_EXIT` 永遠保留（S5）、`ENTRY` 且 `strategy_id ∉ pipeline_order` 丟棄。修「已 REJECTED 的 pullback 全域 bundle 仍流進國泰 order_intents」。reuse 既有帳號過濾後的 `pipeline_order`，只動一處；backtest 走 run-scoped finder 不受影響。詳見 engineering-log 2026-06-25。
+- ⬜ **per-account 人工決策 + 判斷層驗證（B/C，延後）**：B＝account-scoped 人工 reject（新表 `signal_account_decisions(account_id, signal_id, decision, reason)`，國泰拒/sim 照吃）；C＝合成機械反事實（由 market_bars 算「拒絕組 vs 接受組」機械報酬，**不可用影子當反事實**——影子有 cash/部位限制、portfolio 不可比）。grilling/CEO review 後 SCOPE REDUCTION，待真要用判斷層數據時回來。LLM 評審改走 H 線 forward 記帳（合成反事實對 LLM 無效＝記憶洩漏）。
 - 🔄 **優化迴圈（首輪誠實負面）**：trend_rider 不對稱停損高原（fixed_stop 700/800/900）**整片 REJECTED**＝「讓贏家跑」PIT 不成立、結構性修補救不了；pullback 成本>毛利不調（避免過擬合）。下一步：若要救須**新 thesis/新策略**（非 tweak），或接受兩支淘汰。
 - ⬜ **backtest 冪等**：signal `bundle_id` 改 run-scoped（現以 copy-per-run 繞過）。
+- ⬜ **PIT 殘留缺口**：survivorship（roster 單一快照漏部分早期下市股）、regime/bear gate 未評估（需 regime 偵測）、成本歸因逐筆拆解（P3-T5）。
+
+## H. LLM 進場顧問（forward 記帳驗證；plan `2455-cosmic-fountain.md` 工作項）
+
+> 北極星「證明價格型態波段這套能賺」下，PIT 已證 trend_breakout edge 薄、純價格濾網看不到籌碼/套牢/量質 → 用 LLM 補多因子進場判斷。**系統不呼叫 LLM**：只組 PIT-safe 提示詞 + 記帳，人手動問 GPT/任意家、回填回應與決定。CEO review 定調 forward/live（歷史回放有記憶洩漏，對 LLM 無效）。
+
+- ✅ **H1 P1 提示詞產生 + 回填記帳**（2026-06-25，326 tests）：新表 `signal_llm_reviews`、服務 `llm_advisor`（`build_prompt` 用 `market_repo.as_of(D)` 自家真價量算均線/量比/近12日K，**防幻覺**；`save/get_review` 往返）；儀表板「下次執行」每筆進場訊號加「問 LLM」鈕、`GET/POST /llm/{signal_id}`。
+- ✅ **H2 P2 接籌碼（三大法人 + 融資券）**（2026-06-25，329 tests）：FinMind 免費 register 層即可得（實測；僅還原股價需贊助）。`chip_institutional`/`chip_margin` 表 + `chip_sync`（聚合/sync/PIT get）+ `finmind_provider` 加 2 dataset + 提示詞補【籌碼】段（三大法人合計/分項、融資券；單位股÷1000=張）。
+- ✅ **H3 P2.1 API cache + 21:00 盤後排程**（2026-06-25）：`finmind_cache` 記原始回應；`scripts/sync_chips.sh` + crontab `0 21 * * 1-5`（官方 20:30 更新後盤後全抓）；LLM 只讀 DB cache 不打 API。連帶修 `.venv` 缺 `requests`（補 requirements + uv 裝）。
+- ⬜ **H4 P3 驗證報表（資料夠才做，別提早）**：比「LLM 說進 vs 說不進 vs 全收」三組已實現報酬，用聚類/block bootstrap 算 CI，誠實標樣本/選擇偏誤。**未達樣本前，LLM 判斷只是「多資訊的輸入」、非已證 edge。**
 
 ---
 
 ### 關聯記憶
-`goal-validate-profit`、`manual-only-execution`、`ceo-review-golive-2026-06-14`、`multi-strategy-rollout-state`、`ui-requirements`、`record-fill-strategy-attribution`、`discord-alert-config`。
+`goal-validate-profit`、`manual-only-execution`、`ceo-review-golive-2026-06-14`、`multi-strategy-rollout-state`、`ui-requirements`、`record-fill-strategy-attribution`、`discord-alert-config`、`next-execution-and-llm-seam`、`global-bundle-account-scope`、`real-shadow-account-split`、`venv-cron-runtime`、`unit-conventions`。
