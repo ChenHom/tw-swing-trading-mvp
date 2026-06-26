@@ -1,4 +1,7 @@
 {% extends "base.html" %}
+{% macro symcell(symbol, name) -%}
+<a class="sym-link" href="https://tw.stock.yahoo.com/quote/{{ symbol }}" target="_blank" rel="noopener">{{ symbol }}<svg class="ext-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>{% if name %} <span class="tag-muted">{{ name }}</span>{% endif %}
+{%- endmacro %}
 {% block content %}
 
 <form method="get" action="{{ base }}/" class="controls">
@@ -95,20 +98,19 @@
 <section>
   <h2>持倉部位</h2>
   <table>
-    <thead><tr><th>策略</th><th>代號</th><th>名稱</th><th>股數</th><th>均價</th><th>最後收盤</th><th>監控</th></tr></thead>
+    <thead><tr><th>策略</th><th>代號</th><th>股數</th><th>均價</th><th>最後收盤</th><th>監控</th></tr></thead>
     <tbody>
       {% for p in d.positions %}
       <tr>
         <td>{{ p.strategy_id }}{% if p.is_long_term %} <span class="tag">長期</span>{% endif %}</td>
-        <td>{{ p.symbol }}</td>
-        <td>{{ p.name }}</td>
+        <td>{{ symcell(p.symbol, p.name) }}</td>
         <td class="num">{{ "{:,}".format(p.quantity) }}</td>
         <td class="num">{{ "%.2f"|format(p.wavg_price) }}</td>
         <td class="num">{% if p.last_close is not none %}{{ "%.2f"|format(p.last_close) }}{% else %}—{% endif %}</td>
         <td>{% if p.monitored %}✓{% else %}—{% endif %}</td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="empty">無持倉</td></tr>
+      <tr><td colspan="6" class="empty">無持倉</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -140,7 +142,7 @@
     <thead><tr><th>方向</th><th>代號</th><th>股數</th><th>價格</th><th>策略/來源</th></tr></thead>
     <tbody>
       {% for f in d.fills_today %}
-      <tr><td>{{ f.side }}</td><td>{{ f.symbol }}{% if f.name %} <span class="tag-muted">{{ f.name }}</span>{% endif %}</td><td class="num">{{ "{:,}".format(f.quantity) }}</td>
+      <tr><td>{{ f.side }}</td><td>{{ symcell(f.symbol, f.name) }}</td><td class="num">{{ "{:,}".format(f.quantity) }}</td>
           <td class="num">{{ "%.2f"|format(f.price) }}</td><td>{{ f.strategy_id or '-' }}/{{ f.source }}</td></tr>
       {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
     </tbody>
@@ -155,7 +157,7 @@
     <tbody>
       {% for s in d.next_execution %}
       <tr><td>{{ s.action }}{% if s.is_exit %} <span class="tag">EXIT</span>{% endif %}</td>
-          <td>{{ s.symbol }}{% if s.name %} <span class="tag-muted">{{ s.name }}</span>{% endif %}</td>
+          <td>{{ symcell(s.symbol, s.name) }}</td>
           <td>{{ s.strategy_name }}{% if s.strategy_desc %} <span class="info-tip" title="{{ s.strategy_desc }}">ⓘ</span>{% endif %}</td>
           {% if s.rejected %}
           <td><span class="tag">已拒絕</span> {{ s.reject_reason }}</td>
@@ -180,7 +182,7 @@
       {% for c in d.corporate_actions %}
       <tr>
         <td>{{ c.ex_date }}</td>
-        <td>{{ c.symbol }}{% if c.name %} <span class="tag-muted">{{ c.name }}</span>{% endif %}{% if c.held %} <span class="tag">持倉中</span>{% endif %}</td>
+        <td>{{ symcell(c.symbol, c.name) }}{% if c.held %} <span class="tag">持倉中</span>{% endif %}</td>
         <td>{{ c.detail_zh }}</td>
         <td>{% if c.applied %}<span class="badge ok">已套用</span>{% else %}<span class="badge warn">未套用</span>{% endif %}</td>
       </tr>
@@ -196,7 +198,7 @@
     <tbody>
       {% for e in d.events %}
       <tr><td>{{ e.event_label }}{% if e.event_label != e.event_type %} <span class="tag">{{ e.event_type }}</span>{% endif %}</td>
-          <td>{{ e.strategy_id or '-' }}</td><td>{{ e.symbol or '-' }}{% if e.name %} <span class="tag-muted">{{ e.name }}</span>{% endif %}</td><td>{{ e.detail or '' }}</td></tr>
+          <td>{{ e.strategy_id or '-' }}</td><td>{% if e.symbol %}{{ symcell(e.symbol, e.name) }}{% else %}-{% endif %}</td><td>{{ e.detail or '' }}</td></tr>
       {% else %}<tr><td colspan="4" class="empty">無</td></tr>{% endfor %}
     </tbody>
   </table>

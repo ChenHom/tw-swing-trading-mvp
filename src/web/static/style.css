@@ -85,3 +85,13 @@ td.truncate { max-width: 22em; overflow: hidden; text-overflow: ellipsis; white-
   font-size: .7rem; font-style: normal; line-height: 1; cursor: help;
   vertical-align: middle;
 }
+
+/* 代號連 Yahoo 行情。觸控裝置（無 hover）icon 常駐；桌機平時隱藏、移上去才浮現 */
+a.sym-link { color: inherit; text-decoration: none; white-space: nowrap; }
+a.sym-link:hover { text-decoration: underline; }
+.ext-icon { width: .72em; height: .72em; margin-left: .25em; vertical-align: -.06em;
+            opacity: .55; transition: opacity .12s; }
+@media (hover: hover) {
+  .ext-icon { opacity: 0; }
+  a.sym-link:hover .ext-icon { opacity: .55; }
+}

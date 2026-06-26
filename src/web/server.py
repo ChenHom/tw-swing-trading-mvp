@@ -34,6 +34,8 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # 子路徑前綴：模板以 {{ base }}/... 產生連結，nginx 子路徑與本機直連皆正確。
 templates.env.globals["base"] = ROOT_PATH.rstrip("/")
+# style.css 版本＝檔案 mtime，改 CSS 後 ?v 變動自動破瀏覽器快取（免手動硬刷新）。
+templates.env.globals["static_v"] = int((BASE_DIR / "static" / "style.css").stat().st_mtime)
 
 
 def _conn():

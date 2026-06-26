@@ -87,9 +87,9 @@ def test_dashboard_allocation_with_position(tmp_path, monkeypatch):
     assert 'id="allocData"' in body
     assert 'id="allocChart"' in body
     assert "2330" in body
-    # 持倉表「名稱」欄：代號 2330 應伴隨中文股名（stock_names 對照）
+    # 持倉表：代號與中文名併入同格（與今日成交格式一致），代號連 Yahoo 行情
     assert "台積電" in body
-    assert "<th>名稱</th>" in body
+    assert "https://tw.stock.yahoo.com/quote/2330" in body
 
 
 def test_dashboard_defaults_to_today(client):
