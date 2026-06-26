@@ -29,11 +29,26 @@
 
 <!-- Tab 分頁導航欄 -->
 <div class="tab-nav">
-  <button class="tab-btn active" onclick="switchTab('capital')">資金</button>
-  <button class="tab-btn" onclick="switchTab('positions')">持倉</button>
-  <button class="tab-btn" onclick="switchTab('pnl')">損益</button>
-  <button class="tab-btn" onclick="switchTab('next')">執行</button>
-  <button class="tab-btn" onclick="switchTab('today')">成交</button>
+  <button class="tab-btn active" onclick="switchTab('capital')">
+    <span class="tab-text-desktop">資金總覽</span>
+    <span class="tab-text-mobile">資金</span>
+  </button>
+  <button class="tab-btn" onclick="switchTab('positions')">
+    <span class="tab-text-desktop">持倉部位</span>
+    <span class="tab-text-mobile">持倉</span>
+  </button>
+  <button class="tab-btn" onclick="switchTab('pnl')">
+    <span class="tab-text-desktop">策略別損益</span>
+    <span class="tab-text-mobile">損益</span>
+  </button>
+  <button class="tab-btn" onclick="switchTab('next')">
+    <span class="tab-text-desktop">下次執行</span>
+    <span class="tab-text-mobile">執行</span>
+  </button>
+  <button class="tab-btn" onclick="switchTab('today')">
+    <span class="tab-text-desktop">今日成交</span>
+    <span class="tab-text-mobile">成交</span>
+  </button>
 </div>
 
 <!-- 資金總覽 Tab -->
