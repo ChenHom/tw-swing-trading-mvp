@@ -357,7 +357,7 @@ tail -n 50 logs/daily_sim.log
 
 ## 7. 測試與驗證
 
-本專案使用 `pytest` 進行完整的單元與整合測試，涵蓋 Shioaji 行情、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、長期持有與 FIFO 隔離、資金配置、排程安全、訊號拒絕閘門、per-account no-add／exit bundle 隔離，以及研究回測層（雙價/CA 帳本、FinMind/TWSE provider、風險/穩健指標、裁決狀態機、Research Ledger、lockbox、參數高原、PIT 流動性 universe）等共計 **321 個測試案例**。
+本專案使用 `pytest` 進行完整的單元與整合測試，涵蓋 Shioaji 行情、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、長期持有與 FIFO 隔離、資金配置、排程安全、訊號拒絕閘門、per-account no-add／exit bundle 隔離，以及研究回測層（雙價/CA 帳本、FinMind/TWSE provider、風險/穩健指標、裁決狀態機、Research Ledger、lockbox、參數高原、PIT 流動性 universe）等共計 **329 個測試案例**。
 
 執行所有測試：
 ```bash

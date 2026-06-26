@@ -168,6 +168,10 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 
 **換樣式（neumorphism）**：只動 `static/style.css` 與模板 class，資料/路由層不變。
 
+> **⚠️ 改 CSS 後看不到效果＝瀏覽器快取**：`base.html` 以 `style.css?v={{ static_v }}` 引用，`static_v`＝`style.css` 的 mtime（`server.py` 啟動時算進 `templates.env.globals`）。改 CSS 後 **需重啟 web 服務**讓 `static_v` 更新、`?v` 變動自動破快取（免使用者硬刷新）。曾踩：新模板加了 `.ext-icon` 但舊 CSS 被永久快取 → 無尺寸約束的 SVG 撐滿整格（2026-06-26）。
+>
+> **代號連 Yahoo**：模板用 macro `symcell(symbol, name)`（dashboard.html 內）渲染「可點代號＋灰字名稱」，連結 `tw.stock.yahoo.com/quote/{symbol}`（**無後綴，Yahoo 自動解析上市/上櫃**，勿硬加 `.TW`／`.TWO`——live `app.db` 的 `exchange` 欄全標 'TSE' 不可靠）。
+
 ---
 
 ## 10. 測試

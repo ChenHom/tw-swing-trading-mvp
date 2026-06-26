@@ -513,3 +513,21 @@
 **🐛 連帶修掉 .venv 依賴缺漏**：cron 走 `.venv/bin/python`（uv，py3.11），但 `.venv` **沒裝 `requests`**（finmind_provider 用 requests 卻未宣告依賴）。先前 FinMind 回補都跑系統 python3（有 requests）才沒暴露；run-daily 走 Shioaji 不碰 requests 也沒暴露——**本籌碼 cron 是第一個在 .venv 下用 requests 的路徑**，故現在才炸。修：`requirements.txt` 補 `requests>=2.31.0` + `uv pip install requests` 進 .venv。
 
 **驗證**：`pytest tests` **329 passed**（test_chip_sync 加驗 finmind_cache 記錄原始回應）；`scripts/sync_chips.sh 7` 在 .venv 下 exit 0 → finmind_cache 46 列（23 檔×2 dataset）、chip_* 刷新、2330 法人 cache row_count 30 帶 fetched_at。整條 cron 路徑（.venv → -m app → FinMind → cache → chip_*）打通。
+
+---
+
+## 2026-06-26 ｜ 儀表板：持倉代號可點開 Yahoo 行情 + CSS 快取破解
+
+**需求**：把「持倉部位」代號/名稱改成跟「今日成交」一樣的「代號＋灰字名稱同格」；代號可點另開新頁到 Yahoo 股市（如 `tw.stock.yahoo.com/quote/2330.TW`）；代號 hover 浮現「另開新頁」icon（**觸控裝置常駐顯示**）。
+
+**怎麼動（純模板/CSS，零邏輯、零 Python 資料層改動）**：
+- [dashboard.html](../../src/web/templates/dashboard.html) 加 Jinja macro `symcell(symbol, name)`：代號→`https://tw.stock.yahoo.com/quote/{symbol}`（`target=_blank`、`rel=noopener`）＋ 灰字名稱（reuse 既有 `.tag-muted`）＋ inline SVG external-link icon。套用到**持倉部位**（兩欄併一格、移除「名稱」表頭、空列 colspan 7→6）、今日成交、下次執行、公司行動、執行事件（None symbol 仍顯示 `-`）——全站代號統一可點。
+- [style.css](../../src/web/static/style.css)：`.ext-icon` 預設 `opacity:.55`＝**觸控裝置（無 hover）常駐**；`@media (hover: hover)` 桌機才改成平時隱藏、hover 浮現。SVG 另帶 `width/height="12"` 屬性當保險（CSS 未載也不會撐大）。
+
+**關鍵發現（已實測）**：① Yahoo **無後綴**網址 `quote/{symbol}` 會**自動解析交易所**——`6789→.TW`（采鈺其實是上市）、`8069/3691→.TWO`（上櫃）全部正確 ⇒ **不需 `.TW`/`.TWO` 判斷**。② live `app.db` 的 `market_bars.exchange` **全部標 'TSE'（含上櫃股，不可靠）**——本來也不能拿它判後綴；無後綴方案剛好繞過此坑。
+
+**🐛 連帶修：CSS 永久快取（回報 icon 巨大且沒隱藏）**：[base.html](../../src/web/templates/base.html) 引 `style.css` 沒帶版本 → 瀏覽器永久快取；新模板已有 `.ext-icon` 但**舊 CSS 沒對應規則** → SVG 無尺寸約束撐滿整格、也沒 hover 隱藏。修：[server.py](../../src/web/server.py) 加 `templates.env.globals["static_v"] = int(style.css mtime)`，`base.html` 改 `style.css?v={{ static_v }}` → 改 CSS 後 `?v` 自動變動破快取。**⚠️ 改 CSS／模板 globals 後須重啟 web 服務**（static_v 在啟動時算一次）。
+
+**驗證**：Jinja 渲染煙霧測試三檔代號連結正確、None-symbol 顯示 `-`；`pytest tests -k "web or dashboard"` **16 passed**（更新 `test_dashboard_allocation_with_position`：原斷言 `<th>名稱</th>` → 改斷言 `https://tw.stock.yahoo.com/quote/2330` 在 body）。
+
+**手動成交（國泰，本日操作）**：6789 采鈺 BUY 5 股@542（加碼，均價 557.33→**553.50**、共 20 股）；隨後 SELL **全部 20 股@508 出清** → FIFO 毛損益 **−910 元**（連手續費+稅約 −980）、剩 0 股。兩筆皆 MANUAL（結構性排除於 risk_exit 監控）。
