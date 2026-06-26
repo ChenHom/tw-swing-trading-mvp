@@ -36,6 +36,11 @@
   - ⬜ **C3-2b 實盤/影子每日權益曲線**：需新增 `equity_snapshots` 表並改動 `DailySimulationRunner.run_daily()`（B1 驗證中的核心路徑），留待 B1 完成後再做。
   - ✅ **C3-3 持倉股票名稱顯示**（2026-06-15）：儀表板 5 張表格（持倉／今日成交／下次執行／公司行動／執行事件）顯示中文股名。`STOCK_NAMES` 由 `src/cli/common.py` 搬至共用 `src/contracts/stock_names.py`（cli 與 service 共用、不反向依賴）。持倉表原獨立「名稱」欄（**2026-06-26 已併入代號同格，見 C5**）；其餘 4 表代號後接 `.tag-muted` 小字。圓環圖 label 不改。測試：`test_web_server.py` 補名稱斷言。
 - ✅ **C5 代號可點開 Yahoo 行情 + 格式統一**（2026-06-26，commit `b4dd10c`）：新 Jinja macro `symcell(symbol, name)` 渲染「可點代號＋灰字名稱同格」，連 `tw.stock.yahoo.com/quote/{symbol}`（**無後綴，Yahoo 自動解析上市/上櫃**；live `app.db` 的 `exchange` 欄全標 'TSE' 不可靠故不自行判後綴），hover 浮現另開頁 icon（觸控常駐、桌機 `@media(hover:hover)` 才隱藏）。套用持倉/今日成交/下次執行/公司行動/執行事件五表（持倉表兩欄併一格）。連帶修 CSS 永久快取：`server.py` 加 `static_v`=style.css mtime、`base.html` 改 `style.css?v=`（**改 CSS 後須 `systemctl restart trading-web`**）。測試：`test_web_server.py` 改斷言（329 綠）。
+- ✅ **C6 行動版 (Mobile RWD) 響應式優化與頂部導覽簡化**（2026-06-26）：
+  - 頂部導航列 (Navbar) 精簡名稱為「看板、報告、回測」，手機版自動隱藏圖示並縮減品牌字為 `"trading"`。
+  - 手機版 controls（帳戶與日期）1:1 並排、隱藏重新整理按鈕與 Label 文字，往下滾動時隨 LOGO 自然推移出畫面，保留精簡版 Tab 吸頂飄浮。
+  - 將 4 張表格在手機版轉化為 App 小白卡列表（Option A），修復 `info-tip` 提示圖示因 flex layout 跑版分離的問題，手機點擊改為 alert 彈窗顯示。
+  - 測試與視覺驗證：測試套件 330 綠，Playwright 截圖手機與桌機正常。
 - ⬜ **C4 neumorphism 風格**：套用指定設計稿（只動 `static/style.css` 與模板 class，不動資料層）。非現在。
 
 詳見 [`ui-development.md`](ui-development.md) §1、§9。

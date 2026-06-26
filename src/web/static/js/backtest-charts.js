@@ -16,9 +16,9 @@
     data: {
       labels: labels,
       datasets: [
-        { label: '總權益', data: rows.map(function (r) { return r.equity; }), borderColor: '#3e4c59', backgroundColor: '#3e4c59', tension: .1, pointRadius: 0 },
-        { label: '現金', data: rows.map(function (r) { return r.cash; }), borderColor: '#5b8def', backgroundColor: '#5b8def', tension: .1, pointRadius: 0 },
-        { label: '持倉市值', data: rows.map(function (r) { return r.position_value; }), borderColor: '#2bbecb', backgroundColor: '#2bbecb', tension: .1, pointRadius: 0 }
+        { label: '總權益', data: rows.map(function (r) { return r.equity; }), borderColor: '#1e293b', backgroundColor: '#1e293b', tension: .1, pointRadius: 0 },
+        { label: '現金', data: rows.map(function (r) { return r.cash; }), borderColor: '#60a5fa', backgroundColor: '#60a5fa', tension: .1, pointRadius: 0 },
+        { label: '持倉市值', data: rows.map(function (r) { return r.position_value; }), borderColor: '#f87171', backgroundColor: '#f87171', tension: .1, pointRadius: 0 }
       ]
     },
     options: {

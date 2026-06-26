@@ -18,7 +18,9 @@ from src.contracts.stock_names import stock_name
 from src.contracts.reason_codes import signal_reason_text
 from src.contracts.strategy_names import strategy_name
 
-DECISIONS = ["進場", "小部位試單", "不進場"]
+DECISIONS_ENTRY = ["進場", "小部位試單", "不進場"]
+DECISIONS_EXIT = ["賣出", "減碼", "續抱"]
+DECISIONS = DECISIONS_ENTRY  # 向後相容
 
 
 def _lots(shares: int) -> int:
@@ -71,6 +73,9 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
     symbol = row["symbol"]
     name = stock_name(symbol) or symbol
     d = date.fromisoformat(row["signal_date"])
+    # 出場訊號（action=SELL）走「該不該執行這筆賣出」的問法；進場走原本的兩週期評估。
+    is_exit = row["action"] != "BUY"
+    decisions = DECISIONS_EXIT if is_exit else DECISIONS_ENTRY
     # 需 60 日均線 + 近期 K 線，多抓緩衝
     history = market_repo.as_of(d).history(symbol, limit=70)
     closes = [b.close / 10000.0 for b in history]
@@ -81,6 +86,7 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
         "symbol": symbol,
         "name": name,
         "action": row["action"],
+        "is_exit": is_exit,
         "signal_date": row["signal_date"],
         "target_date": row["target_execution_date"],
         "strategy": strategy_name(row["strategy_id"]) or row["strategy_id"],
@@ -91,9 +97,9 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
         sig["insufficient"] = True
         prompt = (
             f"{name}（{symbol}）資料不足（僅 {len(closes)} 根日K，<20），"
-            f"無法組成可靠的進場研判提示詞。"
+            f"無法組成可靠的研判提示詞。"
         )
-        return {"signal": sig, "prompt": prompt}
+        return {"signal": sig, "prompt": prompt, "decisions": decisions}
 
     latest_close = round(closes[-1], 2)
     ma5, ma10, ma20, ma60 = _ma(closes, 5), _ma(closes, 10), _ma(closes, 20), _ma(closes, 60)
@@ -117,10 +123,39 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
             f"低{b.low/10000:.2f} 收{b.close/10000:.2f}  量{b.volume:,}張"
         )
 
+    # ponytail: 出場提示詞只帶技術/籌碼面，未帶該帳號的成本價/未實現損益/持有天數
+    # （build_prompt 不收 account_id）。要更準的續抱 vs 停損判斷時，再把部位成本接進來。
+    if is_exit:
+        header = [
+            f"請以台股交易角度，判斷持有中的 {name}（{symbol}）這筆觸發的賣出訊號是否該執行，"
+            "還是值得續抱或減碼。",
+            f"策略訊號（出場）：{sig['strategy']} / {sig['reason']}（{sig['action']}）。"
+            "此為規則觸發的停損／出場，請研判是真破位該走，還是洗盤可留。",
+        ]
+        footer = [
+            "請依上列資料評估：均線排列與支撐/破位位置、量能（破底是否帶量出貨）、"
+            "籌碼動向（三大法人/融資券是否同步轉空）、跌破是否屬假跌破/洗盤。",
+            "給出結論：",
+            "　【是否執行此賣出】：〔賣出 / 減碼 / 續抱〕＋理由（破位確認 vs 洗盤）、"
+            "若續抱的觀察停損位、若減碼的比例。",
+            "（僅依上述資料判斷，勿臆測未提供的消息面或未來走勢。）",
+        ]
+    else:
+        header = [
+            f"請以台股交易角度，判斷 {name}（{symbol}）目前是否適合進場，"
+            "並**分別**評估【短期波段（數日~數週）】與【中長期（數月以上）】兩種持有週期。",
+            f"策略訊號：{sig['strategy']} / {sig['reason']}（{sig['action']}；此訊號本身屬短期波段）。",
+        ]
+        footer = [
+            "請依上列資料評估：均線排列與回踩/突破位置、量能是否健康、籌碼動向（三大法人/融資券）、是否有追高風險。",
+            "**分別**給出兩種週期的結論：",
+            "　【短期波段（數日~數週）】：〔進場 / 小部位試單 / 不進場〕＋低接區間、停損位、轉強確認位。",
+            "　【中長期（數月以上）】：〔適合佈局 / 分批佈局 / 觀望 / 不宜〕＋理由（趨勢結構、籌碼方向）。",
+            "（僅依上述資料判斷，勿臆測未提供的消息面或未來走勢。）",
+        ]
+
     lines = [
-        f"請以台股交易角度，判斷 {name}（{symbol}）目前是否適合進場，"
-        "並**分別**評估【短期波段（數日~數週）】與【中長期（數月以上）】兩種持有週期。",
-        f"策略訊號：{sig['strategy']} / {sig['reason']}（{sig['action']}；此訊號本身屬短期波段）。",
+        *header,
         f"資料截止＝{row['signal_date']} 收盤（D），次一交易日 {row['target_execution_date']} 開盤執行。",
         "",
         "【價格與均線】（單位：元）",
@@ -138,13 +173,9 @@ def build_prompt(conn: sqlite3.Connection, market_repo: SqliteMarketBarRepositor
         "【近 12 日日K】",
         *kbars,
         "",
-        "請依上列資料評估：均線排列與回踩/突破位置、量能是否健康、籌碼動向（三大法人/融資券）、是否有追高風險。",
-        "**分別**給出兩種週期的結論：",
-        "　【短期波段（數日~數週）】：〔進場 / 小部位試單 / 不進場〕＋低接區間、停損位、轉強確認位。",
-        "　【中長期（數月以上）】：〔適合佈局 / 分批佈局 / 觀望 / 不宜〕＋理由（趨勢結構、籌碼方向）。",
-        "（僅依上述資料判斷，勿臆測未提供的消息面或未來走勢。）",
+        *footer,
     ]
-    return {"signal": sig, "prompt": "\n".join(lines)}
+    return {"signal": sig, "prompt": "\n".join(lines), "decisions": decisions}
 
 
 def _now() -> str:

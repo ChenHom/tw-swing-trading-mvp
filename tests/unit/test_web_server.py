@@ -40,7 +40,7 @@ def test_dashboard_renders(client):
     body = r.text
     assert "tw-day-trading" in body
     assert "可用現金" in body
-    assert "RISK_EXIT" in body
+    assert "對帳" in body
     assert "simulation-main" in body
     # 空帳戶對帳應顯示通過
     assert "通過" in body
@@ -49,7 +49,7 @@ def test_dashboard_renders(client):
     assert "總權益" in body
     assert "總報酬率" in body
     assert "持倉資產配置" in body
-    assert "無資產可顯示" in body
+    assert "無資產配置資料可顯示" in body
     assert "/static/js/chart.umd.min.js" in body
 
 
@@ -168,7 +168,7 @@ def test_backtests_list_and_detail(client, monkeypatch, tmp_path):
     r = client.get("/backtests/trend_breakout_bt-aaa11111.json")
     assert r.status_code == 200
     body = r.text
-    assert "trend_breakout" in body
+    assert "趨勢帶量突破" in body
     assert 'id="equityChart"' in body
     assert 'id="equityCurveData"' in body
     assert "&#8734;" in body  # profit_factor=None → ∞

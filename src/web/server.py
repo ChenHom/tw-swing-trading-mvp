@@ -26,6 +26,8 @@ from src.application.services import dashboard as dash
 from src.application.services import llm_advisor
 from src.strategy import registry as strategy_registry
 
+from src.contracts.strategy_names import strategy_name
+
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_PATH = os.environ.get("TRADING_WEB_ROOT_PATH", "/trading")
 
@@ -36,6 +38,8 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["base"] = ROOT_PATH.rstrip("/")
 # style.css 版本＝檔案 mtime，改 CSS 後 ?v 變動自動破瀏覽器快取（免手動硬刷新）。
 templates.env.globals["static_v"] = int((BASE_DIR / "static" / "style.css").stat().st_mtime)
+# 註冊策略名稱中文化 filter
+templates.env.filters["strategy_name"] = strategy_name
 
 
 def _conn():
@@ -129,7 +133,7 @@ def llm_review(request: Request, signal_id: str, account: str | None = Query(def
         return templates.TemplateResponse(
             request, "llm_review.html",
             {"signal": pd["signal"], "prompt": pd["prompt"], "review": review,
-             "account": account_id, "decisions": llm_advisor.DECISIONS},
+             "account": account_id, "decisions": pd["decisions"]},
         )
     finally:
         conn.close()

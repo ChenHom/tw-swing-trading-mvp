@@ -1,97 +1,346 @@
-/* 基本款樣式（之後可換 neumorphism）。行動裝置友善、單欄優先。 */
+/* 雅緻淺色風格（Premium Light Theme）。行動裝置友善、單欄優先、大螢幕支援雙欄。 */
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  font-family: -apple-system, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
-  background: #f4f5f7;
-  color: #222;
-  line-height: 1.5;
+  font-family: "Inter", -apple-system, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  background: #f7fafc;
+  color: #2d3748;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
 }
 .topbar {
-  display: flex; align-items: center; gap: 1rem;
-  background: #1f2933; color: #fff; padding: .75rem 1rem;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  background: #ffffff; color: #1a202c; padding: 1rem 1.5rem;
   position: sticky; top: 0; z-index: 10;
+  border-bottom: 1px solid #edf2f7;
+  box-shadow: 0 1px 3px rgba(0,0,0,.02);
 }
-.topbar .brand { font-weight: 700; color: #fff; text-decoration: none; }
-.topbar nav { display: flex; gap: 1rem; }
-.topbar nav a { color: #cbd2d9; text-decoration: none; font-size: .95rem; }
-.topbar nav a:hover { color: #fff; }
-main { max-width: 1100px; margin: 0 auto; padding: 1rem; }
+.topbar .brand { font-weight: 700; color: #2b6cb0; text-decoration: none; font-size: 1.15rem; letter-spacing: -0.02em; }
+.brand-text-mobile { display: none; }
+.info-tip-container { display: inline-flex; align-items: center; gap: 0.25rem; }
+.topbar nav { display: flex; gap: 1.25rem; }
+.topbar nav a { color: #4a5568; text-decoration: none; font-size: .95rem; font-weight: 500; transition: color .15s; }
+.topbar nav a:hover { color: #2b6cb0; }
 
-.controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 1rem; }
-.controls label { display: flex; flex-direction: column; font-size: .8rem; color: #616e7c; gap: .25rem; }
-.controls select, .controls input { padding: .4rem .5rem; border: 1px solid #cbd2d9; border-radius: 6px; font-size: 1rem; }
-.btn { padding: .45rem .8rem; background: #3e4c59; color: #fff; border-radius: 6px; text-decoration: none; font-size: .9rem; }
+/* Tab 分頁導航欄 */
+.tab-nav {
+  display: flex;
+  gap: 1.5rem;
+  border-bottom: 2px solid #edf2f7;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.1rem;
+}
+.tab-btn {
+  background: none;
+  border: none;
+  font-size: .95rem;
+  font-weight: 600;
+  color: #718096;
+  padding: .5rem .25rem;
+  cursor: pointer;
+  position: relative;
+  transition: color .15s;
+}
+.tab-btn:hover {
+  color: #2b6cb0;
+}
+.tab-btn.active {
+  color: #2b6cb0;
+}
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: #2b6cb0;
+  border-radius: 99px;
+}
+.tab-content {
+  display: none;
+}
+.tab-content.active {
+  display: block;
+  animation: tabFadeIn .2s ease-in-out;
+}
+@keyframes tabFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
-.card { background: #fff; border-radius: 10px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-.card-label { font-size: .8rem; color: #7b8794; }
-.card-value { font-size: 1.6rem; font-weight: 700; margin-top: .25rem; }
-.card-value .unit { font-size: .9rem; font-weight: 400; color: #9aa5b1; }
+main { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
 
-.badge { display: inline-block; padding: .15rem .6rem; border-radius: 999px; font-size: .9rem; font-weight: 600; }
-.badge.ok { background: #def7ec; color: #03543f; }
-.badge.bad { background: #fde8e8; color: #9b1c1c; }
-.badge.warn { background: #fdf6b2; color: #723b13; }
-.badge.muted { background: #e4e7eb; color: #616e7c; }
+.controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 1.5rem; }
+.controls label { display: flex; flex-direction: column; font-size: .8rem; color: #718096; gap: .35rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.controls select, .controls input { height: 38px; padding: 0 .6rem; border: 1px solid #e2e8f0; border-radius: 8px; font-size: .95rem; color: #2d3748; background: #fff; transition: border-color .15s; }
+.controls select:focus, .controls input:focus { border-color: #3182ce; outline: none; }
+.btn { height: 38px; padding: 0 1rem; background: #3182ce; color: #fff; border-radius: 8px; text-decoration: none; font-size: .9rem; font-weight: 500; border: none; cursor: pointer; transition: background .15s; display: inline-flex; align-items: center; justify-content: center; }
+.btn:hover { background: #2b6cb0; }
 
-.alert { background: #fde8e8; color: #9b1c1c; padding: .6rem 1rem; border-radius: 8px; }
-.hint { font-size: .78rem; color: #7b8794; line-height: 1.5; margin: .35rem 0; }
-.caption { font-size: .8rem; color: #7b8794; margin: .1rem 0 .4rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.card { background: #fff; border-radius: 12px; padding: 1.25rem; border: 1px solid #edf2f7; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.01); transition: transform .2s, box-shadow .2s; }
+.card:hover { transform: translateY(-1px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.04), 0 4px 6px -2px rgba(0, 0, 0, 0.02); }
+.card-label { font-size: .8rem; color: #718096; font-weight: 600; }
+.card-value { font-size: 1.65rem; font-weight: 700; margin-top: .35rem; color: #1a202c; letter-spacing: -0.02em; }
+.card-value .unit { font-size: .85rem; font-weight: 500; color: #a0aec0; margin-left: .15rem; }
 
-h2 { font-size: 1.1rem; margin: 1.25rem 0 .5rem; }
-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-th, td { padding: .55rem .75rem; text-align: left; border-bottom: 1px solid #f0f2f5; font-size: .95rem; }
-th { background: #f8f9fb; color: #616e7c; font-weight: 600; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
-td.pos { color: #03543f; }
-td.neg { color: #9b1c1c; }
-td.empty { text-align: center; color: #9aa5b1; }
-.tag { background: #e4e7eb; color: #52606d; padding: 0 .4rem; border-radius: 4px; font-size: .75rem; }
-.tag-muted { color: #9aa5b1; font-size: .82rem; margin-left: .3rem; }
+.badge { display: inline-block; padding: .2rem .65rem; border-radius: 6px; font-size: .82rem; font-weight: 600; text-align: center; }
+.badge.ok { background: #e6fffa; color: #00a389; }
+.badge.bad { background: #fff5f5; color: #e53e3e; }
+.badge.warn { background: #fffaf0; color: #dd6b20; }
+.badge.muted { background: #f7fafc; color: #718096; }
 
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-@media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
-td.truncate { max-width: 22em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 720px) { td.truncate { max-width: 12em; } }
-/* 下次執行：筆數多時限高可縱向捲動、表頭吸頂（約顯示 3 列後捲動） */
-.scroll-rows { max-height: 12rem; overflow-y: auto; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-.scroll-rows table { box-shadow: none; border-radius: 0; }
-.scroll-rows thead th { position: sticky; top: 0; z-index: 1; }
-/* 窄螢幕：寬表格改為可橫向捲動的區塊，避免欄位擠壓/跑版 */
+/* 台灣股市：買入/上漲為紅，賣出/下跌為綠 */
+.badge.side-buy { background: #fff5f5; color: #e53e3e; }
+.badge.side-sell { background: #f0fff4; color: #38a169; }
+
+.alert { background: #fff5f5; color: #e53e3e; padding: .75rem 1.25rem; border-radius: 10px; border: 1px solid #fed7d7; margin-bottom: 1.5rem; font-weight: 500; font-size: .95rem; }
+.hint { font-size: .8rem; color: #718096; line-height: 1.5; margin: .4rem 0; }
+.caption { font-size: .8rem; color: #718096; margin: .1rem 0 .4rem; }
+
+h2 { font-size: 1.15rem; margin: 1.5rem 0 .75rem; color: #1a202c; font-weight: 700; display: flex; align-items: center; justify-content: space-between; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid #edf2f7; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02); }
+th, td { padding: .7rem .9rem; text-align: left; border-bottom: 1px solid #edf2f7; font-size: .92rem; }
+th { background: #f7fafc; color: #4a5568; font-weight: 600; border-bottom: 2px solid #edf2f7; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+
+/* 台灣紅綠配色：獲利(pos)為紅，虧損(neg)為綠 */
+td.pos, .card-value.pos { color: #e53e3e; }
+td.neg, .card-value.neg { color: #38a169; }
+td.empty { text-align: center; color: #a0aec0; padding: 1.5rem 0; font-style: italic; }
+.tag { background: #edf2f7; color: #4a5568; padding: .1rem .4rem; border-radius: 4px; font-size: .75rem; font-weight: 500; }
+.tag-muted { color: #a0aec0; font-size: .8rem; margin-left: .35rem; }
+
+/* 寬螢幕雙欄佈局：限制在 992px 以上以防在平板與手機上跑版 */
+.two-col { display: grid; grid-template-columns: 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+@media (min-width: 992px) {
+  .two-col { grid-template-columns: 1fr 1fr; }
+}
+td.truncate { max-width: 18em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) { td.truncate { max-width: 10em; } }
+
+/* 下次執行：限制高度、表頭吸頂 */
+.scroll-rows { max-height: 14rem; overflow-y: auto; border-radius: 12px; border: 1px solid #edf2f7; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02); }
+.scroll-rows table { box-shadow: none; border-radius: 0; border: none; }
+.scroll-rows thead th { position: sticky; top: 0; z-index: 1; border-bottom: 2px solid #edf2f7; }
+
+/* 窄螢幕：寬表格改為可橫向捲動的區塊 */
 @media (max-width: 720px) {
   table { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
 }
 
 /* 資金總覽 + 資產配置（C3-1）*/
-.capital { margin-bottom: 1rem; }
-.card-value.pos { color: #03543f; }
-.card-value.neg { color: #9b1c1c; }
-.alloc { background: #fff; border-radius: 10px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-.alloc h2 { margin-top: .25rem; }
-.alloc-chart { position: relative; width: 100%; max-width: 360px; height: 320px; margin: .5rem auto 0; }
-.alloc .empty { text-align: center; color: #9aa5b1; padding: 1rem 0; }
-@media (max-width: 720px) { .alloc-chart { max-width: 280px; height: 280px; } }
+.capital { margin-bottom: 1.5rem; }
+@media (min-width: 992px) {
+  .capital { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1.5rem; align-items: start; }
+  .capital .cards { margin-bottom: 0; }
+}
+.card-value.pos { color: #e53e3e; }
+.card-value.neg { color: #38a169; }
+.alloc { background: #fff; border-radius: 12px; padding: 1.25rem; border: 1px solid #edf2f7; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02); height: 100%; display: flex; flex-direction: column; }
+.alloc h2 { margin-top: 0; margin-bottom: .75rem; font-size: 1.05rem; color: #1a202c; font-weight: 700; }
+.alloc-chart-container { position: relative; width: 100%; max-width: 320px; height: 260px; margin: 0 auto; flex-grow: 1; }
+.alloc-chart { width: 100%; height: 100%; }
+.alloc-center-text { position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+.alloc-center-value { font-size: 1.25rem; font-weight: 700; color: #1a202c; line-height: 1.1; }
+.alloc-center-label { font-size: .72rem; color: #718096; margin-top: .15rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.03em; }
+.alloc .empty { text-align: center; color: #a0aec0; padding: 2.5rem 0; }
+@media (max-width: 720px) { .alloc-chart-container { max-width: 240px; height: 240px; } }
+
+/* 資金總覽 2x2 網格 */
+.capital-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem 1.5rem; margin-top: 1.25rem; border-top: 1px solid #edf2f7; padding-top: 1.25rem; }
+.capital-item { display: flex; flex-direction: column; gap: .2rem; }
+.capital-item-label { font-size: .78rem; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.capital-item-value { font-size: 1.2rem; font-weight: 700; color: #2d3748; }
+.capital-item-value .unit { font-size: .8rem; color: #a0aec0; font-weight: 500; margin-left: .1rem; }
+.capital-footer { margin-top: 1.25rem; border-top: 1px solid #edf2f7; padding-top: .75rem; font-size: .82rem; color: #718096; line-height: 1.4; }
 
 /* 回測權益曲線（C3-2a）*/
 .equity-chart { position: relative; width: 100%; height: 360px; margin-top: .5rem; }
 @media (max-width: 720px) { .equity-chart { height: 280px; } }
 
-/* 欄位說明 tooltip（取代長 hint/caption 段落，hover/長按顯示） */
+/* Tooltip 說明標記 */
 .info-tip {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 1.05rem; height: 1.05rem; margin-left: .3rem;
-  border-radius: 50%; background: #e4e7eb; color: #616e7c;
+  width: 1.05rem; height: 1.05rem; margin-left: .35rem;
+  border-radius: 50%; background: #edf2f7; color: #718096;
   font-size: .7rem; font-style: normal; line-height: 1; cursor: help;
   vertical-align: middle;
+  transition: background .15s, color .15s;
 }
+.info-tip:hover { background: #e2e8f0; color: #4a5568; }
 
-/* 代號連 Yahoo 行情。觸控裝置（無 hover）icon 常駐；桌機平時隱藏、移上去才浮現 */
-a.sym-link { color: inherit; text-decoration: none; white-space: nowrap; }
-a.sym-link:hover { text-decoration: underline; }
-.ext-icon { width: .72em; height: .72em; margin-left: .25em; vertical-align: -.06em;
-            opacity: .55; transition: opacity .12s; }
+.label-text { display: inline-flex; align-items: center; }
+
+/* 外部連結圖示 */
+a.sym-link { color: #2b6cb0; text-decoration: none; white-space: nowrap; font-weight: 600; transition: color .15s; }
+a.sym-link:hover { color: #1a0dab; text-decoration: underline; }
+.ext-icon { width: .75em; height: .75em; margin-left: .25em; vertical-align: -.06em;
+            opacity: .4; transition: opacity .12s; }
 @media (hover: hover) {
   .ext-icon { opacity: 0; }
-  a.sym-link:hover .ext-icon { opacity: .55; }
+  a.sym-link:hover .ext-icon { opacity: .7; }
+}
+
+/* ==========================================
+   手機版 RWD 響應式佈局 (Mobile Optimizations)
+   ========================================== */
+@media (max-width: 767px) {
+  /* 1. 頂部 LOGO 欄不吸頂，隨捲軸滑出螢幕 */
+  .topbar {
+    position: relative;
+    padding: 0.75rem 1rem;
+  }
+  
+  /* 2. 控制欄：帳戶、日期並排，隱藏 Label 與重新整理 */
+  .controls {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .controls label {
+    flex: 1;
+    margin: 0;
+  }
+  .controls label .label-text {
+    display: none;
+  }
+  .controls select, .controls input {
+    width: 100%;
+    margin: 0;
+  }
+  .controls .btn-refresh {
+    display: none;
+  }
+
+  /* 3. 導航 Tab 吸頂飄浮 */
+  .tab-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #f7fafc; /* 與 body 背景一致，防止穿透 */
+    padding: 0.75rem 0.5rem;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid #edf2f7;
+    
+    /* 超出寬度時支援橫向手勢滑動 */
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    gap: 1.25rem;
+  }
+  /* 隱藏 Tab 橫向滾動條 */
+  .tab-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .tab-nav {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* 4. 儀表板表格轉卡片列表 (Option A) */
+  .tab-content table,
+  .tab-content thead,
+  .tab-content tbody,
+  .tab-content th,
+  .tab-content td,
+  .tab-content tr {
+    display: block;
+  }
+  .tab-content table {
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    width: 100%;
+  }
+  .tab-content table thead {
+    display: none; /* 隱藏傳統表頭 */
+  }
+  .tab-content table tbody {
+    width: 100%;
+  }
+  .tab-content table tr {
+    background: #fff;
+    border: 1px solid #edf2f7;
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.015);
+  }
+  .tab-content table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f7fafc;
+    font-size: 0.88rem;
+    text-align: right;
+    white-space: normal;
+  }
+  .tab-content table td:last-child {
+    border-bottom: none;
+  }
+  /* 欄位左側名稱（來自 HTML data-label 屬性） */
+  .tab-content table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: #718096;
+    text-align: left;
+    margin-right: 1rem;
+    flex-shrink: 0;
+  }
+  .tab-content table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .tab-content table td.empty {
+    display: block;
+    text-align: center;
+    padding: 1.5rem 0;
+    font-style: italic;
+    color: #a0aec0;
+    border-bottom: none;
+  }
+  .tab-content table td.empty::before {
+    display: none;
+  }
+
+  /* 下次執行：理由欄位改為直向區塊 */
+  .tab-content table td[data-label="理由"] {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    text-align: left;
+    padding: 0.75rem 0;
+  }
+  .tab-content table td[data-label="理由"]::before {
+    margin-bottom: 0.25rem;
+  }
+  .tab-content table td[data-label="理由"].truncate {
+    white-space: normal;
+    max-width: 100%;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  /* 下次執行：解除固定高度滾動視窗限制 */
+  .tab-content .scroll-rows {
+    max-height: none;
+    overflow-y: visible;
+    border: none;
+    box-shadow: none;
+  }
+
+  /* 手機版品牌 LOGO 優化：隱藏圖標，文字改為 trading */
+  .topbar .brand-icon {
+    display: none !important;
+  }
+  .topbar .brand-text-desktop {
+    display: none;
+  }
+  .topbar .brand-text-mobile {
+    display: inline;
+  }
 }

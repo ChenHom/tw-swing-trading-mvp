@@ -52,6 +52,30 @@ def test_build_prompt_uses_own_real_data(tmp_path):
     conn.close()
 
 
+def test_build_prompt_exit_signal_asks_to_sell(tmp_path):
+    conn, repo = _seed(tmp_path)
+    # 出場訊號：獨立 exit bundle 加一筆 SELL（規則停損）
+    conn.execute(
+        """INSERT INTO signal_bundles (bundle_id, run_id, approval_id, strategy_id, strategy_version,
+           params_hash, signal_date, target_execution_date, market_data_cutoff, created_at)
+           SELECT 'b1-exit', run_id, approval_id, strategy_id, strategy_version, params_hash,
+           signal_date, target_execution_date, market_data_cutoff, created_at
+           FROM signal_bundles WHERE bundle_id='b1'""")
+    conn.execute(
+        """INSERT INTO signal_items (item_id, bundle_id, signal_id, symbol, action, reference_price,
+           reason_code, created_at, signal_source)
+           VALUES ('i2','b1-exit','sig-2330-sell','2330','SELL', 1000000, 'STOP_LOSS_HIT','now','EXIT')""")
+    conn.commit()
+    out = llm_advisor.build_prompt(conn, repo, "sig-2330-sell")
+    assert out["signal"]["is_exit"] is True
+    assert out["decisions"] == llm_advisor.DECISIONS_EXIT  # 賣出/減碼/續抱
+    p = out["prompt"]
+    assert "這筆觸發的賣出訊號是否該執行" in p
+    assert "賣出 / 減碼 / 續抱" in p
+    assert "進場" not in p  # 不該再用進場框架
+    conn.close()
+
+
 def test_build_prompt_unknown_signal(tmp_path):
     conn, repo = _seed(tmp_path)
     assert llm_advisor.build_prompt(conn, repo, "nope") is None

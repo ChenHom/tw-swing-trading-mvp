@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}LLM 進場顧問 — {{ signal.symbol }}{% endblock %}
+{% block title %}LLM {{ '出場' if signal.is_exit else '進場' }}顧問 — {{ signal.symbol }}{% endblock %}
 {% block content %}
 
 <section>
-  <h2>LLM 進場顧問 — {{ signal.symbol }}
+  <h2>LLM {{ '出場' if signal.is_exit else '進場' }}顧問 — {{ signal.symbol }}
     {% if signal.name %}<span class="tag-muted">{{ signal.name }}</span>{% endif %}</h2>
   <p>
     策略 {{ signal.strategy }}｜{{ signal.reason }}（{{ signal.action }}）｜

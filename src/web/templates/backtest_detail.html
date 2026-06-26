@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}回測結果 · {{ result.strategy_id }} · tw-day-trading{% endblock %}
+{% block title %}回測結果 · {{ result.strategy_id | strategy_name }} · tw-day-trading{% endblock %}
 {% block content %}
-<p class="caption"><a href="{{ base }}/backtests">&laquo; 回測結果列表</a></p>
-<h2>{{ result.strategy_id }}（{{ result.start_date }} ~ {{ result.end_date }}）</h2>
+<p class="caption"><a href="{{ base }}/backtests" style="color: #2b6cb0; text-decoration: none; font-weight: 500;">&laquo; 回測結果列表</a></p>
+<h2 style="margin-top: 0.5rem; margin-bottom: 0.25rem;">{{ result.strategy_id | strategy_name }}（{{ result.start_date }} ~ {{ result.end_date }}）</h2>
 <p class="hint">執行時間 {{ result.created_at[:19] }} ｜ run_id {{ result.run_id }}</p>
 
 <section class="cards">
@@ -17,7 +17,7 @@
   <div class="card">
     <div class="card-label">總損益</div>
     <div class="card-value {{ 'pos' if result.statistics.total_pnl >= 0 else 'neg' }}">{{ "{:+,}".format(result.statistics.total_pnl) }} <span class="unit">TWD</span></div>
-    <div class="hint">{{ "%+.2f"|format(result.statistics.total_pnl_bps / 100) }}%</div>
+    <div class="hint" style="font-weight: 600; margin-top: 0.25rem;">{{ "%+.2f"|format(result.statistics.total_pnl_bps / 100) }}%</div>
   </div>
   <div class="card">
     <div class="card-label">最大回撤</div>
@@ -41,8 +41,8 @@
   </div>
 </section>
 
-<div class="alloc">
-  <h2>權益曲線</h2>
+<div class="alloc" style="margin-top: 1.5rem;">
+  <h2 style="margin-top: 0; margin-bottom: 0.75rem;">權益曲線</h2>
   <div class="equity-chart"><canvas id="equityChart" role="img" aria-label="權益曲線圖"></canvas></div>
   <script type="application/json" id="equityCurveData">{{ result.equity_curve|tojson }}</script>
 </div>

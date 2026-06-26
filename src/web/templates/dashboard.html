@@ -5,208 +5,253 @@
 {% block content %}
 
 <form method="get" action="{{ base }}/" class="controls">
-  <label>帳戶
+  <label>
+    <span class="label-text">帳戶</span>
     <select name="account" onchange="this.form.submit()">
       {% for a in accounts %}
       <option value="{{ a }}" {% if a == d.account_id %}selected{% endif %}>{{ a }}</option>
       {% endfor %}
     </select>
   </label>
-  <label>日期 <span class="info-tip" title="日期只影響「當日 RUN 狀態 / 今日成交 / 執行事件（審計）」三塊；現金、持倉、損益、對帳為即時狀態，「下次執行」永遠顯示最近一批待執行訊號，皆不隨日期變動。">ⓘ</span>
+  <label>
+    <span class="label-text">日期 <span class="info-tip" title="日期只影響「當日 RUN 狀態 / 今日成交 / 執行事件（審計）」三塊；現金、持倉、損益、對帳為即時狀態，「下次執行」永遠顯示最近一批待執行訊號，皆不隨日期變動。">ⓘ</span></span>
     <input type="date" name="view_date" value="{{ view_date }}" onchange="this.form.submit()">
   </label>
-  <a class="btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}">重新整理</a>
+  <a class="btn btn-refresh" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}">重新整理</a>
 </form>
 {% if today and view_date != today %}
 <p class="hint">目前檢視 {{ view_date }}，今天是 {{ today }}。</p>
 {% endif %}
 
-<section class="cards">
-  <div class="card">
-    <div class="card-label">可用現金</div>
-    <div class="card-value">{{ "{:,}".format(d.cash) }} <span class="unit">TWD</span></div>
-  </div>
-  <div class="card">
-    <div class="card-label">RISK_EXIT 監控部位</div>
-    <div class="card-value">{{ d.monitored_count }}</div>
-  </div>
-  <div class="card">
-    <div class="card-label">當日 RUN 狀態</div>
-    <div class="card-value">
-      {% if d.run_status %}
-        <span class="badge {{ 'ok' if d.run_status.status == 'COMPLETED' else 'warn' }}">{{ d.run_status.status }}</span>
-      {% else %}
-        <span class="badge muted">無紀錄</span>
-      {% endif %}
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-label">對帳 <span class="info-tip" title="比對現金帳本流水 vs 餘額快照、成交淨額 vs 庫存、各策略桶持倉一致性。通過＝帳實相符；失敗＝出現差異（下方顯示明細）。">ⓘ</span></div>
-    <div class="card-value">
-      {% if d.reconcile.ok %}<span class="badge ok">通過</span>
-      {% else %}<span class="badge bad">失敗</span>{% endif %}
-    </div>
-    <div class="hint">{{ d.reconcile.detail_zh }}</div>
-  </div>
-</section>
-
 {% if d.run_status and d.run_status.last_error_code %}
 <p class="alert">⚠ 當日 RUN 最後錯誤：{{ d.run_status.last_error_code }}</p>
 {% endif %}
 
-{# === 資金總覽 + 資產配置（C3-1）=== #}
-<section class="capital">
-  <div class="cards">
+<!-- Tab 分頁導航欄 -->
+<div class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('capital')">資金</button>
+  <button class="tab-btn" onclick="switchTab('positions')">持倉</button>
+  <button class="tab-btn" onclick="switchTab('pnl')">損益</button>
+  <button class="tab-btn" onclick="switchTab('next')">執行</button>
+  <button class="tab-btn" onclick="switchTab('today')">成交</button>
+</div>
+
+<!-- 資金總覽 Tab -->
+<div id="tab-capital" class="tab-content active">
+  <section class="capital">
     <div class="card">
-      <div class="card-label">淨投入本金</div>
-      <div class="card-value">{{ "{:,}".format(cap.net_principal) }} <span class="unit">TWD</span></div>
-    </div>
-    <div class="card">
-      <div class="card-label">可用現金</div>
-      <div class="card-value">{{ "{:,}".format(cap.cash) }} <span class="unit">TWD</span></div>
-    </div>
-    <div class="card">
-      <div class="card-label">持倉總市值</div>
-      <div class="card-value">{{ "{:,}".format(cap.positions_value) }} <span class="unit">TWD</span>{% if cap.any_stale %} <span class="badge warn">估算</span>{% endif %}</div>
-    </div>
-    <div class="card">
+      <div class="card-label" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+        <span style="font-weight: 700; color: #1a202c; font-size: 1.05rem;">資金總覽</span>
+      </div>
+      
       <div class="card-label">總權益</div>
       <div class="card-value">{{ "{:,}".format(cap.total_equity) }} <span class="unit">TWD</span></div>
-    </div>
-    <div class="card">
-      <div class="card-label">總報酬率</div>
+      
+      <div class="card-label" style="margin-top: 0.75rem;">總報酬率</div>
       {% if cap.return_pct is none %}
       <div class="card-value">—</div>
       {% else %}
-      <div class="card-value {{ 'pos' if cap.return_pct >= 0 else 'neg' }}">{{ "%+.2f"|format(cap.return_pct) }}%</div>
+      <div class="card-value {{ 'pos' if cap.return_pct >= 0 else 'neg' }}">
+        {{ "%+.2f"|format(cap.return_pct) }}%
+        <span class="unit" style="font-size: 0.9rem; font-weight: 500; margin-left: 0.25rem;">({{ "{:+,}".format(cap.total_return) }} TWD)</span>
+      </div>
       {% endif %}
-      <div class="hint">總報酬 {{ "{:+,}".format(cap.total_return) }} TWD</div>
+      
+      <div class="capital-grid">
+        <div class="capital-item">
+          <span class="capital-item-label">淨投入本金</span>
+          <span class="capital-item-value">{{ "{:,}".format(cap.net_principal) }}<span class="unit">元</span></span>
+        </div>
+        <div class="capital-item">
+          <span class="capital-item-label">可用現金</span>
+          <span class="capital-item-value">{{ "{:,}".format(cap.cash) }}<span class="unit">元</span></span>
+        </div>
+        <div class="capital-item">
+          <span class="capital-item-label">持倉總市值</span>
+          <span class="capital-item-value">
+            {{ "{:,}".format(cap.positions_value) }}<span class="unit">元</span>
+            {% if cap.any_stale %}<span class="badge warn" style="font-size: 0.68rem; padding: 0.05rem 0.25rem; vertical-align: middle;">估算</span>{% endif %}
+          </span>
+        </div>
+        <div class="capital-item">
+          <span class="capital-item-label">系統與對帳</span>
+          <span class="capital-item-value" style="font-size: 0.92rem; display: flex; align-items: center; gap: 0.35rem; margin-top: 0.15rem; flex-wrap: wrap;">
+            {% if d.reconcile.ok %}
+            <span class="badge ok" style="padding: 0.1rem 0.4rem; font-size: 0.72rem;">對帳通過</span>
+            {% else %}
+            <span class="badge bad" style="padding: 0.1rem 0.4rem; font-size: 0.72rem;">對帳差異</span>
+            {% endif %}
+            
+            {% if d.run_status %}
+            <span class="badge {{ 'ok' if d.run_status.status == 'COMPLETED' else 'warn' }}" style="padding: 0.1rem 0.4rem; font-size: 0.72rem;">RUN: {{ d.run_status.status }}</span>
+            {% else %}
+            <span class="badge muted" style="padding: 0.1rem 0.4rem; font-size: 0.72rem;">無 RUN</span>
+            {% endif %}
+          </span>
+        </div>
+      </div>
+      
+      <div class="capital-footer">
+        <strong>對帳明細：</strong>{{ d.reconcile.detail_zh }}
+      </div>
+    </div>
+
+    <div class="alloc">
+      <h2>持倉資產配置</h2>
+      {% if cap.allocation %}
+      <div class="alloc-chart-container">
+        <canvas id="allocChart" role="img" aria-label="資產配置圓環圖"></canvas>
+        <div class="alloc-center-text">
+          <div class="alloc-center-value">{{ "{:,}".format(cap.positions_value) }}</div>
+          <div class="alloc-center-label">持倉市值 (TWD)</div>
+        </div>
+      </div>
+      <script type="application/json" id="allocData">{{ cap.allocation|tojson }}</script>
+      {% else %}
+      <p class="empty">無資產配置資料可顯示。</p>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+<!-- 持倉部位 Tab -->
+<div id="tab-positions" class="tab-content">
+  <div class="card">
+    <div class="card-label" style="font-weight: 700; color: #1a202c; font-size: 1.05rem; margin-bottom: 0.75rem;">持倉部位</div>
+    <table>
+      <thead><tr><th>策略</th><th>代號</th><th>股數</th><th>均價</th><th>最後收盤</th><th>監控</th></tr></thead>
+      <tbody>
+        {% for p in d.positions %}
+        <tr>
+          <td data-label="策略">{{ p.strategy_name }}{% if p.is_long_term %} <span class="tag">長期</span>{% endif %}</td>
+          <td data-label="代號">{{ symcell(p.symbol, p.name) }}</td>
+          <td data-label="股數" class="num">{{ "{:,}".format(p.quantity) }}</td>
+          <td data-label="均價" class="num">{{ "%.2f"|format(p.wavg_price) }}</td>
+          <td data-label="最後收盤" class="num">{% if p.last_close is not none %}{{ "%.2f"|format(p.last_close) }}{% else %}—{% endif %}</td>
+          <td data-label="監控">{% if p.monitored %}✓{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">無持倉</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 策略別損益 Tab -->
+<div id="tab-pnl" class="tab-content">
+  <div class="card">
+    <div class="card-label" style="font-weight: 700; color: #1a202c; font-size: 1.05rem; margin-bottom: 0.75rem;">策略別損益</div>
+    <table>
+      <thead><tr><th>策略</th><th>已實現淨損益</th><th>毛損益</th><th>規費</th><th>持倉數</th></tr></thead>
+      <tbody>
+        {% for s in d.pnl %}
+        <tr>
+          <td data-label="策略"><span class="info-tip-container">{{ s.strategy_name }}{% if s.strategy_desc %} <span class="info-tip" title="{{ s.strategy_desc }}">ⓘ</span>{% endif %}</span></td>
+          <td data-label="已實現淨損益" class="num {{ 'pos' if s.net_realized >= 0 else 'neg' }}">{{ "{:+,}".format(s.net_realized) }}</td>
+          <td data-label="毛損益" class="num">{{ "{:+,}".format(s.gross) }}</td>
+          <td data-label="規費" class="num">{{ "{:,}".format(s.fees) }}</td>
+          <td data-label="持倉數" class="num">{{ s.open_positions }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty">無策略活動</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 下次執行 Tab -->
+<div id="tab-next" class="tab-content">
+  <div class="card">
+    <div class="card-label" style="font-weight: 700; color: #1a202c; font-size: 1.05rem; margin-bottom: 0.75rem;">
+      下次執行{% if d.next_execution_date %}（執行日 {{ d.next_execution_date }}）{% endif %}
+      <span class="info-tip" title="最近一批待執行訊號（不隨上方日期變動）。「規劃」為以當前現金、依完整管線順序試算的股數與每股參考買入價，被擋或已拒絕者顯示原因。策略與理由滑鼠移上可看說明/全文。">ⓘ</span>
+    </div>
+    <div class="scroll-rows">
+      <table>
+        <thead><tr><th>動作</th><th>代號</th><th>策略</th><th>規劃（股數 @ 買入價）</th><th>理由</th><th>LLM 決策</th></tr></thead>
+        <tbody>
+          {% for s in d.next_execution %}
+          <tr>
+            <td data-label="動作">{{ s.action }}{% if s.is_exit %} <span class="tag">EXIT</span>{% endif %}</td>
+            <td data-label="代號">{{ symcell(s.symbol, s.name) }}</td>
+            <td data-label="策略"><span class="info-tip-container">{{ s.strategy_name }}{% if s.strategy_desc %} <span class="info-tip" title="{{ s.strategy_desc }}">ⓘ</span>{% endif %}</span></td>
+            {% if s.rejected %}
+            <td data-label="規劃"><span class="tag">已拒絕</span> {{ s.reject_reason }}</td>
+            {% elif s.blocked %}
+            <td data-label="規劃"><span class="tag">擋下</span> {{ s.block_text }}</td>
+            {% else %}
+            <td data-label="規劃">{% if s.quantity %}{{ s.quantity }} 股 @ {{ "{:,.2f}".format(s.price) }}{% else %}-{% endif %}</td>
+            {% endif %}
+            <td data-label="理由" class="truncate" title="{{ s.reason_text }}">{{ s.reason_text }}</td>
+            <td data-label="LLM 決策">{% if s.is_exit %}-{% else %}<a class="btn" href="{{ base }}/llm/{{ s.signal_id }}?account={{ d.account_id }}">{% if s.llm_decision %}{{ s.llm_decision }} ✎{% else %}問 LLM{% endif %}</a>{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="empty">無下次執行計畫</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
+</div>
 
-  <div class="alloc">
-    <h2>持倉資產配置（含現金，截至 {{ cap.as_of_date }}）</h2>
-    {% if cap.allocation %}
-    <div class="alloc-chart"><canvas id="allocChart" role="img" aria-label="資產配置圓環圖"></canvas></div>
-    <script type="application/json" id="allocData">{{ cap.allocation|tojson }}</script>
-    {% else %}
-    <p class="empty">無資產可顯示。</p>
-    {% endif %}
+<!-- 今日成交 Tab -->
+<div id="tab-today" class="tab-content">
+  <div class="card">
+    <div class="card-label" style="font-weight: 700; color: #1a202c; font-size: 1.05rem; margin-bottom: 0.75rem;">今日成交</div>
+    <table>
+      <thead><tr><th>方向</th><th>代號</th><th>股數</th><th>價格</th><th>策略</th></tr></thead>
+      <tbody>
+        {% for f in d.fills_today %}
+        <tr>
+          <td data-label="方向">{{ f.side }}</td>
+          <td data-label="代號">{{ symcell(f.symbol, f.name) }}</td>
+          <td data-label="股數" class="num">{{ "{:,}".format(f.quantity) }}</td>
+          <td data-label="價格" class="num">{{ "%.2f"|format(f.price) }}</td>
+          <td data-label="策略">{{ f.strategy_name }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty">無今日成交</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
-</section>
-
-<section>
-  <h2>持倉部位</h2>
-  <table>
-    <thead><tr><th>策略</th><th>代號</th><th>股數</th><th>均價</th><th>最後收盤</th><th>監控</th></tr></thead>
-    <tbody>
-      {% for p in d.positions %}
-      <tr>
-        <td>{{ p.strategy_id }}{% if p.is_long_term %} <span class="tag">長期</span>{% endif %}</td>
-        <td>{{ symcell(p.symbol, p.name) }}</td>
-        <td class="num">{{ "{:,}".format(p.quantity) }}</td>
-        <td class="num">{{ "%.2f"|format(p.wavg_price) }}</td>
-        <td class="num">{% if p.last_close is not none %}{{ "%.2f"|format(p.last_close) }}{% else %}—{% endif %}</td>
-        <td>{% if p.monitored %}✓{% else %}—{% endif %}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="6" class="empty">無持倉</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
-
-<section>
-  <h2>策略別損益</h2>
-  <table>
-    <thead><tr><th>策略</th><th>已實現淨損益</th><th>毛損益</th><th>規費</th><th>持倉數</th></tr></thead>
-    <tbody>
-      {% for s in d.pnl %}
-      <tr>
-        <td>{{ s.strategy_name }}{% if s.strategy_desc %} <span class="info-tip" title="{{ s.strategy_desc }}">ⓘ</span>{% endif %}</td>
-        <td class="num {{ 'pos' if s.net_realized >= 0 else 'neg' }}">{{ "{:+,}".format(s.net_realized) }}</td>
-        <td class="num">{{ "{:+,}".format(s.gross) }}</td>
-        <td class="num">{{ "{:,}".format(s.fees) }}</td>
-        <td class="num">{{ s.open_positions }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5" class="empty">無策略活動</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
-
-<section>
-  <h2>今日成交</h2>
-  <table>
-    <thead><tr><th>方向</th><th>代號</th><th>股數</th><th>價格</th><th>策略/來源</th></tr></thead>
-    <tbody>
-      {% for f in d.fills_today %}
-      <tr><td>{{ f.side }}</td><td>{{ symcell(f.symbol, f.name) }}</td><td class="num">{{ "{:,}".format(f.quantity) }}</td>
-          <td class="num">{{ "%.2f"|format(f.price) }}</td><td>{{ f.strategy_id or '-' }}/{{ f.source }}</td></tr>
-      {% else %}<tr><td colspan="5" class="empty">無</td></tr>{% endfor %}
-    </tbody>
-  </table>
-</section>
-
-<section>
-  <h2>下次執行{% if d.next_execution_date %}（執行日 {{ d.next_execution_date }}）{% endif %} <span class="info-tip" title="最近一批待執行訊號（不隨上方日期變動）。「規劃」為以當前現金、依完整管線順序試算的股數與每股參考買入價，被擋或已拒絕者顯示原因。策略與理由滑鼠移上可看說明/全文。">ⓘ</span></h2>
-  <div class="scroll-rows">
-  <table>
-    <thead><tr><th>動作</th><th>代號</th><th>策略</th><th>規劃（股數 @ 買入價）</th><th>理由</th><th>LLM</th></tr></thead>
-    <tbody>
-      {% for s in d.next_execution %}
-      <tr><td>{{ s.action }}{% if s.is_exit %} <span class="tag">EXIT</span>{% endif %}</td>
-          <td>{{ symcell(s.symbol, s.name) }}</td>
-          <td>{{ s.strategy_name }}{% if s.strategy_desc %} <span class="info-tip" title="{{ s.strategy_desc }}">ⓘ</span>{% endif %}</td>
-          {% if s.rejected %}
-          <td><span class="tag">已拒絕</span> {{ s.reject_reason }}</td>
-          {% elif s.blocked %}
-          <td><span class="tag">擋下</span> {{ s.block_text }}</td>
-          {% else %}
-          <td>{% if s.quantity %}{{ s.quantity }} 股 @ {{ "{:,.2f}".format(s.price) }}{% else %}-{% endif %}</td>
-          {% endif %}
-          <td class="truncate" title="{{ s.reason_text }}">{{ s.reason_text }}</td>
-          <td>{% if s.is_exit %}-{% else %}<a class="btn" href="{{ base }}/llm/{{ s.signal_id }}?account={{ d.account_id }}">{% if s.llm_decision %}{{ s.llm_decision }} ✎{% else %}問 LLM{% endif %}</a>{% endif %}</td></tr>
-      {% else %}<tr><td colspan="6" class="empty">無</td></tr>{% endfor %}
-    </tbody>
-  </table>
-  </div>
-</section>
-
-<section>
-  <h2>公司行動 / 除權息 <span class="info-tip" title="近一個月除息/除權事件；「未套用」表示尚未以 corporate-action apply 調整均價與停利水位（除息日前未套用會使停損基準失真）。">ⓘ</span></h2>
-  <table>
-    <thead><tr><th>除息日</th><th>代號</th><th>內容</th><th>狀態</th></tr></thead>
-    <tbody>
-      {% for c in d.corporate_actions %}
-      <tr>
-        <td>{{ c.ex_date }}</td>
-        <td>{{ symcell(c.symbol, c.name) }}{% if c.held %} <span class="tag">持倉中</span>{% endif %}</td>
-        <td>{{ c.detail_zh }}</td>
-        <td>{% if c.applied %}<span class="badge ok">已套用</span>{% else %}<span class="badge warn">未套用</span>{% endif %}</td>
-      </tr>
-      {% else %}<tr><td colspan="4" class="empty">無登錄之公司行動</td></tr>{% endfor %}
-    </tbody>
-  </table>
-</section>
-
-<section>
-  <h2>執行事件（審計） <span class="info-tip" title="所選日期當天交易流程的審計軌跡：記錄授權閘門攔截、訊號被擋等；無事件＝流程順利。">ⓘ</span></h2>
-  <table>
-    <thead><tr><th>類型</th><th>策略</th><th>代號</th><th>明細</th></tr></thead>
-    <tbody>
-      {% for e in d.events %}
-      <tr><td>{{ e.event_label }}{% if e.event_label != e.event_type %} <span class="tag">{{ e.event_type }}</span>{% endif %}</td>
-          <td>{{ e.strategy_id or '-' }}</td><td>{% if e.symbol %}{{ symcell(e.symbol, e.name) }}{% else %}-{% endif %}</td><td>{{ e.detail or '' }}</td></tr>
-      {% else %}<tr><td colspan="4" class="empty">無</td></tr>{% endfor %}
-    </tbody>
-  </table>
-</section>
+</div>
 
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ base }}/static/js/chart.umd.min.js"></script>
 <script src="{{ base }}/static/js/dashboard-charts.js"></script>
+<script>
+  function switchTab(tabId) {
+    // 移除所有按鈕的 active
+    var btns = document.querySelectorAll('.tab-btn');
+    btns.forEach(function(btn) {
+      btn.classList.remove('active');
+    });
+    // 設定當前按鈕 active
+    event.currentTarget.classList.add('active');
+
+    // 隱藏所有內容
+    var contents = document.querySelectorAll('.tab-content');
+    contents.forEach(function(content) {
+      content.classList.remove('active');
+    });
+    // 顯示當前內容
+    document.getElementById('tab-' + tabId).classList.add('active');
+  }
+
+  // 手機版點擊顯示提示框
+  document.querySelectorAll('.info-tip').forEach(function(el) {
+    el.addEventListener('click', function(e) {
+      if (window.innerWidth <= 767) {
+        alert(this.getAttribute('title'));
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    });
+  });
+</script>
 {% endblock %}

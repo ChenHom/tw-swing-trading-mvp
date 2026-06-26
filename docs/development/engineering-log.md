@@ -531,3 +531,26 @@
 **驗證**：Jinja 渲染煙霧測試三檔代號連結正確、None-symbol 顯示 `-`；`pytest tests -k "web or dashboard"` **16 passed**（更新 `test_dashboard_allocation_with_position`：原斷言 `<th>名稱</th>` → 改斷言 `https://tw.stock.yahoo.com/quote/2330` 在 body）。
 
 **手動成交（國泰，本日操作）**：6789 采鈺 BUY 5 股@542（加碼，均價 557.33→**553.50**、共 20 股）；隨後 SELL **全部 20 股@508 出清** → FIFO 毛損益 **−910 元**（連手續費+稅約 −980）、剩 0 股。兩筆皆 MANUAL（結構性排除於 risk_exit 監控）。
+
+---
+
+## 2026-06-26 ｜ 儀表板：行動版 (Mobile RWD) 響應式優化與頂部導覽精簡
+
+**需求**：
+1. **行動裝置排版優化 (RWD)**：原首頁儀表板平鋪表格過多、控制面板過長，手機版會有嚴重的跑版與不易閱讀的問題。
+2. **推擠吸頂導航 (Sticky Nav)**：當手機畫面往下滾動時，頂部的 LOGO 品牌列與控制項會自然被推移出螢幕隱藏；導覽頁籤（資金、持倉、損益、執行、成交）則吸頂飄浮，並帶有實色背景與陰影，防止背景穿透。
+3. **極簡控制項**：手機版下自動隱藏「重新整理」按鈕、以及「帳戶:」與「日期:」標籤文字；帳戶選單與日期選擇器改為 1:1 並排填滿，高度為 38px。
+4. **表格卡片化 (Option A)**：在手機版將表格轉換為獨立的垂直小白卡，左側置左顯示欄位名稱、右側置右顯示數值。修復 `strategy_name` 與提示圖示因 flex 跑版分離的問題。
+5. **提示框觸控點擊化**：手機版上無法 hover，將 `.info-tip` 的事件綁定為 `click` 行動觸控事件，點擊時彈出 alert 視窗說明。
+6. **LOGO 精簡與導覽縮寫**：手機版下隱藏 LOGO 圖示並縮寫品牌字為 `"trading"`。頂部 Navbar 簡化為：**看板** (原儀表板)、**報告** (原歷史報告)、**回測** (原回測結果)。
+
+**怎麼動（模板/CSS/JS，零邏輯、零 Python 資料層改動）**：
+- [base.html](../../src/web/templates/base.html)：品牌字新增 `brand-text-desktop` 與 `brand-text-mobile` 包裹。頂部 navbar 改為 `看板`、`報告`、`回測`。
+- [dashboard.html](../../src/web/templates/dashboard.html)：為表格 td 補上對應的 `data-label` 屬性；策略名稱與提示框包入 `span.info-tip-container`；在 `<script>` 區塊中新增手機版 `.info-tip` click 事件監聽。
+- [style.css](../../src/web/static/style.css)：新增 `.brand-text-mobile` 預設隱藏，新增 `.info-tip-container` `inline-flex` 垂直居中對齊。在底部的行動裝置 `@media (max-width: 767px)` 中加入相關 brand/navbar/controls 樣式覆蓋，並以 card-style 表示表格元素。
+- [test_web_server.py](../../tests/unit/test_web_server.py)：修正因 UI 調整所導致的測試 failure。移除 `"RISK_EXIT"` 斷言（原獨立卡片已移除）並改為 `"對帳"`，將 `"trend_breakout"` 在回測詳情中的斷言改為中文化的 `"趨勢帶量突破"`。
+
+**驗證**：
+- 執行測試：`pytest tests/` 所有 330 項整合與單元測試全數順利通過 (Green)。
+- 視覺驗證：本機啟動 uvicorn，以 Playwright 模擬手機 viewport (375x812) 進行多個頁籤按鈕的模擬點擊並拍攝截圖（驗收報告為 `ui_final_review.md`）。確認 logo、導覽、 controls、小白卡列表以及 tooltip 的對齊與點擊事件皆運作順暢，桌機版亦完好如初。
+

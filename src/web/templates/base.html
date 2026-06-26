@@ -9,11 +9,15 @@
 </head>
 <body>
   <header class="topbar">
-    <a href="{{ base }}/" class="brand">tw-day-trading</a>
+    <a href="{{ base }}/" class="brand">
+      <svg class="brand-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align: -0.15em; margin-right: 0.3rem; display: inline-block; color: #2b6cb0;"><path d="m3 17 6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>
+      <span class="brand-text-desktop">tw-day-trading</span>
+      <span class="brand-text-mobile">trading</span>
+    </a>
     <nav>
-      <a href="{{ base }}/">儀表板</a>
-      <a href="{{ base }}/reports">歷史報告</a>
-      <a href="{{ base }}/backtests">回測結果</a>
+      <a href="{{ base }}/">看板</a>
+      <a href="{{ base }}/reports">報告</a>
+      <a href="{{ base }}/backtests">回測</a>
     </nav>
   </header>
   <main>

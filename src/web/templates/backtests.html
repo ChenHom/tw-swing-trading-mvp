@@ -4,25 +4,25 @@
 {% if error %}
 <p class="alert">{{ error }}</p>
 {% endif %}
-<section>
-  <h2>回測結果</h2>
+<div class="card">
+  <div class="card-label" style="font-weight: 700; color: #1a202c; font-size: 1.05rem; margin-bottom: 0.75rem;">回測結果</div>
   <table>
     <thead><tr><th>執行時間</th><th>策略</th><th>區間</th><th>最終權益</th><th>損益</th><th>最大回撤</th><th></th></tr></thead>
     <tbody>
       {% for r in results %}
       <tr>
         <td>{{ r.created_at[:19] }}</td>
-        <td>{{ r.strategy_id }}</td>
+        <td>{{ r.strategy_id | strategy_name }}</td>
         <td>{{ r.start_date }} ~ {{ r.end_date }}</td>
         <td class="num">{{ "{:,}".format(r.final_equity) }}</td>
         <td class="num {{ 'pos' if r.total_pnl_bps >= 0 else 'neg' }}">{{ "%+.2f"|format(r.total_pnl_bps / 100) }}%</td>
         <td class="num">{{ "%.2f"|format(r.max_drawdown * 100) }}%</td>
-        <td><a href="{{ base }}/backtests/{{ r.name }}">檢視</a></td>
+        <td><a class="btn" href="{{ base }}/backtests/{{ r.name }}" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">檢視</a></td>
       </tr>
       {% else %}
       <tr><td colspan="7" class="empty">尚無回測結果（跑 `app backtest run` 後產生）</td></tr>
       {% endfor %}
     </tbody>
   </table>
-</section>
+</div>
 {% endblock %}

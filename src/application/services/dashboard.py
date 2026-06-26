@@ -92,6 +92,7 @@ def _positions(projection, account_id, exit_strategy_ids=None, market_repo=None,
                 last_close = _p(bar.close)
         out.append({
             "strategy_id": sid,
+            "strategy_name": strategy_name(sid),
             "symbol": symbol,
             "name": stock_name(symbol),
             "quantity": pos["quantity"],
@@ -140,7 +141,8 @@ def _fills_today(conn, account_id, d):
         """, (account_id, f"{d}%")).fetchall()
     return [{"side": r["side"], "symbol": r["symbol"], "name": stock_name(r["symbol"]),
              "quantity": r["quantity"], "price": _p(r["price"]),
-             "strategy_id": r["strategy_id"], "source": r["source"]} for r in rows]
+             "strategy_id": r["strategy_id"], "strategy_name": strategy_name(r["strategy_id"]),
+             "source": r["source"]} for r in rows]
 
 
 def _next_execution_signals(conn, account_id):
