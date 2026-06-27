@@ -41,8 +41,8 @@ class ManifestValidator:
         # 都被「核准尚未生效」擋掉（R-T3 實測 863 筆 APPROVAL_INVALID）。digest/issuer/revocation/
         # mode 檢查仍保留，確保 manifest 為真且允許 backtest。
         if execution_mode != "backtest":
-            valid_from = datetime.fromisoformat(manifest.validity.valid_from)
-            expires_at = datetime.fromisoformat(manifest.validity.expires_at)
+            valid_from = self._parse_manifest_time(manifest.validity.valid_from, current_time)
+            expires_at = self._parse_manifest_time(manifest.validity.expires_at, current_time)
 
             if current_time.tzinfo is None and valid_from.tzinfo is not None:
                 raise ValueError("Timezone mismatch: current_time is naive but manifest times are localized")
@@ -56,3 +56,10 @@ class ManifestValidator:
         # 5. Execution mode permission check
         if execution_mode not in manifest.permissions.execution_modes:
             raise ValueError(f"EXECUTION_MODE_NOT_ALLOWED: mode {execution_mode} is not allowed by manifest")
+
+    @staticmethod
+    def _parse_manifest_time(value: str, current_time: datetime) -> datetime:
+        parsed = datetime.fromisoformat(value)
+        if current_time.tzinfo is not None and parsed.tzinfo is None:
+            return parsed.replace(tzinfo=current_time.tzinfo)
+        return parsed

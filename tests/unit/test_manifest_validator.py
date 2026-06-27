@@ -74,6 +74,25 @@ def test_manifest_validator_valid(valid_manifest_dict):
     # This should not raise any exception
     validator.validate(manifest, current_time, "simulation")
 
+def test_manifest_validator_accepts_date_only_expiry(valid_manifest_dict):
+    valid_manifest_dict["validity"]["expires_at"] = "2026-12-31"
+    valid_manifest_dict["integrity"]["digest"] = ""
+    canonical_str = json.dumps(
+        valid_manifest_dict,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":")
+    )
+    digest = hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
+    valid_manifest_dict["integrity"]["digest"] = f"sha256:{digest}"
+
+    manifest = StrategyApprovalManifest(**valid_manifest_dict)
+    current_time = datetime.fromisoformat("2026-06-15T10:00:00+08:00")
+    validator = ManifestValidator(["manual-research-review"], [])
+
+    validator.validate(manifest, current_time, "simulation")
+
 def test_manifest_validator_invalid_digest(valid_manifest_dict):
     valid_manifest_dict["integrity"]["digest"] = "sha256:wrongdigest"
     manifest = StrategyApprovalManifest(**valid_manifest_dict)

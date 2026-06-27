@@ -9,6 +9,18 @@
 
 ---
 
+## 2026-06-27 ｜ MCP CLI P0：受控 CLI wrapper + record-fill 預設國泰
+
+**背景／觸發**：使用者要為本專案建立 MCP 功能，但範圍收斂為「執行專案內既有 CLI」，不重寫交易邏輯、不接券商下單。P0 需支援日常查詢 / dry-run / 報告與 `record-fill` 手動成交回填，且 `record-fill` 預設帳號為 `國泰`。
+
+**怎麼動**：新增 `src/mcp/` 最小三件：`cli_registry.py`（P0 靜態白名單與 argv builder）、`cli_runner.py`（`subprocess.run(argv, cwd=project root)` wrapper）、`server.py`（MCP tools：`list_cli_capabilities` / `run_cli` / `record_fill`）。新增 `docs/mcp-cli-design.md` 與 `requirements-mcp.txt`。P0 只允許查詢 / dry-run CLI 與專用 `record_fill`，危險指令如 `trade close-all`、`simulation reset`、`simulation execute-pending`、`account adjust-cash` 不開。
+
+**為什麼這樣動**：採 ponytail 最短路徑：白名單 dict → argv list → subprocess → 回 `stdout/stderr/exit_code/argv`。不做通用 mutation token、動態 argparse 探測、輸出 parser 或 policy engine；等真的需要第二個寫入操作再加。
+
+**過程中抓到的既有 bug**：MCP smoke 跑 `approval list` 時發現 active `trend_rider` manifest 的 `expires_at` 是 date-only `2026-12-31`，`ManifestValidator` 以 aware `current_time` 比 naive `expires_at` 造成 `TypeError`。修正為 manifest 時間若 naive、current_time 有 timezone，則沿用 current_time timezone；補測 date-only expiry。
+
+**驗證**：`python3 -m pytest tests/unit/test_mcp_cli.py tests/unit/test_manifest_validator.py -q` → 14 passed；`python3 -m py_compile src/mcp/*.py src/approval/validator.py tests/unit/test_mcp_cli.py tests/unit/test_manifest_validator.py` 通過；MCP wrapper smoke `run_cli('approval list', {})` → ok=True、exit_code=0；`.venv` 以 `uv pip install -r requirements-mcp.txt` 安裝 MCP SDK 後，`create_mcp_server()` smoke 回 `FastMCP`；全套 `python3 -m pytest tests/ -q` → 340 passed, 1 warning。
+
 ## 2026-06-23 ｜ 誠實回測實驗室 + trend_rider「順勢交易者」Challenger（Phase 0/1/2 + R）
 
 **背景／觸發**：使用者把目標釐清為「**建策略 → 回測 → 驗證是否真的賺錢 → 持續優化**」。盤點發現一個致命現況：Phase 0/1/2 的回測機器（305 tests）**全是合成單元測試、從未在真實資料上跑過**，`research.db` 根本不存在。對「會不會賺錢」這個問題，系統連 step 0 都沒踏出。
@@ -553,4 +565,27 @@
 **驗證**：
 - 執行測試：`pytest tests/` 所有 330 項整合與單元測試全數順利通過 (Green)。
 - 視覺驗證：本機啟動 uvicorn，以 Playwright 模擬手機 viewport (375x812) 進行多個頁籤按鈕的模擬點擊並拍攝截圖（驗收報告為 `ui_final_review.md`）。確認 logo、導覽、 controls、小白卡列表以及 tooltip 的對齊與點擊事件皆運作順暢，桌機版亦完好如初。
+## 2026-06-27 ｜ MCP CLI P1/P2（OpenClaw 接入 + 常用輸出 summary/data）
 
+**需求**：P1/P2 做完；P3/P4 只記住，先不實作。另依使用者規則，後續查專案資料要走 MCP 入口，不直接手打 CLI。
+
+**怎麼動**：
+- OpenClaw managed MCP 新增 `tw-day-trading-cli`：
+  - command：`.venv/bin/python`
+  - args：`-m src.mcp.server`
+  - cwd：專案根目錄
+  - include tools：`list_cli_capabilities`, `run_cli`, `record_fill`
+- `run_cli` 在保留原始 `stdout/stderr/exit_code/argv` 的前提下，對常用輸出補薄層 `summary` / `data`：
+  - `report pnl` + `by_strategy=true`：帳號、日期、現金、策略 totals、持倉明細、長期標記、未實現損益。
+  - `signal list`：訊號筆數與表格列。
+  - `portfolio reconcile`：帳號與 reconcile 成功狀態。
+- `record_fill` 補 `summary` / normalized `data`，仍透過既有 CLI wrapper，預設帳號維持「國泰」。
+- [mcp-cli-design.md](../mcp-cli-design.md) 記錄 P3/P4 backlog：P3 低風險寫入工具、P4 長任務 operator tools；兩者本輪不實作。
+
+**驗證**：
+- TDD focused：先讓 `tests/unit/test_mcp_cli.py` 針對 `summary/data` 紅燈，再補實作。
+- `pytest tests/unit/test_mcp_cli.py -q`：11 passed。
+- `openclaw mcp probe tw-day-trading-cli --json`：可連線，tools=3，列出 `tw-day-trading-cli__list_cli_capabilities`、`tw-day-trading-cli__run_cli`、`tw-day-trading-cli__record_fill`。
+- `openclaw mcp reload`：已清 runtime cache；目前正在跑的 Codex tool registry 不熱載新 MCP，下一個 runtime build 才會直接出現 tools。
+
+---
