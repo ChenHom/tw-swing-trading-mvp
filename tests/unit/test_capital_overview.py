@@ -173,3 +173,36 @@ def test_cross_strategy_same_symbol_aggregated(tmp_path):
     assert len(rows) == 1                          # 跨策略聚合為一塊
     assert rows[0]["value"] == int(3000 * 1000000 // 10000)  # 3000 股 @ 100 = 300000
     conn.close()
+
+
+def test_latest_bar_as_of_when_no_bar_on_view_date(tmp_path):
+    conn = _conn(tmp_path)
+    _set_cash(conn, "a", 200000)
+    _lot(conn, "a", "2330", 1000, 1000000)        # 成本 100.00
+    _bar(conn, "2330", "2026-06-11", 1100000)     # 前一天的現價 110.00
+    # 我們不種 2026-06-12 (view_date) 的 bar
+    cap = _build(conn, "a", "2026-06-12")
+    # 市值應該要是 110000 (使用前一天 2026-06-11 的收盤價)
+    assert cap["positions_value"] == 110000
+    assert cap["total_equity"] == 200000 + 110000
+    # 因為是用前一天的 bar，相較於 view_date，應該是 stale=True
+    assert cap["any_stale"] is True
+    row = next(r for r in cap["allocation"] if r["symbol"] == "2330")
+    assert row["stale"] is True
+    conn.close()
+
+
+def test_dashboard_uses_point_in_time_latest_bar(tmp_path):
+    conn = _conn(tmp_path)
+    _set_cash(conn, "a", 200000)
+    _lot(conn, "a", "2330", 1000, 1000000)        # 成本 100.00
+    _bar(conn, "2330", "2026-06-11", 1100000)     # 前一天的現價 110.00
+    # view_date 為 2026-06-12，無當日 bar
+    db_data = dash.build_dashboard(
+        conn, PortfolioProjection(conn), "a",
+        date.fromisoformat("2026-06-12"), market_repo=SqliteMarketBarRepository(conn)
+    )
+    # positions 裡面的 2330 的 last_close 應該是 110.00
+    pos_2330 = next(p for p in db_data["positions"] if p["symbol"] == "2330")
+    assert pos_2330["last_close"] == 110.00
+    conn.close()

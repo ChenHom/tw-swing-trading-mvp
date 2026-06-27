@@ -471,7 +471,7 @@ def cmd_trade_close_all(args):
     repo = SqliteMarketBarRepository(conn)
 
     for strategy_id, symbol, qty in open_buckets:
-        bar = repo.find(symbol, today_dt)
+        bar = repo.as_of(today_dt).latest(symbol)
         close_price = bar.close if bar else 1000000 # Default fallback
 
         # Apply fill transaction

@@ -87,7 +87,7 @@ def _positions(projection, account_id, exit_strategy_ids=None, market_repo=None,
         )
         last_close = None
         if market_repo is not None and vd is not None:
-            bar = market_repo.find(symbol, vd)
+            bar = market_repo.as_of(vd).latest(symbol)
             if bar is not None:
                 last_close = _p(bar.close)
         out.append({
@@ -321,12 +321,12 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
 def _resolve_close(repo, symbol, view_date, wavg_x10000):
     """回 (close_x10000:int, stale:bool)。
 
-    view_date 當天有 bar → 用 bar.close；否則 fallback 用持倉均價當現價、stale=True
-    （比照 src/cli/report.py 的 fallback，避免圓環少一塊、市值落空）。
+    用點時間最新收盤價（當日或之前）；若完全查無行情則 fallback 用持倉均價當現價且 stale=True；
+    若有行情但其 trade_date 早於 view_date 則也標記為 stale=True。
     """
-    bar = repo.find(symbol, view_date)
+    bar = repo.as_of(view_date).latest(symbol)
     if bar is not None:
-        return bar.close, False
+        return bar.close, (bar.trade_date < view_date)
     return wavg_x10000, True
 
 

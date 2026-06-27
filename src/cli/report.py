@@ -79,7 +79,7 @@ def _report_pnl_by_strategy(conn, projection, account_id, report_date):
         for (pos_sid, symbol), pos in sorted(positions.items()):
             if pos_sid != sid:
                 continue
-            bar = repo.find(symbol, report_date)
+            bar = repo.as_of(report_date).latest(symbol)
             close_price = bar.close / 10000.0 if bar else pos["wavg_price"] / 10000.0
             entry_price = pos["wavg_price"] / 10000.0
             qty = pos["quantity"]
@@ -172,8 +172,8 @@ def cmd_report_pnl(args):
         if qty > 0:
             symbol = row["symbol"]
             source = row["source"]
-            # Try to find closing price on report_date
-            bar = repo.find(symbol, report_date)
+            # Try to find closing price on report_date (or latest before it)
+            bar = repo.as_of(report_date).latest(symbol)
             close_price = bar.close / 10000.0 if bar else row["avg_price"] / 10000.0
             pos_val = int(qty * close_price)
             total_pos_value += pos_val
