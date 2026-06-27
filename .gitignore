@@ -93,6 +93,7 @@ logs/
 
 # Playwright MCP 暫存產物（截圖/快照/console log）
 .playwright-mcp/
+.playwright-cli/
 
 # 每日影子報告（執行時生成的產物，不入版控）
 artifacts/reports/daily/
