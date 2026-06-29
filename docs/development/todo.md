@@ -18,7 +18,7 @@
 - ✅ git tag `v0.1.0-pre-golive` 回滾錨點（commit fc432d4）
 - ✅ 清理殘留 `active-approval.json`（commit fc432d4）
 - ✅ 每日影子報告 + `shadow_daily.sh`（commit a833141）
-- 🔄 **B1 影子先行 ≥3 個交易日**並人工核對（2026-06-15 實施）。`docs/shadow-signoff.md` 簽核表已備。⚠️ **狀態恐過時**：自 06-15 起交易日早已超過 3 天、影子每日照跑，技術上達標，僅 `shadow-signoff.md` 人工核對欄可能未補登；待確認後標 ✅。
+- ✅ **B1 影子先行 ≥3 個交易日**並人工核對（2026-06-15 開跑、**2026-06-29 簽核通過**）。`docs/operations/shadow-signoff.md` 三列已補登（06-15/16/17，machine-verified），Gate #2 標通過。**閉環端到端已用真資料討清 CEO blocker #1**：`position_high_watermarks` 0→47、06-17 首筆策略 BUY、06-24/25 risk_exit 接管 SELL（trend_breakout 2327/3090、pullback 2301/2454）、對帳 06-15~26 10/10 ✅。唯一 ⚠＝06-15 day-0 種子部位水位延遲、06-16 自癒（非 risk_exit 缺陷）。詳見記憶 `ceo-review-golive-2026-06-14`。
 - ✅ **B2 cron 失敗告警接 Discord**（2026-06-15）：`src/notification/discord_alert.py` 模組已就位（httpx），`shadow_daily.sh` 已改進，`config/alert.local.yaml.example` 與 `.gitignore` 已備。Token 走 `~/.openclaw/.env`，channel_id 走 gitignored 的 `config/alert.local.yaml`，測試全綠（9 項）。**go-live 啟用步驟已完成並實測**：`config/alert.local.yaml` 已建立、實際發送成功收到 Discord 告警；修正 `DiscordAlertConfig` 的 dotenv 載入缺口（改用 `dotenv_values` 讀取 `~/.openclaw/.env`）。
 - 🔄 **B3 開實單起步（框架已隨「全手動」改寫）**：⚠️ 原案「限額小量**自動**執行」與後來拍板的「下單全手動、不接券商 API」衝突，作廢。**現況**：國泰真實帳號自 2026-06-15 起即以 `run-daily --no-auto-execute`（plan-only 產訊號）+ 人工 `record-fill` 在跑真倉，等於 B3 已用人工形式起步。剩餘＝持續累積實際成交紀錄、人工核對訊號品質（與 LLM 顧問 H 線並行）。見記憶 `manual-only-execution`、`real-shadow-account-split`。
 
@@ -61,6 +61,7 @@
 
 - 🔄 **F1 施工記錄維護**：每次開發變更記於 `engineering-log.md`。
 - ⬜ **F2 施工記錄封裝為 skill / MCP**：待 UI 建置完成後，自動產出開發記錄（目前手動 md）。詳見記憶 `ui-requirements`。
+- ✅ **F3 MCP CLI wrapper（OpenClaw 接入）**（2026-06-27，commit `2de2805`，11 tests）：OpenClaw managed MCP `tw-day-trading-cli`（`.venv/bin/python -m src.mcp.server`），薄包既有 CLI——`list_cli_capabilities` / `run_cli`（allowlist 唯讀+dry-run 指令，`report pnl`/`signal list`/`portfolio reconcile` 補 `summary`/`data` 解析）/ `record_fill`（預設帳號國泰）。後續查專案資料走此 MCP 入口、不直接手打 CLI。P3 低風險寫入工具 / P4 長任務 operator 工具刻意只記 backlog（見 `docs/mcp-cli-design.md`），待明確要求才做。
 
 ## G. 研究回測 / 策略驗證（Phase 0/1/2 + R；詳見 plan `2455-cosmic-fountain.md`）
 
