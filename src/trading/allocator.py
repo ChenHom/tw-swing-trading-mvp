@@ -8,6 +8,11 @@
 from dataclasses import dataclass, field
 from src.contracts.models import SignalItem, LimitsInfo
 
+# 哨兵值：把 max_open_positions 膨脹成此值＝實質「無持倉數上限」（>= 比較永不觸發）。
+# 用大整數而非 None，讓 allocator 的 `strategy_open >= limit` / `global_open >= limit`
+# 比較式完全不用改。ponytail: 大整數哨兵；若日後要語意化的無限制再改 None 並更新兩處比較。
+UNLIMITED_POSITIONS_SENTINEL = 1_000_000
+
 
 @dataclass
 class GlobalLimits:

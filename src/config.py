@@ -46,6 +46,9 @@ class PipelineConfig(BaseModel):
     # (國泰) stays on the curated fixed list. Falls back to fixed when the policy
     # has no constituents in app.db yet (e.g. data not backfilled).
     universe_overrides: dict[str, str] = Field(default_factory=dict)
+    # 列名帳號：per-strategy 與 global 的 max_open_positions 視為無上限（放開持倉數）。
+    # 讓影子帳號能在廣度池裡持有更多部位以充分觀測；每日新建倉上限與每日買入額度不受影響。
+    unlimited_positions_accounts: list[str] = Field(default_factory=list)
 
 class GlobalLimitsConfig(BaseModel):
     max_open_positions: int = 8

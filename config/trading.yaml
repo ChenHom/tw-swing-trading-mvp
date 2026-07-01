@@ -27,6 +27,11 @@ pipeline:
   # 上線需先把 top-150 的 Shioaji 日線回補進 app.db 並建 policy（見 market build-universe）。
   universe_overrides:
     simulation-main: "liquidity-top150-v1"
+  # 列名帳號的 per-strategy + global 持倉數上限(max_open_positions)視為無上限;
+  # 每日新建倉上限(2)與每日買入額度(per-strategy 150k / global 200k)不受影響。
+  # 影子帳號接廣度池後放開持倉數,才能真正持有更多部位觀測。
+  unlimited_positions_accounts:
+    - simulation-main
 
 # 全局帳戶風控（per-strategy 限額由各策略 manifest 定義）
 global_limits:

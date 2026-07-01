@@ -1,10 +1,13 @@
 from datetime import datetime, date
+from dataclasses import replace
 import sqlite3
 import uuid
 from typing import Optional
 from src.contracts.models import DailySignalBundle, ExecutionContext, StrategyApprovalManifest, SignalItem
 from src.approval.validator import ManifestValidator
-from src.trading.allocator import MultiStrategyAllocator, MultiPortfolioState, GlobalLimits
+from src.trading.allocator import (
+    MultiStrategyAllocator, MultiPortfolioState, GlobalLimits, UNLIMITED_POSITIONS_SENTINEL,
+)
 from src.broker.fake_broker import FakeBroker
 from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
 from src.market_data.repository import SqliteMarketBarRepository
@@ -32,7 +35,8 @@ class TradeExecutionEngine:
         strategy_budgets: Optional[dict[str, int]] = None,
         global_limits: Optional[GlobalLimits] = None,
         pipeline_order: Optional[list[str]] = None,
-        slippage_bps: int = 10
+        slippage_bps: int = 10,
+        unlimited_open_positions: bool = False
     ):
         self.db_conn = db_conn
         self.market_repo = market_repo
@@ -44,6 +48,9 @@ class TradeExecutionEngine:
         self.global_limits = global_limits or GlobalLimits()
         self.pipeline_order = pipeline_order or []
         self.slippage_bps = slippage_bps
+        # 放開持倉數上限（per-account 治理）：僅膨脹 max_open_positions，其餘限額不動。
+        # 在 allocator 邊界處理，不改 manifest 物件（否則會破 integrity digest）。
+        self.unlimited_open_positions = unlimited_open_positions
 
     def execute_bundle(self, context: ExecutionContext, bundle: DailySignalBundle) -> dict:
         return self.execute_bundles(context, [bundle])
@@ -139,7 +146,18 @@ class TradeExecutionEngine:
             strategy_daily_buy_spent=strategy_spent
         )
 
-        strategy_limits = {sid: m.limits for sid, m in self.manifests.items()}
+        # per-strategy 限額餵給 allocator；放開持倉時只把 max_open_positions 膨脹成哨兵，
+        # 用 model_copy 產生新的 LimitsInfo（原 manifest 不動＝integrity digest 照過），
+        # global 用 dataclasses.replace 產生新副本（不改共用的 self.global_limits）。
+        if self.unlimited_open_positions:
+            strategy_limits = {
+                sid: m.limits.model_copy(update={"max_open_positions": UNLIMITED_POSITIONS_SENTINEL})
+                for sid, m in self.manifests.items()
+            }
+            global_limits = replace(self.global_limits, max_open_positions=UNLIMITED_POSITIONS_SENTINEL)
+        else:
+            strategy_limits = {sid: m.limits for sid, m in self.manifests.items()}
+            global_limits = self.global_limits
 
         planned_orders, alloc_results, alloc_events = MultiStrategyAllocator.plan(
             sell_signals=sell_signals,
@@ -147,7 +165,7 @@ class TradeExecutionEngine:
             portfolio=portfolio_state,
             strategy_budgets=self.strategy_budgets,
             strategy_limits=strategy_limits,
-            global_limits=self.global_limits,
+            global_limits=global_limits,
         )
         signal_results.update(alloc_results)
         events.extend(alloc_events)

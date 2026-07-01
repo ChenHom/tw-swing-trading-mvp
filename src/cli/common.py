@@ -120,6 +120,11 @@ def build_pipeline(settings: AppSettings, universe_symbols: list[str], account_i
     return entry_specs, exit_definitions
 
 
+def is_unlimited_positions_account(settings: AppSettings, account_id: str | None) -> bool:
+    """該帳號是否放開持倉數上限（per-strategy + global max_open_positions 視為無上限）。"""
+    return account_id in settings.trading.pipeline.unlimited_positions_accounts
+
+
 def resolve_run_universe(settings: AppSettings, conn, account_id: str | None, run_date) -> list[str]:
     """Symbols the daily run screens for `account_id` on `run_date`.
 

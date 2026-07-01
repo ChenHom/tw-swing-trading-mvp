@@ -62,7 +62,8 @@ class DailySimulationRunner:
         global_limits: Optional[GlobalLimits] = None,
         index_symbols: Optional[list] = None,
         slippage_bps: int = 10,
-        expiry_warning_sessions: int = 3
+        expiry_warning_sessions: int = 3,
+        unlimited_open_positions: bool = False
     ):
         self.db_conn = db_conn
         self.calendar = calendar
@@ -78,6 +79,7 @@ class DailySimulationRunner:
         self.index_symbols = [_normalize_symbol_spec(s) for s in (index_symbols or [])]
         self.slippage_bps = slippage_bps
         self.expiry_warning_sessions = expiry_warning_sessions
+        self.unlimited_open_positions = unlimited_open_positions
 
     @property
     def pipeline_order(self) -> list[str]:
@@ -345,6 +347,7 @@ class DailySimulationRunner:
             global_limits=self.global_limits,
             pipeline_order=self.pipeline_order,
             slippage_bps=self.slippage_bps,
+            unlimited_open_positions=self.unlimited_open_positions,
         )
 
     def _persist_next_execution_intents(self, account_id: str, run_id: str, target_execution_date: date) -> None:

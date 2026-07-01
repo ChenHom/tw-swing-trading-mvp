@@ -77,7 +77,8 @@ def cmd_simulation_run_daily(args):
             global_limits=common.build_global_limits(settings),
             index_symbols=list(settings.universe.indices),
             slippage_bps=settings.backtest.slippage_bps,
-            expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions
+            expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions,
+            unlimited_open_positions=common.is_unlimited_positions_account(settings, account_id)
         )
 
         # Per-strategy manifest preflight check
@@ -211,7 +212,8 @@ def cmd_simulation_execute_pending(args):
         manifests=manifests, strategy_budgets=strategy_budgets,
         global_limits=common.build_global_limits(settings),
         pipeline_order=settings.trading.pipeline.entry_strategies,
-        slippage_bps=settings.backtest.slippage_bps
+        slippage_bps=settings.backtest.slippage_bps,
+        unlimited_open_positions=common.is_unlimited_positions_account(settings, account_id)
     )
 
     print(f"Executing {len(bundles)} pending bundle(s) on {run_date}: {[b.bundle_id for b in bundles]}")
