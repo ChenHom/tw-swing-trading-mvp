@@ -9,7 +9,8 @@ from pydantic import BaseModel
 
 from src.config import AppSettings, StrategyConfig
 from src.contracts.models import (
-    TrendPullbackParams, TrendBreakoutParams, PullbackReboundParams, TrendRiderParams, ExitParams
+    TrendPullbackParams, TrendBreakoutParams, PullbackReboundParams, TrendRiderParams,
+    MtfResonanceParams, ExitParams
 )
 from src.strategy.canonicalizer import StrategyParameterCanonicalizer
 
@@ -29,6 +30,7 @@ PARAMS_MODELS: dict[str, type[BaseModel]] = {
     "trend_breakout": TrendBreakoutParams,
     "pullback_rebound": PullbackReboundParams,
     "trend_rider": TrendRiderParams,
+    "mtf_resonance": MtfResonanceParams,
 }
 
 # Strategies whose entry logic can be instantiated (trend_pullback is retired
@@ -50,11 +52,16 @@ def _build_trend_rider(params, universe_symbols, index_symbol):
     from src.strategy.trend_rider import TrendRiderStrategy
     return TrendRiderStrategy(params, universe_symbols, index_symbol)
 
+def _build_mtf_resonance(params, universe_symbols, index_symbol):
+    from src.strategy.mtf_resonance import MtfResonanceStrategy
+    return MtfResonanceStrategy(params, universe_symbols, index_symbol)
+
 ENTRY_FACTORIES: dict[str, Callable] = {
     "trend_breakout": _build_trend_breakout,
     "pullback_rebound": _build_pullback_rebound,
     "trend_pullback": _build_trend_pullback,  # legacy; not part of the default pipeline
     "trend_rider": _build_trend_rider,
+    "mtf_resonance": _build_mtf_resonance,
 }
 
 

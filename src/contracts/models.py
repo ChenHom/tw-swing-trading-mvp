@@ -109,6 +109,19 @@ class TrendRiderParams(BaseModel):
     order_budget_twd: int = Field(default=20000, ge=1000)
 
 
+class MtfResonanceParams(BaseModel):
+    """多週期共振進場參數。日＋週 MACD 共振：週 DIF>0（中期偏多）＋ 日 MACD 金叉。
+    出場交 risk_exit 以寬移動停利實現「讓贏家跑」（回測：成敗全在出場）。保留 index 60MA 崩盤防守。"""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    macd_fast: int = Field(default=12, ge=2)                  # MACD 快線 EMA 期數
+    macd_slow: int = Field(default=26, ge=3)                  # MACD 慢線 EMA 期數
+    macd_signal: int = Field(default=9, ge=2)                 # MACD 訊號線 EMA 期數
+    require_daily_zero_axis: bool = Field(default=True)       # 日金叉是否需在零軸上（DIF>0）
+    index_ma_period: int = Field(default=60, ge=5)            # 大盤多頭濾網（崩盤防守）
+    order_budget_twd: int = Field(default=20000, ge=1000)
+
+
 class StrategyInfo(BaseModel):
     strategy_id: str
     strategy_version: str

@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "approval_id": "approval-mtf_resonance-20260701220620",
+  "issuer_id": "manual-research-review",
+  "strategy": {
+    "strategy_id": "mtf_resonance",
+    "strategy_version": "1.0.0",
+    "params_canonicalization": "strategy-params-v1",
+    "params_hash": "sha256:40f6f3032a3aa05d17a20981a7a8ebde5ddcc922b245fc4cd11a1c108d15298a"
+  },
+  "permissions": {
+    "execution_modes": [
+      "backtest",
+      "simulation"
+    ],
+    "risk_increasing_actions": [
+      "open_long",
+      "increase_long"
+    ]
+  },
+  "limits": {
+    "currency": "TWD",
+    "max_order_value": 35000,
+    "max_daily_buy_value": 200000,
+    "max_open_positions": 10
+  },
+  "validity": {
+    "valid_from": "2026-07-01T22:06:20.970843+08:00",
+    "expires_at": "2099-12-31T23:59:59+08:00"
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "manifest-v1",
+    "digest": "sha256:75823e0c085bdf2d443e543aa11f6a034c8f66df08246ac61abfc3804af579a5"
+  }
+}

@@ -1,0 +1,21 @@
+strategy_id: mtf_resonance
+strategy_version: 1.0.0
+
+parameters:
+  macd_fast: 12                   # MACD 快線 EMA
+  macd_slow: 26                   # MACD 慢線 EMA
+  macd_signal: 9                  # MACD 訊號線 EMA
+  require_daily_zero_axis: true   # 日金叉需在零軸上（DIF>0）＝較強
+  index_ma_period: 60             # 大盤多頭濾網（崩盤防守，與現役一致）
+  order_budget_twd: 20000
+
+# 出場＝「讓贏家跑」（研究定版：init-12 / trail-15 / max~60）。緊出場（死叉、20MA 跌破）
+# 回測必虧，故 ma_break 設長均線 120/5 當罕見趨勢死backstop、近乎不干預。
+exit:
+  fixed_stop_loss_bps: 1200       # 固定停損 -12%（以加權均價計）
+  trailing_stop_bps: 1500         # 移動停利：自持有後最高收盤回落 -15%（讓贏家跑）
+  ma_break_period: 120            # 長均線失效（罕見 backstop，非緊出場）
+  ma_break_buffer_bps: 0
+  ma_break_confirm_days: 5        # 連 5 日跌破 120MA 才觸發
+  time_stop_days: 60              # 時間停損：持有 60 個交易日
+  time_stop_min_return_bps: 300   # 且累計報酬未達 +3% 才出場（贏家續抱）
