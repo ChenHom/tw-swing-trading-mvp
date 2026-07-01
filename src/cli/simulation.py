@@ -53,8 +53,9 @@ def cmd_simulation_run_daily(args):
         conn = get_db_connection(settings.trading.database_path)
 
         manifests = common.load_active_manifests(settings)
-        symbols = [s.code for s in settings.universe.symbols]
         account_id = common.resolve_account_id(conn, args.account)
+        run_date = date.fromisoformat(args.date) if args.date else date.today()
+        symbols = common.resolve_run_universe(settings, conn, account_id, run_date)
         try:
             entry_specs, exit_definitions = common.build_pipeline(settings, symbols, account_id)
         except (FileNotFoundError, ValueError) as e:
@@ -78,8 +79,6 @@ def cmd_simulation_run_daily(args):
             slippage_bps=settings.backtest.slippage_bps,
             expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions
         )
-
-        run_date = date.fromisoformat(args.date) if args.date else date.today()
 
         # Per-strategy manifest preflight check
         print("--- 策略授權 preflight 查驗 ---")

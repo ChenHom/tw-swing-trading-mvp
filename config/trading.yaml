@@ -20,6 +20,13 @@ pipeline:
   account_overrides:
     國泰:
       - trend_breakout
+  # Per-account 選股宇宙 override（account_id -> universe_policy.policy_version）：
+  # 影子帳號（simulation-main）改吃 PIT 流動性 top-150 廣度池，讓進場策略在約 150 檔
+  # 趨勢股裡選，而非固定 24 檔；真實帳號（國泰）未列入＝維持固定 universe.yaml 清單。
+  # 安全退回：app.db 尚無此 policy 成分（資料未回補）時，自動退回固定清單並印警告。
+  # 上線需先把 top-150 的 Shioaji 日線回補進 app.db 並建 policy（見 market build-universe）。
+  universe_overrides:
+    simulation-main: "liquidity-top150-v1"
 
 # 全局帳戶風控（per-strategy 限額由各策略 manifest 定義）
 global_limits:

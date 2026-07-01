@@ -120,6 +120,27 @@ def build_pipeline(settings: AppSettings, universe_symbols: list[str], account_i
     return entry_specs, exit_definitions
 
 
+def resolve_run_universe(settings: AppSettings, conn, account_id: str | None, run_date) -> list[str]:
+    """Symbols the daily run screens for `account_id` on `run_date`.
+
+    If pipeline.universe_overrides maps this account to a universe_policy version,
+    return that policy's PIT constituents as_of run_date; otherwise (and if the
+    policy is empty in this DB, e.g. not yet backfilled) the fixed universe.yaml list.
+    """
+    fixed = [s.code for s in settings.universe.symbols]
+    policy_version = settings.trading.pipeline.universe_overrides.get(account_id)
+    if not policy_version:
+        return fixed
+    from src.strategy.universe import PolicyUniverseProvider
+    symbols = PolicyUniverseProvider(conn, policy_version).symbols_as_of(run_date)
+    if not symbols:
+        print(f"警告：universe_policy '{policy_version}' 在 {run_date} 無成分股（資料未回補？），"
+              f"退回固定 {len(fixed)} 檔清單。")
+        return fixed
+    print(f"PIT universe: account={account_id} policy='{policy_version}' {len(symbols)} 檔（as_of {run_date}）")
+    return symbols
+
+
 def get_valuation_universe(conn, strategy_symbols: list[str]) -> list[str]:
     cursor = conn.cursor()
     # 1. Open positions

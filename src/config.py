@@ -40,6 +40,12 @@ class PipelineConfig(BaseModel):
     # entry_strategies when an account isn't listed. SELL/risk_exit is unaffected
     # (exits are per-account and never gated by this).
     account_overrides: dict[str, list[str]] = Field(default_factory=dict)
+    # Per-account universe override (account_id -> universe_policy.policy_version).
+    # Absent/None → fixed config/universe.yaml list (current behaviour). Lets the
+    # shadow account screen a broad PIT liquidity universe while the real account
+    # (國泰) stays on the curated fixed list. Falls back to fixed when the policy
+    # has no constituents in app.db yet (e.g. data not backfilled).
+    universe_overrides: dict[str, str] = Field(default_factory=dict)
 
 class GlobalLimitsConfig(BaseModel):
     max_open_positions: int = 8
