@@ -14,6 +14,19 @@ def _resp(status_code=200, data=None):
     return r
 
 
+@patch("src.market_data.finmind_provider.requests.get")
+def test_fetch_stock_names_filters_and_maps(mock_get):
+    mock_get.return_value = _resp(data=[
+        {"stock_id": "2330", "stock_name": "台積電", "type": "twse"},
+        {"stock_id": "00981A", "stock_name": "主動統一台股增長", "type": "twse"},  # ETF
+        {"stock_id": "TAIEX", "stock_name": "發行量加權股價指數", "type": "twse"},  # 非數字開頭→濾掉
+        {"stock_id": "3481", "stock_name": "", "type": "twse"},  # 空名→跳過
+    ])
+    names = FinMindProvider().fetch_stock_names()
+    assert names == {"2330": "台積電", "00981A": "主動統一台股增長"}
+    assert "TAIEX" not in names and "3481" not in names
+
+
 def test_load_token_prefers_env(monkeypatch):
     monkeypatch.setenv("FINMIND_API_TOKEN", "env-token")
     assert load_finmind_token() == "env-token"

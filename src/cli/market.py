@@ -208,6 +208,25 @@ def cmd_market_sync(args):
     conn.close()
 
 
+def cmd_market_sync_names(args):
+    """全市場代碼→中文名一次補齊（FinMind TaiwanStockInfo）→ config/stock_names_market.yaml。
+
+    根治「持倉/報表顯示空白名稱」：取代逐檔 Shioaji 懶補（策略自動建倉或當下查不到即漏名）。
+    含 ETF；建議排入盤後 cron 定期刷新以涵蓋新上市標的。
+    """
+    import yaml
+    from src.market_data.finmind_provider import FinMindProvider
+
+    names = FinMindProvider().fetch_stock_names()
+    if not names:
+        print("ERROR: FinMind 未回傳任何名稱（rate limit 或服務異常），未寫檔。")
+        sys.exit(1)
+    out_path = Path("config/stock_names_market.yaml")
+    with open(out_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(names, f, allow_unicode=True, sort_keys=True)
+    print(f"已寫入 {out_path}：{len(names)} 檔全市場名稱（含 ETF）。web 下次查表自動帶入。")
+
+
 def cmd_market_sync_chips(args):
     """同步籌碼（三大法人合計買賣超 + 融資券餘額）到 app.db，供 LLM 進場顧問提示詞。"""
     from src.market_data import chip_sync

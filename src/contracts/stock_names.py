@@ -5,9 +5,10 @@
 
 名稱來源優先序（後者覆蓋前者）：
   1. 下方 _BUILTIN_NAMES（universe + 常用標的，隨程式碼更新）
-  2. config/stock_names_auto.yaml（建倉時自 Shioaji 自動補名，見 ensure_stock_name）
-  3. config/stock_names.yaml（使用者自訂，可覆蓋自動值）
-新增標的可在 config/stock_names.yaml 補充，或建倉時由 ensure_stock_name 自動補進 auto 檔。
+  2. config/stock_names_market.yaml（FinMind 全市場名稱表，market sync-names 一次補齊，含 ETF）
+  3. config/stock_names_auto.yaml（建倉時自 Shioaji 自動補名，見 ensure_stock_name）
+  4. config/stock_names.yaml（使用者自訂，可覆蓋自動值）
+新增標的通常由 market sync-names 全市場補齊即可；仍缺者可在 config/stock_names.yaml 手補。
 查表會依檔案 mtime 自動重載，web 不必重啟即可看到新名稱。
 """
 from __future__ import annotations
@@ -43,6 +44,7 @@ _BUILTIN_NAMES: dict[str, str] = {
 }
 
 _CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
+_MARKET_PATH = _CONFIG_DIR / "stock_names_market.yaml"
 _AUTO_PATH = _CONFIG_DIR / "stock_names_auto.yaml"
 _USER_PATH = _CONFIG_DIR / "stock_names.yaml"
 
@@ -70,17 +72,22 @@ def _mtime(path: Path) -> float:
 
 
 def _build() -> dict[str, str]:
-    return {**_BUILTIN_NAMES, **_load_yaml(_AUTO_PATH), **_load_yaml(_USER_PATH)}
+    return {
+        **_BUILTIN_NAMES,
+        **_load_yaml(_MARKET_PATH),
+        **_load_yaml(_AUTO_PATH),
+        **_load_yaml(_USER_PATH),
+    }
 
 
-# 記住兩個 yaml 的 mtime；變了才重建。stat 兩檔成本可忽略（持倉數量小）。
-_cached_mtimes: tuple[float, float] = (_mtime(_AUTO_PATH), _mtime(_USER_PATH))
+# 記住三個 yaml 的 mtime；變了才重建。stat 成本可忽略。
+_cached_mtimes: tuple[float, float, float] = (_mtime(_MARKET_PATH), _mtime(_AUTO_PATH), _mtime(_USER_PATH))
 STOCK_NAMES: dict[str, str] = _build()
 
 
 def _refresh_if_changed() -> None:
     global STOCK_NAMES, _cached_mtimes
-    current = (_mtime(_AUTO_PATH), _mtime(_USER_PATH))
+    current = (_mtime(_MARKET_PATH), _mtime(_AUTO_PATH), _mtime(_USER_PATH))
     if current != _cached_mtimes:
         STOCK_NAMES = _build()
         _cached_mtimes = current

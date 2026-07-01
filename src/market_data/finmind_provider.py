@@ -118,6 +118,36 @@ class FinMindProvider:
             })
         return []
 
+    def fetch_stock_names(self, max_retries: int = 5) -> dict[str, str]:
+        """全市場代碼→中文名（TaiwanStockInfo，不帶日期，含上市/上櫃股與 ETF）。
+
+        供「持倉/報表顯示名稱」一次到位，取代逐檔 Shioaji 補名的懶快取（常漏名）。
+        僅取數字開頭的 stock_id（過濾產業指數等非標的列）；同代碼多列時後者覆蓋。
+        `_get` 一律帶日期會讓此 dataset 回空，故此處獨立無日期呼叫（同 fetch_twse_roster）。
+        """
+        params = {"dataset": "TaiwanStockInfo"}
+        if self.token:
+            params["token"] = self.token
+        backoff = 1.0
+        for attempt in range(max_retries):
+            resp = requests.get(self.base_url, params=params, timeout=30)
+            if resp.status_code == 429:
+                if attempt == max_retries - 1:
+                    return {}
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            resp.raise_for_status()
+            rows = resp.json().get("data", []) or []
+            names: dict[str, str] = {}
+            for r in rows:
+                sid = r.get("stock_id") or ""
+                name = r.get("stock_name") or ""
+                if sid[:1].isdigit() and name:
+                    names[sid] = name
+            return names
+        return {}
+
     def _row_to_bar(self, row: dict, symbol: str, exchange: str, instrument_type: str) -> MarketBar:
         checksum = hashlib.sha256(repr(sorted(row.items())).encode("utf-8")).hexdigest()[:16]
         return MarketBar(
