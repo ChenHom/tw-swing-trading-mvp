@@ -121,9 +121,11 @@ td.truncate { max-width: 18em; overflow: hidden; text-overflow: ellipsis; white-
 @media (max-width: 720px) { td.truncate { max-width: 10em; } }
 
 /* 下次執行：限制高度、表頭吸頂 */
-.scroll-rows { max-height: 14rem; overflow-y: auto; border-radius: 12px; border: 1px solid #edf2f7; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02); }
+.scroll-rows { max-height: 26rem; overflow-y: auto; border-radius: 12px; border: 1px solid #edf2f7; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02); }
 .scroll-rows table { box-shadow: none; border-radius: 0; border: none; }
 .scroll-rows thead th { position: sticky; top: 0; z-index: 1; border-bottom: 2px solid #edf2f7; }
+.scroll-rows tbody td { height: 54px; vertical-align: middle; } /* ponytail: 固定列高(border-box)，BUY/SELL 等高 */
+.scroll-rows tbody .btn { height: 28px; } /* 縮小按鈕，使其塞進固定列高不撐破 */
 
 /* 窄螢幕：寬表格改為可橫向捲動的區塊 */
 @media (max-width: 720px) {
@@ -307,17 +309,7 @@ a.sym-link:hover { color: #1a0dab; text-decoration: underline; }
     display: none;
   }
 
-  /* 下次執行：理由欄位改為直向區塊 */
-  .tab-content table td[data-label="理由"] {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.25rem;
-    text-align: left;
-    padding: 0.75rem 0;
-  }
-  .tab-content table td[data-label="理由"]::before {
-    margin-bottom: 0.25rem;
-  }
+  /* 下次執行：理由與其他欄一致（標籤左、內容靠右），僅取消截斷讓長文換行 */
   .tab-content table td[data-label="理由"].truncate {
     white-space: normal;
     max-width: 100%;
@@ -332,6 +324,9 @@ a.sym-link:hover { color: #1a0dab; text-decoration: underline; }
     border: none;
     box-shadow: none;
   }
+  /* 卡片版每欄獨立成列，還原自動高度，避免固定 54px 列高使理由溢出蓋住「問 LLM」 */
+  .scroll-rows tbody td { height: auto; }
+  .scroll-rows tbody .btn { height: 38px; }
 
   /* 手機版品牌 LOGO 與導覽與分頁文字優化：隱藏圖標，文字改為簡短版 */
   .topbar .brand-icon {
