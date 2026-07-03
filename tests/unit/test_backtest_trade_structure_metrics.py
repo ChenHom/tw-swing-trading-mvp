@@ -79,14 +79,15 @@ def test_expectancy_r_skips_trades_without_exit_params(runner):
             ), params_hash="h", order_budget_twd=0
         )
     }
-    # stratA：買 1,000,000、賣 1,020,000，停損 2% → 風險 20,000 → R = 20,000/20,000 = 1.0
+    # stratA：買 100 元、賣 102 元（1 股）→ 毛損益 2 元；停損 2% → 每股風險 20,000（×10000 尺度）
+    # → R = (2×10000/1)/20,000 = 1.0（A3 後 expectancy 吃每股淨損益，fixture pnl 須與量價自洽）
     _insert_fill(conn, "b1", "acc-x", "2330", "BUY", 1, 1000000, "2026-06-01T09:00:00")
     _insert_fill(conn, "s1", "acc-x", "2330", "SELL", 1, 1020000, "2026-06-05T09:00:00")
-    _insert_match(conn, "m1", "acc-x", "2330", "b1", "s1", 1, 1000000, 1020000, "2026-06-05T09:00:00", 20000, "stratA")
+    _insert_match(conn, "m1", "acc-x", "2330", "b1", "s1", 1, 1000000, 1020000, "2026-06-05T09:00:00", 2, "stratA")
     # stratB：沒有對應 exit_definitions → 無可比 R 基準，排除
     _insert_fill(conn, "b2", "acc-x", "2317", "BUY", 1, 500000, "2026-06-01T09:00:00")
     _insert_fill(conn, "s2", "acc-x", "2317", "SELL", 1, 510000, "2026-06-03T09:00:00")
-    _insert_match(conn, "m2", "acc-x", "2317", "b2", "s2", 1, 500000, 510000, "2026-06-03T09:00:00", 10000, "stratB")
+    _insert_match(conn, "m2", "acc-x", "2317", "b2", "s2", 1, 500000, 510000, "2026-06-03T09:00:00", 1, "stratB")
     conn.commit()
 
     stats = runner._calculate_statistics("acc-x", 100000, [{"equity": 100000}])

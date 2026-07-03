@@ -263,3 +263,78 @@ def test_backtest_same_fingerprint_yields_same_result(backtest_setup):
     fp2 = {k: v for k, v in result2["fingerprint"].items() if k != "run_id"}
     assert fp1 == fp2
     assert result1["statistics"] == result2["statistics"]
+
+
+def test_backtest_bundles_are_private_and_invisible_to_live_loader(backtest_setup):
+    """A4：回測 bundle 須私有化（account_id=backtest:run_id）且 bundle_id 帶 run 前綴——
+    live run-daily 的 loader（account_id IS NULL OR = 帳號）不得撿到回測 bundle，
+    且回測不得佔住 live 每日 bundle 的 id（bundle-YYYYMMDD-strategy）。"""
+    from src.application.runners.simulation import DailySimulationRunner
+    conn, repo, projection, calendar = backtest_setup
+
+    sessions = calendar.sessions_between(date(2026, 6, 8), date(2026, 6, 15))
+    params = TrendPullbackParams(ma_short=2, ma_long=5, order_budget_twd=20000)
+    params_hash = StrategyParameterCanonicalizer.compute_hash(params)
+
+    # 日 6 回檔 → 產生 BUY bundle，target = 窗外下一交易日（正是會洩漏給 live 的那顆）
+    prices_2330 = [100.0, 101.0, 102.0, 115.0, 116.0, 110.0]
+    for i, s in enumerate(sessions):
+        p = prices_2330[i]
+        repo.upsert(MarketBar(
+            symbol="2330", exchange="TSE", instrument_type="STOCK",
+            trade_date=s, open=int(p * 10000), high=int((p + 1) * 10000),
+            low=int((p - 1) * 10000), close=int(p * 10000),
+            volume=1000, amount=100000,
+            source="shioaji", source_timezone="Asia/Taipei",
+            is_complete=1, source_fetched_at="now", raw_payload_checksum="chk"
+        ))
+
+    manifest_dict = {
+        "schema_version": "1.0", "approval_id": "app-v1", "issuer_id": "manual-research-review",
+        "strategy": {
+            "strategy_id": "trend_pullback", "strategy_version": "1.0.0",
+            "params_canonicalization": "strategy-params-v1", "params_hash": params_hash
+        },
+        "permissions": {"execution_modes": ["backtest"], "risk_increasing_actions": ["open_long", "increase_long"]},
+        "limits": {"currency": "TWD", "max_order_value": 30000, "max_daily_buy_value": 60000, "max_open_positions": 2},
+        "validity": {"valid_from": "2026-06-01T00:00:00+08:00", "expires_at": "2026-07-01T00:00:00+08:00"},
+        "integrity": {"algorithm": "sha256", "canonicalization": "manifest-v1", "digest": ""}
+    }
+    canonical_str = json.dumps(manifest_dict, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
+    manifest_dict["integrity"]["digest"] = f"sha256:{digest}"
+    manifest = StrategyApprovalManifest(**manifest_dict)
+
+    runner = BacktestRunner(
+        db_conn=conn, calendar=calendar, market_repo=repo, projection=projection,
+        allowed_issuers=["manual-research-review"], revoked_approvals=[],
+        manifest=manifest, strategy_budget=20000, slippage_bps=10
+    )
+    entry_spec = EntryStrategySpec(
+        definition=StrategyDefinition(
+            strategy_id="trend_pullback", strategy_version="1.0.0", params=params,
+            exit_params=None, params_hash=params_hash, order_budget_twd=params.order_budget_twd
+        ),
+        strategy=TrendPullbackStrategy(params, ["2330"])
+    )
+    result = runner.run(
+        start_date=sessions[0], end_date=sessions[-1], initial_cash=300000,
+        universe_symbols=["2330"], entry_spec=entry_spec
+    )
+
+    rows = conn.execute("SELECT bundle_id, account_id FROM signal_bundles").fetchall()
+    assert rows, "回測應至少落一顆 bundle"
+    run_id = result["run_id"]
+    for r in rows:
+        assert r["account_id"] == f"backtest:{run_id}"
+        assert r["bundle_id"].startswith(f"{run_id}:")
+
+    # live loader 視角：任何帳號、任何 target 日都不得撿到回測 bundle
+    sim = DailySimulationRunner(
+        db_conn=conn, calendar=calendar, market_provider=None, market_repo=repo,
+        projection=projection, allowed_issuers=[], revoked_approvals=[]
+    )
+    target_dates = {r[0] for r in conn.execute("SELECT DISTINCT target_execution_date FROM signal_bundles")}
+    for td in target_dates:
+        assert sim._find_bundles_for_execution(date.fromisoformat(td), "simulation-main") == []
+        assert sim._find_bundles_for_execution(date.fromisoformat(td), "國泰") == []

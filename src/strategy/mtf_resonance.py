@@ -73,8 +73,11 @@ class MtfResonanceStrategy:
         p = self.params
         signals = []
         date_tag = context.as_of_date.strftime('%Y%m%d')
-        # 週 MACD 需 slow+signal 個「週」→ 換算日 K 約 (slow+signal)×5，寬估並含日 MACD warmup。
-        required_bars = (p.macd_slow + p.macd_signal + 5) * 5
+        # B7：EMA 種子（首 n 根 SMA）在滑動窗內逐日漂移——窗太短時同一週的 DIF_w 每天算出來
+        # 都略不同，與研究端全歷史計算的訊號日可能不一致。取 3×(slow+signal) 週，種子誤差
+        # 衰減至 <1%（(1-2/(slow+1))^(2(slow+signal)-slow) ≈ 0.3%），換算日 K ×5。
+        # 預設參數（26,9）下 = 525 根日 K：歷史不足 525 天的標的不出訊號（準確優先於樣本數）。
+        required_bars = (p.macd_slow + p.macd_signal) * 3 * 5
 
         market_ok = index_above_ma(market_data, self.index_symbol, p.index_ma_period)
         if market_ok:

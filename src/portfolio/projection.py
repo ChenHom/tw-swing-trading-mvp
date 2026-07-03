@@ -41,10 +41,12 @@ class PortfolioProjection:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def apply_fill_transaction(self, fill: dict) -> None:
+    def apply_fill_transaction(self, fill: dict, enforce_cash: bool = False) -> None:
+        """enforce_cash=True（engine 執行路徑）：BUY 透支即 raise——回測/模擬不得隱含槓桿。
+        預設 False：record-fill 等事實記錄路徑照實入帳（帳面缺現金是記帳缺口，不是拒絕事實的理由）。"""
         with self.conn:
             cursor = self.conn.cursor()
-            self._apply_fill_ops(cursor, fill)
+            self._apply_fill_ops(cursor, fill, enforce_cash=enforce_cash)
 
     def rebuild_from_ledger(self, account_id: str) -> None:
         with self.conn:
@@ -56,7 +58,7 @@ class PortfolioProjection:
                 SELECT fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term, source, strategy_id
                 FROM fills
                 WHERE account_id = ?
-                ORDER BY filled_at ASC
+                ORDER BY filled_at ASC, created_at ASC, rowid ASC
                 """,
                 (account_id,)
             )
@@ -95,8 +97,35 @@ class PortfolioProjection:
                 (account_id, initial_cash)
             )
             
-            # Re-apply each fill
-            for f in fills_rows:
+            # Corporate action 調價重放（與 fills 依時間交錯）：合成 fill 只承載「股數」事實，
+            # 「調價」是 apply 當下對 position_lots 的 UPDATE——不重放的話 rebuild 會把成本基準
+            # 還原成未調整狀態（停損基準/損益全錯）。只重放此帳號實際套用過的 action
+            # （以 position_cost_adjustments 為準；該表不隨 rebuild 清除），且只調 lot 價格：
+            # watermark 調整與現金分錄（非 FILL source）都留存原值，不可二次套用。
+            cursor.execute(
+                """
+                SELECT ca.action_id, ca.symbol, ca.action_type, ca.ex_date, ca.cash_per_share, ca.stock_ratio
+                FROM corporate_actions ca
+                WHERE ca.action_id IN (
+                    SELECT DISTINCT action_id FROM position_cost_adjustments WHERE account_id = ?
+                )
+                ORDER BY ca.ex_date ASC, ca.action_id ASC
+                """,
+                (account_id,)
+            )
+            action_rows = cursor.fetchall()
+
+            # 合併時間軸：同鍵時 action 先於 fill——合成配股/減資 fill 的 filled_at == ex_date
+            # 且其價格已是調整後價，不可再被本次調價二次調整（ISO 字串比較：裸日期 < 含時間）。
+            events = [("A", a["ex_date"], a) for a in action_rows] + \
+                     [("F", f["filled_at"], f) for f in fills_rows]
+            events.sort(key=lambda e: (e[1], 0 if e[0] == "A" else 1))
+
+            for kind, _key, row in events:
+                if kind == "A":
+                    self._replay_corporate_action_prices(cursor, account_id, row)
+                    continue
+                f = row
                 fill_dict = {
                     "fill_id": f["fill_id"],
                     "account_id": f["account_id"],
@@ -113,6 +142,29 @@ class PortfolioProjection:
                     "strategy_id": f["strategy_id"]
                 }
                 self._apply_fill_ops(cursor, fill_dict)
+
+    def _replay_corporate_action_prices(self, cursor, account_id: str, action) -> None:
+        """rebuild 用：只重放 corporate action 對 position_lots 的「調價」效果。
+        股數效果由合成 fills 重放承擔；watermark/現金/稽核列不在此重複。"""
+        action_type = action["action_type"]
+        symbol = action["symbol"]
+        if action_type == "CASH_DIVIDEND":
+            cursor.execute(
+                "UPDATE position_lots SET price = price - ? WHERE account_id = ? AND symbol = ?",
+                (action["cash_per_share"], account_id, symbol)
+            )
+        elif action_type in ("STOCK_DIVIDEND", "SPLIT"):
+            # SPLIT 的 stock_ratio 是總倍數（1股拆2 → 2.0）；STOCK_DIVIDEND 是增量（0.1）。
+            factor = action["stock_ratio"] if action_type == "SPLIT" else 1 + action["stock_ratio"]
+            cursor.execute(
+                "UPDATE position_lots SET price = CAST(price / ? AS INTEGER) WHERE account_id = ? AND symbol = ?",
+                (factor, account_id, symbol)
+            )
+        elif action_type == "CAPITAL_REDUCTION":
+            cursor.execute(
+                "UPDATE position_lots SET price = CAST(price / ? AS INTEGER) WHERE account_id = ? AND symbol = ?",
+                (action["stock_ratio"], account_id, symbol)
+            )
 
     def reconcile(self, account_id: str) -> dict:
         cursor = self.conn.cursor()
@@ -272,7 +324,7 @@ class PortfolioProjection:
         row = cursor.fetchone()
         return row["high"] if row and row["high"] is not None else None
 
-    def _apply_fill_ops(self, cursor, fill: dict) -> None:
+    def _apply_fill_ops(self, cursor, fill: dict, enforce_cash: bool = False) -> None:
         fill_id = fill["fill_id"]
         account_id = fill["account_id"]
         run_id = fill["run_id"]
@@ -287,6 +339,13 @@ class PortfolioProjection:
         trade_value = int(round(quantity * price / 10000.0))
         broker_fee = max(20, int(round(trade_value * 0.001425)))
         tax = int(round(trade_value * 0.003)) if side == "SELL" else 0
+
+        # 冪等防線：同 execution_key 的 fill 已入帳（如 run 中途崩潰後重跑）→ 整組 no-op，
+        # 不重複寫現金分錄/lots。與 fills 的 UNIQUE(execution_key) 索引互為保險。
+        cursor.execute("SELECT 1 FROM fills WHERE execution_key = ?", (execution_key,))
+        if cursor.fetchone():
+            print(f"[projection] SKIP duplicate fill (execution_key={execution_key})")
+            return
 
         # 1. Insert fill
         is_long_term = fill.get("is_long_term", 0)
@@ -306,6 +365,13 @@ class PortfolioProjection:
             """,
             (fill_id, account_id, run_id, order_id, execution_key, symbol, side, quantity, price, filled_at, is_long_term, source, strategy_id)
         )
+
+        # CORP_ACTION 合成 fill（配股/減資註銷）只承載股數事實：不動現金、無費稅、
+        # 不產生 fifo_matches/realized_pnl。原始套用時是 raw insert 不走此路；
+        # 這裡是 rebuild 重放路徑，重放成一般買賣會憑空扣款/生損益（B10）。
+        if source == "CORP_ACTION":
+            self._apply_corp_action_fill_lots(cursor, fill, is_long_term, strategy_id)
+            return
 
         # 2. Append cash ledger events
         notional_id = f"led-{uuid.uuid4().hex[:8]}"
@@ -360,6 +426,14 @@ class PortfolioProjection:
                 (lot_id, account_id, symbol, quantity, price, filled_at, fill_id, is_long_term, strategy_id)
             )
             new_balance = current_balance - (trade_value + broker_fee)
+            # B5：engine 路徑 BUY 不得透支——allocator 以訊號日收盤 sizing、隔日開盤成交，
+            # 跳空上漲時實付可能超過現金；不擋等於回測送免費槓桿。raise 由外層交易 rollback
+            # 整組寫入，engine 記事件跳過該單。rebuild/record-fill 重放事實不在此裁決。
+            if new_balance < 0 and enforce_cash:
+                raise ValueError(
+                    f"INSUFFICIENT_CASH_AT_FILL: {symbol} BUY {quantity} 股實付 "
+                    f"{trade_value + broker_fee} 元 > 現金 {current_balance} 元"
+                )
 
         else:  # SELL
             # FIFO deduction is isolated per strategy bucket so concurrent
@@ -401,16 +475,29 @@ class PortfolioProjection:
                     
                 match_pnl = int((price - buy_price) * matched_qty // 10000)
                 total_realized_pnl += match_pnl
-                
+
+                # 淨損益（A3）：毛損益扣掉買賣兩腳費稅的按量分攤。
+                # 賣腳＝本 fill 的費+稅 × (matched/賣出量)；買腳＝原買 fill 的手續費 × (matched/買入量)。
+                # CORP_ACTION 合成買 fill（配股）無費用。舊資料無法回算 → 該欄留 NULL 是誠實值。
+                cursor.execute("SELECT quantity, price, source FROM fills WHERE fill_id = ?", (buy_fill_id,))
+                bf = cursor.fetchone()
+                if bf and bf["source"] != "CORP_ACTION" and bf["quantity"] > 0:
+                    buy_fee_total = max(20, int(round(bf["quantity"] * bf["price"] / 10000.0 * 0.001425)))
+                    buy_cost_share = buy_fee_total * matched_qty / bf["quantity"]
+                else:
+                    buy_cost_share = 0.0
+                sell_cost_share = (broker_fee + tax) * matched_qty / quantity
+                net_pnl = match_pnl - int(round(buy_cost_share + sell_cost_share))
+
                 match_id = f"mat-{uuid.uuid4().hex[:8]}"
                 cursor.execute(
                     """
                     INSERT INTO fifo_matches (
                         match_id, account_id, symbol, buy_fill_id, sell_fill_id,
-                        quantity, buy_price, sell_price, matched_at, realized_pnl, created_at, strategy_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                        quantity, buy_price, sell_price, matched_at, realized_pnl, created_at, strategy_id, net_realized_pnl
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
                     """,
-                    (match_id, account_id, symbol, buy_fill_id, fill_id, matched_qty, buy_price, price, filled_at, match_pnl, strategy_id)
+                    (match_id, account_id, symbol, buy_fill_id, fill_id, matched_qty, buy_price, price, filled_at, match_pnl, strategy_id, net_pnl)
                 )
             
             if remaining_sell > 0:
@@ -455,6 +542,57 @@ class PortfolioProjection:
             (account_id, new_balance)
         )
 
+    def _apply_corp_action_fill_lots(self, cursor, fill: dict, is_long_term, strategy_id: str) -> None:
+        """CORP_ACTION 合成 fill 的股數重放（rebuild 專用）：BUY=補配股 lot、SELL=FIFO 註銷股數。
+        無現金/費稅/fifo_matches/realized_pnl——那些事實各有自己的存放處（非 FILL 現金分錄、
+        position_cost_adjustments），不在 fill 重放中重複。"""
+        account_id = fill["account_id"]
+        symbol = fill["symbol"]
+        side = fill["side"].upper()
+        quantity = fill["quantity"]
+        price = fill["price"]
+        filled_at = fill["filled_at"]
+
+        if side == "BUY":
+            lot_id = f"lot-{uuid.uuid4().hex[:8]}"
+            cursor.execute(
+                """
+                INSERT INTO position_lots (
+                    lot_id, account_id, symbol, quantity, price, acquired_at, fill_id, created_at, is_long_term, strategy_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
+                """,
+                (lot_id, account_id, symbol, quantity, price, filled_at, fill["fill_id"], is_long_term, strategy_id)
+            )
+            return
+
+        # SELL（減資註銷）：FIFO 扣股數。ponytail: 原始套用是逐 lot 等比縮減，FIFO 重放在
+        # 多 lot 同桶時分布略異（總量相同）；enter-once 策略實務上單 lot，接受近似。
+        cursor.execute(
+            """
+            SELECT lot_id, quantity FROM position_lots
+            WHERE account_id = ? AND symbol = ? AND strategy_id = ? AND is_long_term = ?
+            ORDER BY acquired_at ASC
+            """,
+            (account_id, symbol, strategy_id, is_long_term)
+        )
+        remaining = quantity
+        for lot in cursor.fetchall():
+            if remaining <= 0:
+                break
+            if lot["quantity"] > remaining:
+                cursor.execute(
+                    "UPDATE position_lots SET quantity = ? WHERE lot_id = ?",
+                    (lot["quantity"] - remaining, lot["lot_id"])
+                )
+                remaining = 0
+            else:
+                cursor.execute("DELETE FROM position_lots WHERE lot_id = ?", (lot["lot_id"],))
+                remaining -= lot["quantity"]
+        if remaining > 0:
+            raise ValueError(
+                f"CORP_ACTION_REPLAY_MISMATCH: {symbol} 註銷 {quantity} 股但持倉不足（缺 {remaining}）"
+            )
+
     def apply_corporate_action(self, account_id: str, action: dict) -> None:
         """套用公司行動調整（除息、配股、分割等）。
 
@@ -474,18 +612,20 @@ class PortfolioProjection:
         with self.conn:
             cursor = self.conn.cursor()
 
-            # 1. 檢查是否已套用（冪等）
+            # 1. 檢查是否已套用（冪等，**帳號範圍**）：同一 action 可套用到多個帳號，
+            #    只擋「同 action × 同帳號」重複——全域計數會讓第二個帳號被靜默跳過。
             cursor.execute(
-                "SELECT COUNT(*) as cnt FROM position_cost_adjustments WHERE action_id = ?",
-                (action["action_id"],)
+                "SELECT COUNT(*) as cnt FROM position_cost_adjustments WHERE action_id = ? AND account_id = ?",
+                (action["action_id"], account_id)
             )
             if cursor.fetchone()["cnt"] > 0:
                 return  # 已套用過，直接返回
 
-            # 2. 寫 corporate_actions 事實表
+            # 2. 寫 corporate_actions 事實表（OR IGNORE：CLI create 先建檔、或第二個帳號套用時
+            #    action row 已存在——原本的裸 INSERT 會 IntegrityError 讓整個 apply 掛掉）
             cursor.execute(
                 """
-                INSERT INTO corporate_actions
+                INSERT OR IGNORE INTO corporate_actions
                 (action_id, symbol, action_type, ex_date, cash_per_share, stock_ratio, source, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, 'MANUAL', datetime('now'))
                 """,

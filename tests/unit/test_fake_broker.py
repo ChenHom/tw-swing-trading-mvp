@@ -165,3 +165,40 @@ def test_fake_broker_odd_lot_extra_slippage(temp_repo):
     assert unfilled == []
     # 1000000 * (1 + 30/10000) = 1003000（3x 滑價）
     assert fills[0]["price"] == 1003000
+
+
+def test_fake_broker_backtest_mode_fills_others_when_one_symbol_missing(temp_repo):
+    """A2：require_all_bars=False（回測）——缺 bar 的單記 UNFILLED_NO_BAR，
+    其餘訂單照常成交；不得整批 WAITING 讓當天所有訂單消失。"""
+    repo, conn = temp_repo
+    repo.upsert(MarketBar(
+        symbol="2330", exchange="TSE", instrument_type="STOCK",
+        trade_date=date(2026, 6, 11),
+        open=1000000, high=1020000, low=990000, close=1010000,
+        volume=100, amount=10000,
+        source="shioaji", source_timezone="Asia/Taipei",
+        is_complete=1, source_fetched_at="now", raw_payload_checksum="chk"
+    ))
+    broker = FakeBroker(repo)
+    orders = [
+        {"signal_id": "sig-ok", "symbol": "2330", "action": "open_long",
+         "quantity": 1000, "is_odd_lot": False, "estimated_price": 100.0},
+        {"signal_id": "sig-halted", "symbol": "9999", "action": "close_long",
+         "quantity": 500, "is_odd_lot": False, "estimated_price": 50.0},
+    ]
+
+    fills, status, unfilled = broker.execute_orders(
+        orders, date(2026, 6, 11), slippage_bps=10, require_all_bars=False
+    )
+
+    assert status == "FILLED"
+    assert [f["symbol"] for f in fills] == ["2330"]
+    assert len(unfilled) == 1
+    assert unfilled[0]["symbol"] == "9999"
+    assert unfilled[0]["side"] == "SELL"
+    assert unfilled[0]["reason"] == "UNFILLED_NO_BAR"
+
+    # live 語意不變：require_all_bars 預設 True → 整批 WAITING
+    fills2, status2, unfilled2 = broker.execute_orders(orders, date(2026, 6, 11), slippage_bps=10)
+    assert status2 == "WAITING_MARKET_DATA"
+    assert fills2 == [] and unfilled2 == []

@@ -19,9 +19,12 @@ class MarketDataRepository(Protocol):
         ...
 
 class SqlitePointInTimeMarketData:
-    def __init__(self, conn: sqlite3.Connection, as_of_date: date):
+    def __init__(self, conn: sqlite3.Connection, as_of_date: date, price_basis: str = "raw"):
         self.conn = conn
         self._as_of_date = as_of_date
+        # A1：同庫可存 raw 與 adj 兩種基準（UNIQUE(symbol,trade_date,price_basis)）；
+        # 查詢必須鎖定單一 basis，否則序列混基準（過去靠「只存 raw」苟活）。
+        self._price_basis = price_basis
 
     @property
     def as_of_date(self) -> date:
@@ -31,14 +34,14 @@ class SqlitePointInTimeMarketData:
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            SELECT symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount, 
+            SELECT symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount,
                    source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum, created_at, updated_at
             FROM market_bars
-            WHERE symbol = ? AND trade_date <= ? AND is_complete = 1
+            WHERE symbol = ? AND trade_date <= ? AND is_complete = 1 AND price_basis = ?
             ORDER BY trade_date DESC
             LIMIT ?
             """,
-            (symbol, self._as_of_date.isoformat(), limit)
+            (symbol, self._as_of_date.isoformat(), self._price_basis, limit)
         )
         rows = cursor.fetchall()
         
@@ -74,11 +77,12 @@ class SqlitePointInTimeMarketData:
         return history[0] if history else None
 
 class SqliteMarketBarRepository:
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, price_basis: str = "raw"):
         self.conn = conn
+        self.price_basis = price_basis
 
     def as_of(self, value: date) -> PointInTimeMarketData:
-        return SqlitePointInTimeMarketData(self.conn, value)
+        return SqlitePointInTimeMarketData(self.conn, value, price_basis=self.price_basis)
 
     def upsert(self, bar: MarketBar) -> None:
         cursor = self.conn.cursor()
@@ -211,15 +215,17 @@ class SqliteMarketBarRepository:
         )
 
     def find(self, symbol: str, trade_date: date) -> Optional[MarketBar]:
+        # 與 history() 同口徑（C10）：只回完整 bar、鎖定本 repo 的 price_basis——
+        # 撮合/估值不得用到訊號端看不見的列。
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            SELECT symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount, 
+            SELECT symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount,
                    source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum, created_at, updated_at
             FROM market_bars
-            WHERE symbol = ? AND trade_date = ?
+            WHERE symbol = ? AND trade_date = ? AND is_complete = 1 AND price_basis = ?
             """,
-            (symbol, trade_date.isoformat())
+            (symbol, trade_date.isoformat(), self.price_basis)
         )
         r = cursor.fetchone()
         if not r:

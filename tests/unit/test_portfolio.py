@@ -139,3 +139,123 @@ def test_portfolio_rebuild_and_reconcile(db_conn):
     assert rebuilt_result["status"] == "RECONCILE_OK"
     assert projection.get_cash_balance("acc-2") == 200000 - (10000 + 20) # 100 * 100 = 10,000 trade value + 20 min fee
 
+
+
+def test_rebuild_same_day_buy_then_sell_order_is_stable(db_conn):
+    """B8：同日同刻（filled_at 相同）先買後賣，rebuild 重放必須維持寫入順序
+    （tiebreaker: created_at, rowid），不得先重放 SELL 而炸 SELL_WITHOUT_POSITION。"""
+    ledger = PortfolioLedger(db_conn)
+    projection = PortfolioProjection(db_conn)
+
+    ledger.deposit("acc-b8", "run-1", 200000, "TWD", date(2026, 6, 10))
+    projection.rebuild_from_ledger("acc-b8")
+
+    same_ts = "2026-06-11T09:00:00+08:00"
+    projection.apply_fill_transaction({
+        "fill_id": "b8-buy", "account_id": "acc-b8", "run_id": "run-1",
+        "order_id": "o1", "execution_key": "b8-k1", "symbol": "2330",
+        "side": "BUY", "quantity": 100, "price": 1000000,
+        "filled_at": same_ts, "strategy_id": "MANUAL"
+    })
+    projection.apply_fill_transaction({
+        "fill_id": "b8-sell", "account_id": "acc-b8", "run_id": "run-1",
+        "order_id": "o2", "execution_key": "b8-k2", "symbol": "2330",
+        "side": "SELL", "quantity": 100, "price": 1010000,
+        "filled_at": same_ts, "strategy_id": "MANUAL"
+    })
+
+    projection.rebuild_from_ledger("acc-b8")  # 不得 raise
+    assert projection.reconcile("acc-b8")["status"] == "RECONCILE_OK"
+    matches = db_conn.execute(
+        "SELECT buy_fill_id, sell_fill_id FROM fifo_matches WHERE account_id = 'acc-b8'"
+    ).fetchall()
+    assert len(matches) == 1
+    assert (matches[0]["buy_fill_id"], matches[0]["sell_fill_id"]) == ("b8-buy", "b8-sell")
+
+
+def test_duplicate_execution_key_apply_is_noop(db_conn):
+    """B9：同 execution_key 二次 apply（如 run 崩潰重跑）→ 冪等 no-op，
+    不得重複扣款/建 lot。"""
+    ledger = PortfolioLedger(db_conn)
+    projection = PortfolioProjection(db_conn)
+
+    ledger.deposit("acc-b9", "run-1", 200000, "TWD", date(2026, 6, 10))
+    projection.rebuild_from_ledger("acc-b9")
+
+    fill = {
+        "fill_id": "b9-f1", "account_id": "acc-b9", "run_id": "run-1",
+        "order_id": "o1", "execution_key": "b9-key", "symbol": "2330",
+        "side": "BUY", "quantity": 100, "price": 1000000,
+        "filled_at": "2026-06-11T09:00:00+08:00", "strategy_id": "trend_breakout"
+    }
+    projection.apply_fill_transaction(fill)
+    cash_after_first = projection.get_cash_balance("acc-b9")
+
+    retry = dict(fill, fill_id="b9-f1-retry", order_id="o1-retry")  # 重跑會拿到新 fill_id
+    projection.apply_fill_transaction(retry)  # 不得 raise、不得重複入帳
+
+    assert projection.get_cash_balance("acc-b9") == cash_after_first
+    n_fills = db_conn.execute(
+        "SELECT COUNT(*) FROM fills WHERE account_id = 'acc-b9'"
+    ).fetchone()[0]
+    n_lots = db_conn.execute(
+        "SELECT COUNT(*) FROM position_lots WHERE account_id = 'acc-b9'"
+    ).fetchone()[0]
+    assert (n_fills, n_lots) == (1, 1)
+    assert projection.reconcile("acc-b9")["status"] == "RECONCILE_OK"
+
+
+def test_fifo_match_net_realized_pnl(db_conn):
+    """A3：net_realized_pnl = 毛損益 −（買腳手續費+賣腳手續費+證交稅）的按量分攤。"""
+    ledger = PortfolioLedger(db_conn)
+    projection = PortfolioProjection(db_conn)
+
+    ledger.deposit("acc-a3", "run-1", 500000, "TWD", date(2026, 6, 10))
+    projection.rebuild_from_ledger("acc-a3")
+
+    projection.apply_fill_transaction({
+        "fill_id": "a3-buy", "account_id": "acc-a3", "run_id": "run-1",
+        "order_id": "o1", "execution_key": "a3-k1", "symbol": "2330",
+        "side": "BUY", "quantity": 1000, "price": 1000000,   # 100 元 × 1000 股
+        "filled_at": "2026-06-11T09:00:00+08:00", "strategy_id": "trend_breakout"
+    })
+    projection.apply_fill_transaction({
+        "fill_id": "a3-sell", "account_id": "acc-a3", "run_id": "run-1",
+        "order_id": "o2", "execution_key": "a3-k2", "symbol": "2330",
+        "side": "SELL", "quantity": 1000, "price": 1100000,  # 110 元 × 1000 股
+        "filled_at": "2026-06-12T09:00:00+08:00", "strategy_id": "trend_breakout"
+    })
+
+    row = db_conn.execute(
+        "SELECT realized_pnl, net_realized_pnl FROM fifo_matches WHERE account_id = 'acc-a3'"
+    ).fetchone()
+    # 毛 = (110-100)×1000 = 10000 元
+    assert row["realized_pnl"] == 10000
+    # 買費 max(20, round(100000×0.001425))=142（banker's rounding，與 ledger 實收一致）、
+    # 賣費 max(20, round(110000×0.001425))=157、稅 round(110000×0.003)=330
+    assert row["net_realized_pnl"] == 10000 - 142 - 157 - 330
+
+
+def test_buy_fill_cannot_overdraw_cash(db_conn):
+    """B5：engine 路徑（enforce_cash=True）BUY 實付超過現金 → raise 且整組 rollback
+    （現金不為負、無殘留 lot/fill）；record-fill/rebuild 事實記錄路徑不受此限。"""
+    import pytest as _pytest
+    ledger = PortfolioLedger(db_conn)
+    projection = PortfolioProjection(db_conn)
+
+    ledger.deposit("acc-b5", "run-1", 10000, "TWD", date(2026, 6, 10))
+    projection.rebuild_from_ledger("acc-b5")
+
+    overdraw = {
+        "fill_id": "b5-f1", "account_id": "acc-b5", "run_id": "run-1",
+        "order_id": "o1", "execution_key": "b5-k1", "symbol": "2330",
+        "side": "BUY", "quantity": 200, "price": 1000000,  # 需 20000+費 > 現金 10000
+        "filled_at": "2026-06-11T09:00:00+08:00", "strategy_id": "trend_breakout"
+    }
+    with _pytest.raises(ValueError, match="INSUFFICIENT_CASH_AT_FILL"):
+        projection.apply_fill_transaction(overdraw, enforce_cash=True)
+
+    assert projection.get_cash_balance("acc-b5") == 10000
+    n = db_conn.execute("SELECT COUNT(*) FROM fills WHERE account_id = 'acc-b5'").fetchone()[0]
+    assert n == 0
+    assert projection.reconcile("acc-b5")["status"] == "RECONCILE_OK"

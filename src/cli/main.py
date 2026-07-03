@@ -33,7 +33,7 @@ from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
-from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_validate, cmd_market_build_universe
+from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_validate, cmd_market_build_universe, cmd_market_build_adj
 from src.cli.strategy import cmd_strategy_inspect
 from src.cli.approval import cmd_approval_create, cmd_approval_validate, cmd_approval_activate, cmd_approval_deactivate, cmd_approval_list, cmd_approval_status
 from src.cli.account import cmd_account_init, cmd_account_adjust_cash, cmd_account_adjust
@@ -93,6 +93,13 @@ def main():
     parser_build_universe.add_argument("--top-n", dest="top_n", type=int, default=150, help="每再平衡日取流動性前 N 名")
     parser_build_universe.add_argument("--lookback", type=int, default=20, help="流動性視窗交易日數")
     parser_build_universe.add_argument("--db", type=str, default="data/research.db", help="research SQLite 路徑")
+
+    parser_build_adj = market_subs.add_parser(
+        "build-adj", help="以 raw 日 K + corporate_actions 自建還原權息 'adj' 序列（回測用 --price-basis adj 消費）"
+    )
+    parser_build_adj.add_argument("--db", type=str, default="data/research.db", help="research SQLite 路徑")
+    parser_build_adj.add_argument("--symbols", type=str, default=None,
+                                  help="逗號分隔標的清單；不給則對庫內所有有 raw bar 的標的建置")
 
     # 2. strategy group
     parser_strategy = subparsers.add_parser("strategy", help="策略輔助指令")
@@ -154,7 +161,12 @@ def main():
     parser_bt_run.add_argument("--to", type=str, required=True, help="回測結束日期 YYYY-MM-DD")
     parser_bt_run.add_argument("--initial-cash", type=int, default=300000, help="初始現金金額")
     parser_bt_run.add_argument("--strategy", type=str, default="trend_breakout", help="進場策略 ID（出場由 risk_exit 依該策略 exit: 參數執行）")
-    parser_bt_run.add_argument("--db", type=str, default=None, help="回測資料庫路徑（預設用 settings 的 app.db；研究用 data/research.db）")
+    parser_bt_run.add_argument("--db", type=str, default=None, help="回測資料庫路徑（研究用 data/research.db；未給且未加 --allow-live-db 會拒跑）")
+    parser_bt_run.add_argument("--allow-live-db", dest="allow_live_db", action="store_true",
+                               help="顯式允許在 live app.db 上跑回測（會寫入研究資料，一般不建議）")
+    parser_bt_run.add_argument("--price-basis", dest="price_basis", type=str, default="raw",
+                               choices=["raw", "adj"],
+                               help="價格基準：adj=還原權息（需先 market build-adj），預設 raw")
     parser_bt_run.add_argument("--universe-policy", dest="universe_policy", type=str, default=None,
                                help="PIT 流動性 universe 的 policy_version（如 liquidity-top150-v1）；不給則用 universe.yaml 固定清單（diagnostic、必 INVALID）")
 
@@ -313,6 +325,7 @@ def main():
         ("market", "backfill"): cmd_market_backfill,
         ("market", "backfill-history"): cmd_market_backfill_history,
         ("market", "build-universe"): cmd_market_build_universe,
+        ("market", "build-adj"): cmd_market_build_adj,
         ("market", "sync"): cmd_market_sync,
         ("market", "sync-chips"): cmd_market_sync_chips,
         ("market", "sync-names"): cmd_market_sync_names,

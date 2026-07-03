@@ -38,8 +38,16 @@ from src.cli import common
 
 def cmd_backtest_run(args):
     settings = common.get_settings()
-    # --db：研究回測指向 data/research.db（與 live app.db 隔離）；預設仍用 settings 的 app.db。
+    # --db：研究回測指向 data/research.db（與 live app.db 隔離）。
+    # 未給 --db 會隱式落在 live app.db——回測會往裡面寫 bundles/fills/研究帳，須顯式知情
+    # （--allow-live-db）才放行，避免研究 run 汙染每日管線的資料庫。
     db_path = getattr(args, "db", None) or settings.trading.database_path
+    if getattr(args, "db", None) is None and not getattr(args, "allow_live_db", False):
+        print(
+            f"Error: 未指定 --db，將寫入 live 資料庫 {settings.trading.database_path}。\n"
+            "研究回測請用 --db data/research.db；確定要在 live db 上跑請加 --allow-live-db。"
+        )
+        sys.exit(1)
     init_db(db_path)
     conn = get_db_connection(db_path)
 
@@ -56,7 +64,10 @@ def cmd_backtest_run(args):
         print(f"載入策略設定失敗: {e}")
         sys.exit(1)
 
-    repo = SqliteMarketBarRepository(conn)
+    # --price-basis adj：訊號+撮合+估值全走還原權息序列（除息缺口不再假觸發停損、
+    # 息值內含於報酬）；需先 market build-adj。預設 raw 維持既有行為。
+    price_basis = getattr(args, "price_basis", None) or "raw"
+    repo = SqliteMarketBarRepository(conn, price_basis=price_basis)
     projection = PortfolioProjection(conn)
     calendar = ExchangeCalendarsTradingCalendar()
     symbols = [s.code for s in settings.universe.symbols]

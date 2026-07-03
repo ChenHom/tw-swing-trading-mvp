@@ -15,7 +15,7 @@ from src.market_data.repository import SqliteMarketBarRepository
 from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
 from src.portfolio.ledger import PortfolioLedger
 from src.contracts.models import (
-    TrendPullbackParams, StrategyApprovalManifest, StrategyInfo, LimitsInfo,
+    MarketBar, TrendPullbackParams, StrategyApprovalManifest, StrategyInfo, LimitsInfo,
     ValidityInfo, IntegrityInfo, PermissionsInfo, DailySignalBundle, SignalItem, ExecutionContext
 )
 from src.calendar.calendar import ExchangeCalendarsTradingCalendar
@@ -178,6 +178,70 @@ def cmd_market_build_universe(args):
         f"再平衡 {stats['rebalances']} 次、寫入 {stats['rows']} 列、涵蓋 {stats['distinct_symbols']} 檔不同標的"
         + (f"（{stats.get('first_rebalance')} ~ {stats.get('last_rebalance')}）" if stats['rebalances'] else "")
     )
+    conn.close()
+
+
+def cmd_market_build_adj(args):
+    """A1：以 raw 日 K + corporate_actions（TaiwanStockDividend 回補）自建 back-adjusted
+    'adj' 序列寫回同庫（UNIQUE(symbol,trade_date,price_basis) 隔離）。回測加 --price-basis adj
+    後訊號/停損不再被除息缺口假觸發。"""
+    from src.market_data.adjusted_series import build_adjusted_bars
+
+    db_path = args.db or "data/research.db"
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    repo = SqliteMarketBarRepository(conn)
+
+    if args.symbols:
+        symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    else:
+        symbols = [
+            r["symbol"] for r in conn.execute(
+                "SELECT DISTINCT symbol FROM market_bars WHERE price_basis = 'raw' ORDER BY symbol"
+            )
+        ]
+
+    total_bars = 0
+    adjusted_symbols = 0
+    for symbol in symbols:
+        rows = conn.execute(
+            """
+            SELECT symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount,
+                   source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum
+            FROM market_bars WHERE symbol = ? AND price_basis = 'raw' ORDER BY trade_date ASC
+            """,
+            (symbol,)
+        ).fetchall()
+        if not rows:
+            continue
+        raw_bars = [
+            MarketBar(
+                symbol=r["symbol"], exchange=r["exchange"], instrument_type=r["instrument_type"],
+                trade_date=date.fromisoformat(r["trade_date"]),
+                open=r["open"], high=r["high"], low=r["low"], close=r["close"],
+                volume=r["volume"], amount=r["amount"], source=r["source"],
+                source_timezone=r["source_timezone"], is_complete=r["is_complete"],
+                source_fetched_at=r["source_fetched_at"], raw_payload_checksum=r["raw_payload_checksum"],
+                price_basis="raw", adjustment_factor=1.0,
+            )
+            for r in rows
+        ]
+        actions = [
+            dict(r) for r in conn.execute(
+                "SELECT action_id, symbol, action_type, ex_date, cash_per_share, stock_ratio "
+                "FROM corporate_actions WHERE symbol = ? ORDER BY ex_date ASC",
+                (symbol,)
+            )
+        ]
+        for bar in build_adjusted_bars(raw_bars, actions):
+            repo.upsert_canonical(bar)
+            total_bars += 1
+        adjusted_symbols += 1
+        if actions:
+            print(f"  {symbol}: {len(rows)} bars, {len(actions)} 個公司行動事件")
+
+    print(f"adj 序列建立完成：{adjusted_symbols} 檔、{total_bars} 根 bar（db={db_path}）")
+    print("注意：adj 只涵蓋 corporate_actions 已回補的事件；未回補股利事件的標的 adj≡raw。")
     conn.close()
 
 

@@ -1,4 +1,5 @@
 import datetime
+import sys
 from datetime import date
 from typing import Protocol, Sequence, Set
 import exchange_calendars as xc
@@ -35,7 +36,10 @@ class ExchangeCalendarsTradingCalendar:
         # exchange_calendars is_session expects a date-like type or string
         try:
             return self.xtai.is_session(value.isoformat())
-        except Exception:
+        except Exception as e:
+            # 例外≠假日：calendar 資料過舊/日期越界時靜默回 False 會讓整天 run 被無聲跳過，
+            # 至少留下可稽核的警告（C14）。
+            print(f"[calendar] WARNING: XTAI is_session({value}) 例外，當作非交易日處理: {e}", file=sys.stderr)
             return False
 
     def sessions_between(self, start: date, end: date) -> Sequence[date]:

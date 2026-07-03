@@ -242,3 +242,100 @@ def test_capital_reduction_cash_back(clean_db):
     assert proj.get_cash_balance(account_id) - cash_before == 750
     assert proj.reconcile(account_id)["status"] == "RECONCILE_OK"
     conn.close()
+
+
+def _snapshot(conn, proj, account_id):
+    lots = sorted(
+        tuple(r) for r in conn.execute(
+            "SELECT symbol, quantity, price, strategy_id FROM position_lots WHERE account_id = ?",
+            (account_id,)
+        ).fetchall()
+    )
+    return proj.get_cash_balance(account_id), lots
+
+
+def test_rebuild_preserves_corporate_action_adjustments(clean_db):
+    """B10：公司行動套用後 rebuild，現金與 lot 調價必須不變——
+    合成 fill 重放不得扣現金，原 lot 的調價（UPDATE）須由 action 重放補回。"""
+    conn, account_id, proj = clean_db
+
+    proj.apply_corporate_action(account_id, {
+        "action_id": "act-rb-1", "symbol": "2330", "action_type": "STOCK_DIVIDEND",
+        "ex_date": "2026-06-20", "stock_ratio": 0.1,
+    })
+    proj.apply_corporate_action(account_id, {
+        "action_id": "act-rb-2", "symbol": "2330", "action_type": "CASH_DIVIDEND",
+        "ex_date": "2026-06-25", "cash_per_share": 100000,
+    })
+    before = _snapshot(conn, proj, account_id)
+
+    proj.rebuild_from_ledger(account_id)
+
+    assert _snapshot(conn, proj, account_id) == before
+    assert proj.reconcile(account_id)["status"] == "RECONCILE_OK"
+    conn.close()
+
+
+def test_apply_corporate_action_after_cli_create_and_reapply(clean_db):
+    """B11：CLI 流程是 create 先寫 corporate_actions，apply 再套用——
+    apply 不得因 action row 已存在而 IntegrityError；重複 apply 冪等。"""
+    conn, account_id, proj = clean_db
+
+    conn.execute(
+        """
+        INSERT INTO corporate_actions (action_id, symbol, action_type, ex_date, cash_per_share, source, created_at)
+        VALUES ('act-cli-1', '2330', 'CASH_DIVIDEND', '2026-06-20', 100000, 'MANUAL', datetime('now'))
+        """
+    )
+    conn.commit()
+    action = {
+        "action_id": "act-cli-1", "symbol": "2330", "action_type": "CASH_DIVIDEND",
+        "ex_date": "2026-06-20", "cash_per_share": 100000,
+    }
+
+    proj.apply_corporate_action(account_id, action)  # 不得 raise
+    cash_after_first = proj.get_cash_balance(account_id)
+    proj.apply_corporate_action(account_id, action)  # 冪等：不得重複入帳/調價
+
+    assert proj.get_cash_balance(account_id) == cash_after_first
+    price = conn.execute("SELECT price FROM position_lots WHERE fill_id = 'f1'").fetchone()["price"]
+    assert price == 1000000 - 100000  # 只調一次
+    assert proj.reconcile(account_id)["status"] == "RECONCILE_OK"
+    conn.close()
+
+
+def test_apply_same_action_to_two_accounts(clean_db):
+    """B11：同一 action 套用到第二個帳號不得被全域冪等檢查靜默跳過。"""
+    conn, account_id, proj = clean_db
+
+    conn.execute(
+        """
+        INSERT INTO cash_ledger (ledger_id, account_id, run_id, event_type, amount, currency,
+            source_type, source_id, occurred_at, idempotency_key, created_at)
+        VALUES ('seed-acc2', 'acc2', 'seed', 'DEPOSIT', 1000000, 'TWD',
+            'MANUAL', 'seed2', '2026-06-01', 'seed-acc2', datetime('now'))
+        """
+    )
+    conn.execute(
+        "INSERT INTO cash_balances (account_id, balance, currency, updated_at) VALUES ('acc2', 1000000, 'TWD', '2026-06-01')"
+    )
+    conn.commit()
+    proj.apply_fill_transaction({
+        "fill_id": "f-acc2", "account_id": "acc2", "run_id": "r1",
+        "order_id": "o9", "execution_key": "k-acc2", "symbol": "2330",
+        "side": "BUY", "quantity": 100, "price": 1000000,
+        "filled_at": "2026-06-10T09:00:00+08:00", "is_long_term": 0,
+        "source": "STRATEGY", "strategy_id": "trend_breakout",
+    })
+
+    action = {
+        "action_id": "act-two-acc", "symbol": "2330", "action_type": "CASH_DIVIDEND",
+        "ex_date": "2026-06-20", "cash_per_share": 100000,
+    }
+    proj.apply_corporate_action(account_id, action)
+    proj.apply_corporate_action("acc2", action)
+
+    p2 = conn.execute("SELECT price FROM position_lots WHERE fill_id = 'f-acc2'").fetchone()["price"]
+    assert p2 == 1000000 - 100000  # 第二個帳號確實被調整
+    assert proj.reconcile("acc2")["status"] == "RECONCILE_OK"
+    conn.close()

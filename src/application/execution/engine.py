@@ -175,9 +175,13 @@ class TradeExecutionEngine:
     def execute_bundles(self, context: ExecutionContext, bundles: list[DailySignalBundle]) -> dict:
         ordered, planned_orders, signal_results, events = self.plan_bundles(context, bundles)
 
-        # Execute with FakeBroker
+        # Execute with FakeBroker：回測不整批 WAITING（歷史缺檔＝既成事實，逐單 UNFILLED_NO_BAR）；
+        # live/daily 維持整批 WAITING，交由重試機制等資料到齊。
         broker = FakeBroker(self.market_repo)
-        fills, status, unfilled_orders = broker.execute_orders(planned_orders, context.execution_date, self.slippage_bps)
+        fills, status, unfilled_orders = broker.execute_orders(
+            planned_orders, context.execution_date, self.slippage_bps,
+            require_all_bars=(context.run_type != "BACKTEST")
+        )
 
         if status == "WAITING_MARKET_DATA":
             return {
@@ -208,7 +212,13 @@ class TradeExecutionEngine:
                 "account_id": context.account_id,
                 "run_id": context.run_id,
                 "order_id": f"ord-{uuid_like()}",
-                "execution_key": f"{context.account_id}-{bundle_by_signal.get(fill['signal_id'], 'na')}-{fill['signal_id']}-{context.execution_date.isoformat()}",
+                # 零股腳加 -odd 後綴：同一 signal 拆整張+零股是兩筆 fill，
+                # 不消歧義會撞 fills 的 UNIQUE(execution_key)（板/零股各自冪等）。
+                "execution_key": (
+                    f"{context.account_id}-{bundle_by_signal.get(fill['signal_id'], 'na')}"
+                    f"-{fill['signal_id']}-{context.execution_date.isoformat()}"
+                    + ("-odd" if fill.get("is_odd_lot") else "")
+                ),
                 "symbol": fill["symbol"],
                 "side": fill["side"],
                 "quantity": fill["quantity"],
@@ -217,12 +227,21 @@ class TradeExecutionEngine:
                 "strategy_id": order_strategy.get(key, MANUAL_STRATEGY_ID)
             }
             try:
-                self.projection.apply_fill_transaction(fill_payload)
+                self.projection.apply_fill_transaction(fill_payload, enforce_cash=True)
                 applied_fills.append(fill)
             except ValueError as e:
                 err_str = str(e)
                 if err_str.startswith("LONG_TERM_PROTECTED"):
                     print(f"[engine] SKIP SELL {fill['symbol']}: {err_str}")
+                elif err_str.startswith("INSUFFICIENT_CASH_AT_FILL"):
+                    # 跳空上漲導致實付超過現金（B5）：跳過該單並留事件，不讓現金為負
+                    print(f"[engine] SKIP BUY {fill['symbol']}: {err_str}")
+                    events.append({
+                        "event_type": "INSUFFICIENT_CASH_AT_FILL",
+                        "strategy_id": order_strategy.get(key, MANUAL_STRATEGY_ID),
+                        "symbol": fill["symbol"],
+                        "detail": err_str
+                    })
                 else:
                     raise
 

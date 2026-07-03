@@ -133,20 +133,23 @@ def test_run_daily_skipped_non_trading_day(temp_db):
     assert row["last_error_code"] == "NON_TRADING_DAY"
 
 def test_run_daily_waiting_market_data(temp_db):
+    """B6 之後「資料源整體未就緒 → WAITING」的守門由指數承擔（critical 集合＝指數+持倉）；
+    非持倉個股缺檔只跳過。provider 全掛時指數必缺 → 整日 WAITING 重試語意不變。"""
     calendar = ExchangeCalendarsTradingCalendar()
     # Mock provider returns no kbars
     mock_provider = MagicMock()
     mock_provider.fetch_kbars.return_value = []
-    
+
     repo = SqliteMarketBarRepository(temp_db)
     projection = PortfolioProjection(temp_db)
-    
+
     runner = DailySimulationRunner(
         db_conn=temp_db, calendar=calendar, market_provider=mock_provider,
         market_repo=repo, projection=projection,
-        allowed_issuers=[], revoked_approvals=[]
+        allowed_issuers=[], revoked_approvals=[],
+        index_symbols=["TSE"]
     )
-    
+
     # 2026-06-10 is Wednesday (trading day)
     status = runner.run_daily(
         run_date=date(2026, 6, 10),
@@ -545,3 +548,76 @@ def test_load_bundle_drops_retired_entry_keeps_exit_per_account(temp_db):
     sim_runner = _runner(["trend_breakout", "pullback_rebound"])
     sim_entry = {b.bundle_id: b for b in sim_runner._find_bundles_for_execution(tgt, "sim")}
     assert [s.signal_id for s in sim_entry["bundle-20260624-pullback_rebound"].signals] == ["sig-pb-entry"]
+
+
+def _fixture_provider_with(symbols):
+    from src.market_data.provider import FixtureMarketDataProvider
+    from datetime import timezone
+    provider = FixtureMarketDataProvider()
+    bars = [
+        MinuteBar(
+            time=datetime(2026, 6, 10, 9, 0, 0, tzinfo=timezone.utc),
+            open=100.0, high=101.0, low=99.0, close=100.5,
+            volume=1000, amount=100500.0
+        )
+    ]
+    for s in symbols:
+        provider.set_fixture_data(s, bars)
+    return provider
+
+
+def test_run_daily_completes_when_non_held_universe_symbol_missing(temp_db):
+    """B6：非持倉 universe 標的缺當日資料（停牌/處置）→ 跳過該檔，整日 run 照常 COMPLETED，
+    不得卡 WAITING（top-150 廣度池的關鍵前提）。"""
+    calendar = ExchangeCalendarsTradingCalendar()
+    provider = _fixture_provider_with(["2330", "TSE"])  # 0099HALT 故意缺
+
+    repo = SqliteMarketBarRepository(temp_db)
+    projection = PortfolioProjection(temp_db)
+    runner = DailySimulationRunner(
+        db_conn=temp_db, calendar=calendar, market_provider=provider,
+        market_repo=repo, projection=projection,
+        allowed_issuers=[], revoked_approvals=[],
+        index_symbols=["TSE"]
+    )
+
+    status = runner.run_daily(
+        run_date=date(2026, 6, 10),
+        account_id="sim-test",
+        universe_symbols=["2330", "0099HALT"]
+    )
+    assert status == "COMPLETED"
+    assert repo.find("2330", date(2026, 6, 10)) is not None
+    assert repo.find("0099HALT", date(2026, 6, 10)) is None
+
+
+def test_run_daily_waits_when_held_symbol_missing(temp_db):
+    """B6：持倉標的缺當日資料屬 critical（出場判斷不可用 stale 價）→ 整日 WAITING 重試。"""
+    calendar = ExchangeCalendarsTradingCalendar()
+    provider = _fixture_provider_with(["2330", "TSE"])  # 持倉的 9910 缺資料
+
+    repo = SqliteMarketBarRepository(temp_db)
+    projection = PortfolioProjection(temp_db)
+    ledger = PortfolioLedger(temp_db)
+    ledger.deposit("sim-test", "run-0", 300000, "TWD", date(2026, 6, 1))
+    projection.rebuild_from_ledger("sim-test")
+    projection.apply_fill_transaction({
+        "fill_id": "b6-f1", "account_id": "sim-test", "run_id": "run-0",
+        "order_id": "o1", "execution_key": "b6-k1", "symbol": "9910",
+        "side": "BUY", "quantity": 100, "price": 1000000,
+        "filled_at": "2026-06-05T09:00:00+08:00", "strategy_id": "trend_breakout"
+    })
+
+    runner = DailySimulationRunner(
+        db_conn=temp_db, calendar=calendar, market_provider=provider,
+        market_repo=repo, projection=projection,
+        allowed_issuers=[], revoked_approvals=[],
+        index_symbols=["TSE"]
+    )
+
+    status = runner.run_daily(
+        run_date=date(2026, 6, 10),
+        account_id="sim-test",
+        universe_symbols=["2330", "9910"]
+    )
+    assert status == "WAITING"

@@ -24,6 +24,26 @@ from src.market_data.aggregator import DailyBarAggregator, MarketBarValidator
 ORCHESTRATOR_STRATEGY_ID = "MULTI"
 
 
+class _StaleFilteredMarketData:
+    """B6：缺當日 bar 的標的（停牌/處置）對「進場」策略隱形——history 回空、latest 回 None，
+    策略端資料不足自然不出訊號；否則會用 stale 收盤價產生訊號，隔日執行整批 WAITING 卡死。
+    只用於 entry 生成；risk_exit 用原始 PIT（持倉缺檔在上游已硬失敗）。"""
+
+    def __init__(self, inner, stale_symbols: set):
+        self._inner = inner
+        self._stale = stale_symbols
+
+    @property
+    def as_of_date(self):
+        return self._inner.as_of_date
+
+    def history(self, symbol: str, limit: int):
+        return [] if symbol in self._stale else self._inner.history(symbol, limit)
+
+    def latest(self, symbol: str):
+        return None if symbol in self._stale else self._inner.latest(symbol)
+
+
 @dataclass
 class EntryStrategySpec:
     definition: StrategyDefinition
@@ -174,14 +194,25 @@ class DailySimulationRunner:
 
         try:
             # Stage 1: Market Sync & Aggregation (valuation universe + indices)
+            # B6：只有「指數＋該帳號持倉標的」缺資料才整日 WAITING；其他 universe 標的
+            # 缺資料（停牌/處置/下市）逐檔跳過——廣度池（top-150）裡任一檔停牌不得卡死整日 run。
             if run_record["market_sync_status"] != "COMPLETED":
                 self._update_run_status(run_date, account_id, status="STARTED")
 
-                sync_specs = [
+                held_symbols = {
+                    sym for (_sid, sym) in self.projection.get_strategy_positions(
+                        account_id, include_long_term=True
+                    )
+                }
+                all_specs = [
                     _normalize_symbol_spec(s)
                     for s in self._get_valuation_universe(universe_symbols)
-                ] + self.index_symbols
-                success = self.sync_market_data(run_date, sync_specs)
+                ]
+                critical_specs = [s for s in all_specs if s["code"] in held_symbols] + self.index_symbols
+                optional_specs = [s for s in all_specs if s["code"] not in held_symbols]
+                success = self.sync_market_data(run_date, critical_specs)
+                if success:
+                    self.sync_market_data(run_date, optional_specs, skip_missing_symbols=True)
                 if not success:
                     self._upsert_run(
                         run_date=run_date,
@@ -243,15 +274,35 @@ class DailySimulationRunner:
 
             # Stage 3: Signal Generation at run_date close
             if run_record["signal_generation_status"] != "COMPLETED":
-                # Dataset completeness covers stocks AND index filters (§2.3)
-                for symbol in universe_symbols:
-                    if not self.market_repo.find(symbol, run_date):
-                        raise ValueError(f"DATASET_INCOMPLETE: Missing market bar for {symbol} on {run_date}")
+                # 資料完整性（§2.3 / B6）：指數與「持倉標的」缺當日 bar 才硬失敗
+                # （出場判斷不可用 stale 價）；其他 universe 缺檔＝停牌等既成事實，
+                # 對進場策略隱形（見 _StaleFilteredMarketData），不再讓整日 run FAILED。
                 for spec in self.index_symbols:
                     if not self.market_repo.find(spec["code"], run_date):
                         raise ValueError(f"DATASET_INCOMPLETE: Missing index bar for {spec['code']} on {run_date}")
+                held_symbols = {
+                    sym for (_sid, sym) in self.projection.get_strategy_positions(
+                        account_id, include_long_term=True
+                    )
+                }
+                stale_symbols = {
+                    s for s in universe_symbols if not self.market_repo.find(s, run_date)
+                }
+                held_missing = sorted(stale_symbols & held_symbols)
+                if held_missing:
+                    raise ValueError(
+                        f"DATASET_INCOMPLETE: Missing market bar for held position(s) {held_missing} on {run_date}"
+                    )
+                if stale_symbols:
+                    print(
+                        f"[run_daily] WARNING: {len(stale_symbols)} 檔 universe 缺 {run_date} bar，"
+                        f"本日跳過其進場評估: {sorted(stale_symbols)}"
+                    )
 
                 pit_data = self.market_repo.as_of(run_date)
+                entry_pit_data = (
+                    _StaleFilteredMarketData(pit_data, stale_symbols) if stale_symbols else pit_data
+                )
                 target_execution_date = self.calendar.next_trading_day(run_date)
 
                 # 3a. risk_exit first (deterministic pipeline order, §2.9)
@@ -287,7 +338,7 @@ class DailySimulationRunner:
                         approval_id=manifest.approval_id if manifest else f"no-approval-{sid}",
                         params_hash=spec.definition.params_hash
                     )
-                    new_bundle = spec.strategy.generate(sig_ctx, pit_data, portfolio_snapshot)
+                    new_bundle = spec.strategy.generate(sig_ctx, entry_pit_data, portfolio_snapshot)
                     self._save_bundle(new_bundle, target_execution_date)
 
                 # 3c. Persist the next-execution plan (revives order_intents): dry-run the

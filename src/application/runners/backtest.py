@@ -203,6 +203,9 @@ class BacktestRunner:
             raise ValueError(f"No trading days found between {start_date} and {end_date}")
 
         equity_curve = []
+        # 未成交揭露（P0-T7 延伸）：UNFILLED_NO_BAR（執行日停牌/缺檔）、漲跌停鎖死、零量等
+        # 逐筆記錄——靜默消失的訂單是回測不可察覺的失真。
+        unfilled_log: list[dict] = []
         # 缺檔當日跳過該檔、不中止整窗（P0-T6）：累計每檔缺檔天數，結束後輸出剔除清單+比例，
         # 而非讓單一標的缺資料縮短整個回測窗（重現舊版 DATASET_INCOMPLETE 行為）。
         missing_days: dict[str, int] = {s: 0 for s in universe_symbols}
@@ -245,7 +248,15 @@ class BacktestRunner:
                     pipeline_order=[strategy_id],
                     slippage_bps=self.slippage_bps
                 )
-                engine.execute_bundles(context, bundles)
+                exec_result = engine.execute_bundles(context, bundles)
+                for uo in exec_result.get("unfilled_orders") or []:
+                    unfilled_log.append({
+                        "date": D.isoformat(),
+                        "symbol": uo["symbol"],
+                        "side": uo.get("side"),
+                        "quantity": uo.get("quantity"),
+                        "reason": uo["reason"],
+                    })
 
             # B. Persist trailing-stop watermarks at D close (before exit evaluation)
             self._update_watermarks(account_id, D)
@@ -368,6 +379,10 @@ class BacktestRunner:
         )
         persist_fingerprint(self.db_conn, fingerprint)
 
+        by_reason: dict[str, int] = {}
+        for uo in unfilled_log:
+            by_reason[uo["reason"]] = by_reason.get(uo["reason"], 0) + 1
+
         result = {
             "run_id": run_id,
             "account_id": account_id,
@@ -375,6 +390,11 @@ class BacktestRunner:
             "statistics": stats,
             "data_availability": data_availability,
             "excluded_symbols": excluded_symbols,
+            "unfilled_summary": {
+                "total": len(unfilled_log),
+                "by_reason": by_reason,
+                "orders": unfilled_log,
+            },
             "fingerprint": fingerprint,
             "benchmarks": benchmarks,
             "return_layers": return_layers,
@@ -404,19 +424,25 @@ class BacktestRunner:
             )
 
     def _save_bundle(self, bundle: DailySignalBundle, target_execution_date: date) -> None:
+        # 回測 bundle 隔離兩件事（在 live app.db 上跑回測時的汙染防線）：
+        # 1. bundle_id 加 run 前綴——策略產生的 id（bundle-YYYYMMDD-strategy）與每日 run 相同，
+        #    不加前綴會佔住該 id，live 的冪等 _save_bundle 會 skip 自己的訊號（訊號憑空消失）。
+        # 2. account_id 填回測帳號（私有化）——否則 NULL=全域，target 未來日的 bundle 會被
+        #    run-daily 的 `account_id IS NULL OR account_id = ?` 撿走執行。
+        db_bundle_id = f"{bundle.run_id}:{bundle.bundle_id}"
         cursor = self.db_conn.cursor()
-        cursor.execute("SELECT 1 FROM signal_bundles WHERE bundle_id = ?", (bundle.bundle_id,))
+        cursor.execute("SELECT 1 FROM signal_bundles WHERE bundle_id = ?", (db_bundle_id,))
         if cursor.fetchone():
             return
         cursor.execute(
             """
             INSERT INTO signal_bundles (
                 bundle_id, run_id, approval_id, strategy_id, strategy_version,
-                params_hash, signal_date, target_execution_date, market_data_cutoff, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                params_hash, signal_date, target_execution_date, market_data_cutoff, created_at, account_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
             """,
             (
-                bundle.bundle_id,
+                db_bundle_id,
                 bundle.run_id,
                 bundle.approval_id,
                 bundle.strategy.strategy_id,
@@ -424,7 +450,8 @@ class BacktestRunner:
                 bundle.strategy.params_hash,
                 bundle.signal_date.isoformat(),
                 target_execution_date.isoformat(),
-                bundle.market_data_cutoff.isoformat()
+                bundle.market_data_cutoff.isoformat(),
+                f"backtest:{bundle.run_id}"
             )
         )
         for sig in bundle.signals:
@@ -436,7 +463,7 @@ class BacktestRunner:
                 """,
                 (
                     f"item-{uuid.uuid4().hex[:8]}",
-                    bundle.bundle_id,
+                    db_bundle_id,
                     sig.signal_id,
                     sig.symbol,
                     sig.action,
@@ -507,9 +534,13 @@ class BacktestRunner:
     def _calculate_statistics(self, account_id: str, initial_cash: int, equity_curve: list[dict]) -> dict:
         cursor = self.db_conn.cursor()
 
+        # 勝率/獲利因子/期望值一律吃淨損益（A3）：毛損益不含費稅，會系統性高估、
+        # 讓淨值為負的策略過 gate。舊資料（net 為 NULL）回退毛值；gross_* 保留對照。
         cursor.execute(
             """
-            SELECT fm.realized_pnl, fm.strategy_id, fm.buy_price, fm.sell_price, fm.matched_at,
+            SELECT fm.realized_pnl,
+                   COALESCE(fm.net_realized_pnl, fm.realized_pnl) AS net_pnl,
+                   fm.quantity, fm.strategy_id, fm.buy_price, fm.sell_price, fm.matched_at,
                    bf.filled_at AS buy_filled_at
             FROM fifo_matches fm
             JOIN fills bf ON bf.fill_id = fm.buy_fill_id
@@ -518,17 +549,24 @@ class BacktestRunner:
             (account_id,)
         )
         match_rows = cursor.fetchall()
-        matches = [r["realized_pnl"] for r in match_rows]
+        matches = [r["net_pnl"] for r in match_rows]
+        gross_matches = [r["realized_pnl"] for r in match_rows]
 
         trade_count = len(matches)
         win_count = sum(1 for p in matches if p > 0)
         loss_count = sum(1 for p in matches if p < 0)
         win_rate = win_count / trade_count if trade_count > 0 else 0.0
+        gross_win_rate = (
+            sum(1 for p in gross_matches if p > 0) / trade_count if trade_count > 0 else 0.0
+        )
 
         total_profit = sum(p for p in matches if p > 0)
         total_loss = abs(sum(p for p in matches if p < 0))
 
         profit_factor = total_profit / total_loss if total_loss > 0 else (float('inf') if total_profit > 0 else 0.0)
+        gross_profit = sum(p for p in gross_matches if p > 0)
+        gross_loss = abs(sum(p for p in gross_matches if p < 0))
+        gross_profit_factor = gross_profit / gross_loss if gross_loss > 0 else (float('inf') if gross_profit > 0 else 0.0)
 
         avg_profit = total_profit / win_count if win_count > 0 else 0.0
         avg_loss = total_loss / loss_count if loss_count > 0 else 0.0
@@ -536,16 +574,18 @@ class BacktestRunner:
         # 不看勝率。
         payoff_ratio = avg_profit / avg_loss if avg_loss > 0 else (float('inf') if avg_profit > 0 else 0.0)
 
-        # Expectancy(R)：每筆損益 ÷ 該筆進場時的初始風險（買價 × 策略 fixed_stop_loss_bps）。
+        # Expectancy(R)：每筆「淨」損益 ÷ 該筆進場時的初始風險（買價 × 策略 fixed_stop_loss_bps）。
         # 沒有 exit 區塊（如 MANUAL 或無 fixed_stop_loss_bps）的交易無可比的 R 基準，排除而非假設。
         r_multiples = []
         for row in match_rows:
             definition = self.exit_definitions.get(row["strategy_id"]) if hasattr(self, "exit_definitions") else None
             exit_params = definition.exit_params if definition else None
-            if exit_params is None or exit_params.fixed_stop_loss_bps <= 0 or row["buy_price"] <= 0:
+            if exit_params is None or exit_params.fixed_stop_loss_bps <= 0 or row["buy_price"] <= 0 or row["quantity"] <= 0:
                 continue
             risk_per_share = row["buy_price"] * exit_params.fixed_stop_loss_bps / 10000.0
-            r_multiples.append((row["sell_price"] - row["buy_price"]) / risk_per_share)
+            # net_pnl 為整數元；換算回每股 ×10000 尺度與 risk_per_share 同單位
+            net_per_share = row["net_pnl"] * 10000.0 / row["quantity"]
+            r_multiples.append(net_per_share / risk_per_share)
         expectancy_r = statistics.fmean(r_multiples) if r_multiples else None
         expectancy_r_sample_size = len(r_multiples)
 
@@ -631,7 +671,9 @@ class BacktestRunner:
             "beta_vs_benchmark": beta_vs_benchmark,
             "alpha_vs_benchmark": alpha_vs_benchmark,
             "win_rate": win_rate,
+            "gross_win_rate": gross_win_rate,
             "profit_factor": profit_factor,
+            "gross_profit_factor": gross_profit_factor,
             "payoff_ratio": payoff_ratio,
             "avg_profit": avg_profit,
             "avg_loss": avg_loss,
@@ -732,14 +774,15 @@ class BacktestRunner:
         cursor = self.db_conn.cursor()
         cursor.execute(
             """
-            SELECT fm.realized_pnl, fm.matched_at, bf.filled_at AS buy_filled_at
+            SELECT COALESCE(fm.net_realized_pnl, fm.realized_pnl) AS realized_pnl,
+                   fm.matched_at, bf.filled_at AS buy_filled_at
             FROM fifo_matches fm JOIN fills bf ON bf.fill_id = fm.buy_fill_id
             WHERE fm.account_id = ?
             """,
             (account_id,)
         )
         rows = cursor.fetchall()
-        trade_pnls = [r["realized_pnl"] for r in rows]
+        trade_pnls = [r["realized_pnl"] for r in rows]  # 淨損益（A3）：gate 相關統計不吃毛值
         entry_dates = [r["buy_filled_at"][:10] for r in rows]
 
         rng = random.Random(BOOTSTRAP_RANDOM_SEED)
@@ -820,7 +863,11 @@ class BacktestRunner:
             return []
 
         cursor = self.db_conn.cursor()
-        cursor.execute("SELECT realized_pnl, matched_at FROM fifo_matches WHERE account_id = ?", (account_id,))
+        cursor.execute(
+            "SELECT COALESCE(net_realized_pnl, realized_pnl) AS realized_pnl, matched_at "
+            "FROM fifo_matches WHERE account_id = ?",
+            (account_id,)
+        )
         matches_by_year: dict[int, list[int]] = {}
         for row in cursor.fetchall():
             year = int(row["matched_at"][:4])

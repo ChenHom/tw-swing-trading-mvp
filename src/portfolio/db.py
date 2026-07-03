@@ -134,6 +134,8 @@ def init_db(db_path: str) -> None:
     """)
     
     # 6. fifo_matches
+    # realized_pnl=毛損益（純價差）；net_realized_pnl=扣買賣兩腳費稅分攤後的淨損益
+    # （NULL=舊資料，無法精確回算不假裝）。統計/gate 應吃 net（A3）。
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS fifo_matches (
         match_id TEXT PRIMARY KEY,
@@ -147,7 +149,8 @@ def init_db(db_path: str) -> None:
         matched_at TEXT NOT NULL,
         realized_pnl INTEGER NOT NULL,
         created_at TEXT NOT NULL,
-        strategy_id TEXT NOT NULL DEFAULT ''
+        strategy_id TEXT NOT NULL DEFAULT '',
+        net_realized_pnl INTEGER
     );
     """)
 
@@ -304,6 +307,25 @@ def init_db(db_path: str) -> None:
     if "strategy_id" not in fill_columns:
         cursor.execute("ALTER TABLE fills ADD COLUMN strategy_id TEXT NOT NULL DEFAULT '';")
 
+    # Migration: fills.execution_key 唯一化（冪等不變式，取代「靠 ALREADY_HOLDING 巧合擋重複」）。
+    # 既存重複（歷史整張+零股拆單共用同 key）先以 #dupN 後綴消歧義並印出——不刪資料；
+    # 新寫入的零股腳由 engine 直接帶 -odd 後綴，不會再產生重複。
+    dup_keys = cursor.execute(
+        "SELECT execution_key FROM fills GROUP BY execution_key HAVING COUNT(*) > 1"
+    ).fetchall()
+    for row in dup_keys:
+        key = row["execution_key"]
+        rowids = [r["rowid"] for r in cursor.execute(
+            "SELECT rowid FROM fills WHERE execution_key = ? ORDER BY rowid", (key,)
+        ).fetchall()]
+        for n, rid in enumerate(rowids[1:], start=1):
+            new_key = f"{key}#dup{n}"
+            cursor.execute("UPDATE fills SET execution_key = ? WHERE rowid = ?", (new_key, rid))
+            print(f"[init_db] fills execution_key 消歧義: rowid={rid} {key} -> {new_key}")
+    cursor.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_execution_key ON fills (execution_key);
+    """)
+
     # Migration: Add is_long_term column to position_lots if it doesn't exist
     cursor.execute("PRAGMA table_info(position_lots);")
     lot_columns = [row["name"] for row in cursor.fetchall()]
@@ -317,6 +339,8 @@ def init_db(db_path: str) -> None:
     match_columns = [row["name"] for row in cursor.fetchall()]
     if "strategy_id" not in match_columns:
         cursor.execute("ALTER TABLE fifo_matches ADD COLUMN strategy_id TEXT NOT NULL DEFAULT '';")
+    if "net_realized_pnl" not in match_columns:
+        cursor.execute("ALTER TABLE fifo_matches ADD COLUMN net_realized_pnl INTEGER;")
 
     cursor.execute("PRAGMA table_info(realized_pnl);")
     pnl_columns = [row["name"] for row in cursor.fetchall()]
