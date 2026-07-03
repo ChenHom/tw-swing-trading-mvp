@@ -49,6 +49,13 @@ class PipelineConfig(BaseModel):
     # 列名帳號：per-strategy 與 global 的 max_open_positions 視為無上限（放開持倉數）。
     # 讓影子帳號能在廣度池裡持有更多部位以充分觀測；每日新建倉上限與每日買入額度不受影響。
     unlimited_positions_accounts: list[str] = Field(default_factory=list)
+    # Per-account 每日新建倉上限覆寫（account_id -> 值）。放開持倉數上限的帳號若沿用全域值，
+    # 現金會因新倉開太慢而閒置——覆寫掉才能真正把累積的現金部署出去。未列到的帳號沿用全域值。
+    max_new_positions_per_day_overrides: dict[str, int] = Field(default_factory=dict)
+    # Per-account 部位大小隨現金水位動態放大（account_id -> 現金比例 0~1）。每筆新倉預算
+    # = max(策略 manifest 的 order_budget_twd, 目前可用現金 * 比例)。未列到的帳號不啟用
+    # （沿用固定 order_budget_twd，行為與現在完全一致）。
+    dynamic_order_sizing_accounts: dict[str, float] = Field(default_factory=dict)
 
 class GlobalLimitsConfig(BaseModel):
     max_open_positions: int = 8

@@ -937,6 +937,8 @@ def test_execute_pending_skips_rejected_signal(temp_db_path, monkeypatch, capsys
     mock_settings.trading.global_limits.max_open_positions = 8
     mock_settings.trading.global_limits.max_daily_buy_value = 200000
     mock_settings.trading.global_limits.max_new_positions_per_day = 2
+    mock_settings.trading.pipeline.max_new_positions_per_day_overrides = {}
+    mock_settings.trading.pipeline.dynamic_order_sizing_accounts = {}
     monkeypatch.setattr("src.cli.common.get_settings", lambda: mock_settings)
 
     conn = get_db_connection(temp_db_path)

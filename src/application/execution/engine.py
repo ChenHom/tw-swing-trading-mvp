@@ -36,7 +36,8 @@ class TradeExecutionEngine:
         global_limits: Optional[GlobalLimits] = None,
         pipeline_order: Optional[list[str]] = None,
         slippage_bps: int = 10,
-        unlimited_open_positions: bool = False
+        unlimited_open_positions: bool = False,
+        cash_fraction_per_order: Optional[float] = None
     ):
         self.db_conn = db_conn
         self.market_repo = market_repo
@@ -51,6 +52,9 @@ class TradeExecutionEngine:
         # 放開持倉數上限（per-account 治理）：僅膨脹 max_open_positions，其餘限額不動。
         # 在 allocator 邊界處理，不改 manifest 物件（否則會破 integrity digest）。
         self.unlimited_open_positions = unlimited_open_positions
+        # 部位大小隨現金水位動態放大（per-account 治理，獨立於上面的持倉數開關）：None＝不啟用，
+        # 行為與現在完全一致；設定後每筆新倉預算 = max(策略固定預算, 目前可用現金 * 此比例)。
+        self.cash_fraction_per_order = cash_fraction_per_order
 
     def execute_bundle(self, context: ExecutionContext, bundle: DailySignalBundle) -> dict:
         return self.execute_bundles(context, [bundle])
@@ -146,24 +150,39 @@ class TradeExecutionEngine:
             strategy_daily_buy_spent=strategy_spent
         )
 
-        # per-strategy 限額餵給 allocator；放開持倉時只把 max_open_positions 膨脹成哨兵，
+        # 部位大小隨現金水位動態放大（per-account，獨立於下面的持倉數開關）：預算樓地板 =
+        # max(策略固定 order_budget, 目前可用現金 * cash_fraction_per_order)。
+        dynamic_budget = (
+            int(cash_balance * self.cash_fraction_per_order)
+            if self.cash_fraction_per_order is not None else None
+        )
+        strategy_budgets = (
+            {sid: max(self.strategy_budgets.get(sid, 20000), dynamic_budget) for sid in self.manifests}
+            if dynamic_budget is not None else self.strategy_budgets
+        )
+
+        # per-strategy 限額餵給 allocator；放開持倉時把 max_open_positions 膨脹成哨兵、
+        # 動態放大時把 max_order_value 樓地板拉高到 dynamic_budget，兩者各自獨立疊加。
         # 用 model_copy 產生新的 LimitsInfo（原 manifest 不動＝integrity digest 照過），
         # global 用 dataclasses.replace 產生新副本（不改共用的 self.global_limits）。
-        if self.unlimited_open_positions:
-            strategy_limits = {
-                sid: m.limits.model_copy(update={"max_open_positions": UNLIMITED_POSITIONS_SENTINEL})
-                for sid, m in self.manifests.items()
-            }
-            global_limits = replace(self.global_limits, max_open_positions=UNLIMITED_POSITIONS_SENTINEL)
-        else:
-            strategy_limits = {sid: m.limits for sid, m in self.manifests.items()}
-            global_limits = self.global_limits
+        strategy_limits = {}
+        for sid, m in self.manifests.items():
+            update = {}
+            if self.unlimited_open_positions:
+                update["max_open_positions"] = UNLIMITED_POSITIONS_SENTINEL
+            if dynamic_budget is not None and dynamic_budget > m.limits.max_order_value:
+                update["max_order_value"] = dynamic_budget
+            strategy_limits[sid] = m.limits.model_copy(update=update) if update else m.limits
+        global_limits = (
+            replace(self.global_limits, max_open_positions=UNLIMITED_POSITIONS_SENTINEL)
+            if self.unlimited_open_positions else self.global_limits
+        )
 
         planned_orders, alloc_results, alloc_events = MultiStrategyAllocator.plan(
             sell_signals=sell_signals,
             buy_signals_in_order=buy_signals,
             portfolio=portfolio_state,
-            strategy_budgets=self.strategy_budgets,
+            strategy_budgets=strategy_budgets,
             strategy_limits=strategy_limits,
             global_limits=global_limits,
         )

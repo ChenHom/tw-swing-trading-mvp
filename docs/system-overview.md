@@ -94,8 +94,8 @@
   1. **可動用預算 = 五個上限取最小** `min()`(allocator.py:173):
      | 上限 | 來源 | 現值 |
      |---|---|---|
-     | 每筆預算 `order_budget_twd` | 策略 yaml | trend_breakout = **20000 元** |
-     | 授權單筆上限 `max_order_value` | manifest | |
+     | 每筆預算 `order_budget_twd` | 策略 yaml | trend_breakout = **20000 元**(sim 帳號可被下方動態放大覆寫) |
+     | 授權單筆上限 `max_order_value` | manifest | (sim 帳號可被動態放大覆寫墊高) |
      | 策略當日剩餘買額 | `max_daily_buy_value − 已花` | |
      | 帳號當日剩餘買額 | `GlobalLimits.max_daily_buy_value − 已花` | 200000 |
      | 現金(T+1:當日賣出收益不算) | projection | |
@@ -105,7 +105,21 @@
 - **拆單**([_split_lot_orders](../src/trading/allocator.py#L28)):≥1000 股 → 「整張 + 零股」;<1000 → 純零股。
 - **一排 BUY 閘**(任一不過 → BLOCKED 記原因):同日同股有賣單→抑制買、授權存在、策略/帳號日限額、
   no-add(已持有)、策略持倉檔數上限、帳號持倉上限 8 檔、每日新建倉上限 2 檔、現金。
-- ⚠️ 每筆預算才 **20000 元 = 很小的部位**(一檔常常只有幾股到幾十股),刻意的小注。
+- ⚠️ 每筆預算才 **20000 元 = 很小的部位**(一檔常常只有幾股到幾十股),刻意的小注(國泰真實帳號)。
+
+> **per-account 覆寫(2026-07,現金閒置根治)**:`config/trading.yaml` 的 `pipeline` 底下有三組
+> account_id 覆寫,只套用在列名帳號,未列名的帳號(國泰)完全不受影響:
+> | 覆寫 | 說明 | 現值(`simulation-main`) |
+> |---|---|---|
+> | `unlimited_positions_accounts` | 持倉數上限視為無上限 | 已列入 |
+> | `max_new_positions_per_day_overrides` | 每日新建倉上限覆寫 | 6(原全域 2) |
+> | `dynamic_order_sizing_accounts` | 每筆新倉預算樓地板 = `max(策略固定預算, 目前可用現金 × 比例)`,同步墊高 `max_order_value` | 0.10 |
+>
+> 起因:sim 帳號現金持續累積(unlimited positions 只解除了「檔數」上限),但每筆預算寫死
+> 20000、每天只開 2 檔新倉,現金長不進部位。三者疊加後 sim 帳號才能真正把現金用起來;
+> 帳號當日剩餘買額(200000/150000)仍是最終防線,不受這三個覆寫影響。
+> 詳見 [`TradeExecutionEngine.plan_bundles`](../src/application/execution/engine.py#L153)、
+> [`build_global_limits`](../src/cli/common.py#L93)。
 
 **2. 成交價** — [FakeBroker](../src/broker/fake_broker.py#L50)
 ```

@@ -74,11 +74,12 @@ def cmd_simulation_run_daily(args):
             manifests=manifests,
             entry_specs=entry_specs,
             exit_definitions=exit_definitions,
-            global_limits=common.build_global_limits(settings),
+            global_limits=common.build_global_limits(settings, account_id),
             index_symbols=list(settings.universe.indices),
             slippage_bps=settings.backtest.slippage_bps,
             expiry_warning_sessions=settings.trading.approval.expiry_warning_sessions,
-            unlimited_open_positions=common.is_unlimited_positions_account(settings, account_id)
+            unlimited_open_positions=common.is_unlimited_positions_account(settings, account_id),
+            cash_fraction_per_order=common.get_dynamic_order_sizing_fraction(settings, account_id)
         )
 
         # Per-strategy manifest preflight check
@@ -210,10 +211,11 @@ def cmd_simulation_execute_pending(args):
         db_conn=conn, market_repo=repo, projection=projection,
         allowed_issuers=settings.issuer_allowlist, revoked_approvals=settings.revoked_approvals,
         manifests=manifests, strategy_budgets=strategy_budgets,
-        global_limits=common.build_global_limits(settings),
+        global_limits=common.build_global_limits(settings, account_id),
         pipeline_order=settings.trading.pipeline.entry_strategies,
         slippage_bps=settings.backtest.slippage_bps,
-        unlimited_open_positions=common.is_unlimited_positions_account(settings, account_id)
+        unlimited_open_positions=common.is_unlimited_positions_account(settings, account_id),
+        cash_fraction_per_order=common.get_dynamic_order_sizing_fraction(settings, account_id)
     )
 
     print(f"Executing {len(bundles)} pending bundle(s) on {run_date}: {[b.bundle_id for b in bundles]}")

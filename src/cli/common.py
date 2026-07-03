@@ -90,13 +90,21 @@ def sign_manifest(manifest_dict: dict) -> dict:
     return dump_dict
 
 
-def build_global_limits(settings: AppSettings) -> GlobalLimits:
+def build_global_limits(settings: AppSettings, account_id: str | None = None) -> GlobalLimits:
     g = settings.trading.global_limits
+    max_new_positions_per_day = settings.trading.pipeline.max_new_positions_per_day_overrides.get(
+        account_id, g.max_new_positions_per_day
+    )
     return GlobalLimits(
         max_open_positions=g.max_open_positions,
         max_daily_buy_value=g.max_daily_buy_value,
-        max_new_positions_per_day=g.max_new_positions_per_day
+        max_new_positions_per_day=max_new_positions_per_day
     )
+
+
+def get_dynamic_order_sizing_fraction(settings: AppSettings, account_id: str | None) -> float | None:
+    """該帳號是否啟用「部位大小隨現金水位動態放大」；回傳現金比例(0~1)，未列到回 None(不啟用)。"""
+    return settings.trading.pipeline.dynamic_order_sizing_accounts.get(account_id)
 
 
 def build_pipeline(settings: AppSettings, universe_symbols: list[str], account_id: str | None = None):

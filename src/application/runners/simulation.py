@@ -83,7 +83,8 @@ class DailySimulationRunner:
         index_symbols: Optional[list] = None,
         slippage_bps: int = 10,
         expiry_warning_sessions: int = 3,
-        unlimited_open_positions: bool = False
+        unlimited_open_positions: bool = False,
+        cash_fraction_per_order: Optional[float] = None
     ):
         self.db_conn = db_conn
         self.calendar = calendar
@@ -100,6 +101,7 @@ class DailySimulationRunner:
         self.slippage_bps = slippage_bps
         self.expiry_warning_sessions = expiry_warning_sessions
         self.unlimited_open_positions = unlimited_open_positions
+        self.cash_fraction_per_order = cash_fraction_per_order
 
     @property
     def pipeline_order(self) -> list[str]:
@@ -399,6 +401,7 @@ class DailySimulationRunner:
             pipeline_order=self.pipeline_order,
             slippage_bps=self.slippage_bps,
             unlimited_open_positions=self.unlimited_open_positions,
+            cash_fraction_per_order=self.cash_fraction_per_order,
         )
 
     def _persist_next_execution_intents(self, account_id: str, run_id: str, target_execution_date: date) -> None:

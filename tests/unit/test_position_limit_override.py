@@ -19,13 +19,13 @@ from src.trading.allocator import GlobalLimits
 from src.cli.common import is_unlimited_positions_account
 
 
-def _manifest(strategy_id, max_pos):
+def _manifest(strategy_id, max_pos, max_order_value=50000):
     d = {
         "schema_version": "1.0", "approval_id": f"app-{strategy_id}", "issuer_id": "manual-research-review",
         "strategy": {"strategy_id": strategy_id, "strategy_version": "1.0.0",
                      "params_canonicalization": "strategy-params-v1", "params_hash": "sha256:h"},
         "permissions": {"execution_modes": ["simulation"], "risk_increasing_actions": ["open_long"]},
-        "limits": {"currency": "TWD", "max_order_value": 50000,
+        "limits": {"currency": "TWD", "max_order_value": max_order_value,
                    "max_daily_buy_value": 5_000_000, "max_open_positions": max_pos},
         "validity": {"valid_from": "2026-01-01T00:00:00+08:00", "expires_at": "2099-12-31T23:59:59+08:00"},
         "integrity": {"algorithm": "sha256", "canonicalization": "manifest-v1", "digest": ""},
@@ -70,7 +70,7 @@ _CONTEXT = ExecutionContext(run_id="run-1", run_type="DAILY_SIMULATION",
                             account_id="acc-1")
 
 
-def _engine(conn, projection, repo, manifests, unlimited):
+def _engine(conn, projection, repo, manifests, unlimited, cash_fraction_per_order=None):
     # max_new_positions_per_day 設高以隔離「持倉數」閘（本測試專測 max_open_positions）
     return TradeExecutionEngine(
         db_conn=conn, market_repo=repo, projection=projection,
@@ -78,7 +78,8 @@ def _engine(conn, projection, repo, manifests, unlimited):
         manifests=manifests, strategy_budgets={"trend_breakout": 20000},
         global_limits=GlobalLimits(max_open_positions=8, max_daily_buy_value=5_000_000,
                                    max_new_positions_per_day=100),
-        pipeline_order=["trend_breakout"], unlimited_open_positions=unlimited)
+        pipeline_order=["trend_breakout"], unlimited_open_positions=unlimited,
+        cash_fraction_per_order=cash_fraction_per_order)
 
 
 def _planned_count(signal_results):
@@ -115,3 +116,30 @@ def test_is_unlimited_positions_account_helper():
         pipeline=SimpleNamespace(unlimited_positions_accounts=["simulation-main"])))
     assert is_unlimited_positions_account(settings, "simulation-main") is True
     assert is_unlimited_positions_account(settings, "國泰") is False
+
+
+def test_cash_fraction_per_order_scales_budget_above_static_and_manifest_ceiling(tmp_path):
+    """cash_fraction_per_order 設定後，新倉預算樓地板 = 現金 * 比例（高於策略固定預算與
+    manifest max_order_value 時，兩者都被墊高），且 manifest 原物件不被就地修改。"""
+    conn, projection, repo = _setup(tmp_path)  # 帳戶現金 5,000,000（見 _setup）
+    manifests = {"trend_breakout": _manifest("trend_breakout", max_pos=8, max_order_value=20000)}
+    # 1% * 5,000,000 = 50,000，高於策略固定預算 20,000 與 manifest max_order_value 20,000
+    engine = _engine(conn, projection, repo, manifests, unlimited=False, cash_fraction_per_order=0.01)
+    _, planned_orders, results, _ = engine.plan_bundles(_CONTEXT, [_bundle("trend_breakout", 1)])
+
+    assert _planned_count(results) == 1
+    assert planned_orders[0]["quantity"] == 5000  # 50,000 預算 / 參考價 10.0
+    assert manifests["trend_breakout"].limits.max_order_value == 20000  # 原 manifest 未被就地改動
+    conn.close()
+
+
+def test_cash_fraction_per_order_none_keeps_static_budget(tmp_path):
+    """不設定 cash_fraction_per_order（預設 None）時，行為與現在完全一致——回歸測試。"""
+    conn, projection, repo = _setup(tmp_path)
+    manifests = {"trend_breakout": _manifest("trend_breakout", max_pos=8, max_order_value=20000)}
+    engine = _engine(conn, projection, repo, manifests, unlimited=False)
+    _, planned_orders, results, _ = engine.plan_bundles(_CONTEXT, [_bundle("trend_breakout", 1)])
+
+    assert _planned_count(results) == 1
+    assert planned_orders[0]["quantity"] == 2000  # 固定預算 20,000 / 參考價 10.0，未被放大
+    conn.close()

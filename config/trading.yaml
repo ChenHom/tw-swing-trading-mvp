@@ -28,10 +28,16 @@ pipeline:
   universe_overrides:
     simulation-main: "liquidity-top150-v1"
   # 列名帳號的 per-strategy + global 持倉數上限(max_open_positions)視為無上限;
-  # 每日新建倉上限(2)與每日買入額度(per-strategy 150k / global 200k)不受影響。
+  # 每日買入額度(per-strategy 150k / global 200k)不受影響、仍是最終防線。
   # 影子帳號接廣度池後放開持倉數,才能真正持有更多部位觀測。
   unlimited_positions_accounts:
     - simulation-main
+  # 現金閒置根治(2026-07)：sim 帳號現金持續累積但每筆倉位固定 20000、每天只開 2 個新倉，
+  # 現金長不進部位。以下兩個 per-account 覆寫只套用在列名帳號，國泰不受影響。
+  max_new_positions_per_day_overrides:
+    simulation-main: 6
+  dynamic_order_sizing_accounts:
+    simulation-main: 0.10
 
 # 全局帳戶風控（per-strategy 限額由各策略 manifest 定義）
 global_limits:
