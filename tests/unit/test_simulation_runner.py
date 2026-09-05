@@ -621,3 +621,55 @@ def test_run_daily_waits_when_held_symbol_missing(temp_db):
         universe_symbols=["2330", "9910"]
     )
     assert status == "WAITING"
+
+
+def test_run_daily_writes_equity_snapshot(temp_db):
+    """Stage 2.5 之後寫入 equity_snapshots：cash 須與權威的 cash_balances 一致，
+    positions_value 須是持倉市值精確算出的數字（非只斷言「有一列」）。"""
+    calendar = ExchangeCalendarsTradingCalendar()
+    repo = SqliteMarketBarRepository(temp_db)
+    projection = PortfolioProjection(temp_db)
+
+    # 其餘 stage 預先標 COMPLETED，只讓 Stage 2.5/2.6 與收尾跑到。
+    temp_db.execute(
+        """
+        INSERT INTO daily_runs (
+            run_id, run_date, account_id, strategy_id, status, market_sync_status,
+            execution_status, signal_generation_status, report_status, started_at, completed_at
+        ) VALUES ('sim-20260610', '2026-06-10', 'sim-test', 'MULTI', 'STARTED',
+                  'COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'now', 'now')
+        """
+    )
+    PortfolioLedger(temp_db).deposit("sim-test", "r1", 500000, "TWD", date(2026, 6, 1))
+    projection.rebuild_from_ledger("sim-test")
+    projection.apply_fill_transaction({
+        "fill_id": "f1", "account_id": "sim-test", "run_id": "r1",
+        "order_id": "o1", "execution_key": "k1", "symbol": "2330",
+        "side": "BUY", "quantity": 1000, "price": 1000000,
+        "filled_at": "2026-06-10T09:00:00+08:00", "strategy_id": "s1",
+    })
+    repo.upsert(MarketBar(
+        symbol="2330", exchange="TWSE", instrument_type="STOCK",
+        trade_date=date(2026, 6, 10), open=1100000, high=1100000, low=1100000, close=1100000,
+        volume=1000, amount=1100000, source="TEST",
+        source_fetched_at="2026-06-10T00:00:00+08:00", raw_payload_checksum="x",
+    ))
+    temp_db.commit()
+
+    runner = DailySimulationRunner(
+        db_conn=temp_db, calendar=calendar, market_provider=MagicMock(),
+        market_repo=repo, projection=projection,
+        allowed_issuers=[], revoked_approvals=[]
+    )
+
+    status = runner.run_daily(run_date=date(2026, 6, 10), account_id="sim-test", universe_symbols=["2330"])
+
+    assert status == "COMPLETED"
+    row = temp_db.execute(
+        "SELECT cash, positions_value, total_equity FROM equity_snapshots "
+        "WHERE account_id = 'sim-test' AND snapshot_date = '2026-06-10'"
+    ).fetchone()
+    assert row is not None
+    assert row["cash"] == projection.get_cash_balance("sim-test")   # 與權威現金餘額一致
+    assert row["positions_value"] == 110000                          # int(1000 * 1100000 // 10000)
+    assert row["total_equity"] == row["cash"] + 110000

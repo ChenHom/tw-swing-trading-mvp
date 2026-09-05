@@ -18,6 +18,7 @@ from src.application.execution.engine import TradeExecutionEngine
 from src.approval.validator import ManifestValidator
 from src.trading.allocator import GlobalLimits
 from src.market_data.aggregator import DailyBarAggregator, MarketBarValidator
+from src.application.services.equity_snapshots import compute_equity_snapshot, save_equity_snapshot
 
 # daily_runs 採單一 orchestrator run（§2.11）：每日一列，strategy_id 固定為 MULTI。
 # Per-strategy 觀測性由 signal_bundles 承擔（bundle 存在與否即為訊號產生的冪等標記）。
@@ -273,6 +274,10 @@ class DailySimulationRunner:
 
             # Stage 2.5: Persist trailing-stop high watermarks (after fills, before exits)
             self.update_high_watermarks(account_id, run_date)
+
+            # Stage 2.6: Persist today's equity snapshot (cash + position value after fills settle)
+            snap = compute_equity_snapshot(self.db_conn, self.market_repo, account_id, run_date)
+            save_equity_snapshot(self.db_conn, account_id, run_date, snap)
 
             # Stage 3: Signal Generation at run_date close
             if run_record["signal_generation_status"] != "COMPLETED":

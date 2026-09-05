@@ -50,6 +50,7 @@ def test_dashboard_renders(client):
     assert "總報酬率" in body
     assert "持倉資產配置" in body
     assert "無資產配置資料可顯示" in body
+    assert "尚無歷史權益快照" in body
     assert "/static/js/chart.umd.min.js" in body
 
 
@@ -90,6 +91,34 @@ def test_dashboard_allocation_with_position(tmp_path, monkeypatch):
     # 持倉表：代號與中文名併入同格（與今日成交格式一致），代號連 Yahoo 行情
     assert "台積電" in body
     assert "https://tw.stock.yahoo.com/quote/2330" in body
+
+
+def test_dashboard_renders_equity_curve(tmp_path, monkeypatch):
+    """有歷史權益快照 → 渲染折線圖 canvas 與 JSON 資料區塊，欄位對齊 backtest-charts.js。"""
+    from src.application.services.equity_snapshots import save_equity_snapshot
+    from datetime import date
+
+    db = tmp_path / "web_equity.db"
+    init_db(str(db))
+    c = get_db_connection(str(db))
+    c.execute(
+        "INSERT INTO cash_balances (account_id, balance, currency, updated_at) "
+        "VALUES ('simulation-main', 100000, 'TWD', '2026-06-12')"
+    )
+    c.commit()
+    save_equity_snapshot(c, "simulation-main", date(2026, 6, 10), {"cash": 90000, "positions_value": 10000, "total_equity": 100000})
+    save_equity_snapshot(c, "simulation-main", date(2026, 6, 11), {"cash": 85000, "positions_value": 20000, "total_equity": 105000})
+    c.close()
+
+    fake_settings = type("S", (), {"trading": type("T", (), {"database_path": str(db)})()})()
+    monkeypatch.setattr(server, "AppSettings", lambda: fake_settings)
+    r = TestClient(server.app).get("/?view_date=2026-06-12")
+    assert r.status_code == 200
+    body = r.text
+    assert 'id="equityChart"' in body
+    assert 'id="equityCurveData"' in body
+    assert "/static/js/backtest-charts.js" in body
+    assert "105000" in body  # 第二筆 total_equity
 
 
 def test_dashboard_defaults_to_today(client):

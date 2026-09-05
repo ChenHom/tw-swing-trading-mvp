@@ -127,6 +127,16 @@
       {% endif %}
     </div>
   </section>
+
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-label" style="font-weight: 700; color: #1a202c; font-size: 1.05rem; margin-bottom: 0.5rem;">歷史權益曲線</div>
+    {% if d.equity_curve %}
+    <div class="equity-chart"><canvas id="equityChart" role="img" aria-label="歷史權益曲線圖"></canvas></div>
+    <script type="application/json" id="equityCurveData">{{ d.equity_curve|tojson }}</script>
+    {% else %}
+    <p class="empty">尚無歷史權益快照。</p>
+    {% endif %}
+  </div>
 </div>
 
 <!-- 持倉部位 Tab -->
@@ -239,6 +249,7 @@
 {% block scripts %}
 <script src="{{ base }}/static/js/chart.umd.min.js"></script>
 <script src="{{ base }}/static/js/dashboard-charts.js"></script>
+<script src="{{ base }}/static/js/backtest-charts.js"></script>
 <script>
   function switchTab(tabId) {
     // 移除所有按鈕的 active

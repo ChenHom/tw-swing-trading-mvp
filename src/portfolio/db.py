@@ -566,5 +566,17 @@ def init_db(db_path: str) -> None:
     );
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS equity_snapshots (
+        account_id TEXT NOT NULL,
+        snapshot_date TEXT NOT NULL,
+        cash INTEGER NOT NULL,
+        positions_value INTEGER NOT NULL,
+        total_equity INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, snapshot_date)
+    );
+    """)
+
     conn.commit()
     conn.close()

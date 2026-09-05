@@ -15,6 +15,7 @@ from src.portfolio.projection import PortfolioProjection, MANUAL_STRATEGY_ID
 from src.contracts.stock_names import stock_name
 from src.contracts.reason_codes import signal_reason_text, block_reason_text
 from src.contracts.strategy_names import strategy_name, strategy_desc
+from src.application.services.equity_snapshots import read_equity_curve
 
 ORCHESTRATOR_STRATEGY_ID = "MULTI"
 REPORT_DIR = "artifacts/reports/daily"
@@ -313,6 +314,7 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
         "events": _events(conn, account_id, d),
         "reconcile": reconcile,
         "corporate_actions": _corporate_actions(conn, account_id, positions, d),
+        "equity_curve": read_equity_curve(conn, account_id),
         # 向後相容：保留舊鍵供既有測試/消費者（reconcile_ok 布林）。
         "reconcile_ok": reconcile["ok"],
     }
