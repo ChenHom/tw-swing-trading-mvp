@@ -65,11 +65,12 @@
 
 ## 資料服務設計
 
-新增獨立唯讀 service `src/application/services/completed_trades.py`，避免繼續擴大 `dashboard.py` 的私有 SQL。公開三個小型查詢入口：
+新增獨立唯讀 service `src/application/services/completed_trades.py`，避免繼續擴大 `dashboard.py` 的私有 SQL。公開四個小型查詢入口：
 
 - `list_close_dates(conn, account_id) -> list[str]`
 - `read_completed_trades(conn, account_id, close_date) -> list[dict]`
 - `build_trade_day_summary(trades) -> dict`
+- `build_completed_trade_history(conn, account_id, requested_date=None) -> dict`，組合日期、前後導覽、交易列與摘要，供 dashboard 使用。
 
 `read_completed_trades` 以 `(account_id, sell_fill_id)` 聚合 `fifo_matches`，並 join BUY／SELL `fills` 取得成交時間與來源。每個聚合列包含主表欄位及依買進時間排序的 `lots[]`。
 
@@ -79,7 +80,7 @@
 - `weighted_buy_price_x10000 = SUM(quantity * buy_price) / SUM(quantity)`
 - `gross_pnl = SUM(realized_pnl)`
 - 所有 match 的 `net_realized_pnl` 均非 NULL 時，`net_pnl = SUM(net_realized_pnl)`
-- `cost = gross_pnl - net_pnl`
+- `cost_twd = gross_pnl - net_pnl`（正整數，模板顯示為扣除項 `−cost_twd`）
 - `buy_notional_x10000 = SUM(quantity * buy_price)`
 - `return_pct = net_pnl * 10000 / buy_notional_x10000 * 100`
 
