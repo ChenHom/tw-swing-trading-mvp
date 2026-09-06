@@ -184,6 +184,8 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 
 > 測試以 env `TRADING_WEB_ROOT_PATH=""` 匯入 server，避免子路徑前綴干擾斷言。
 
+> 目前此模組以 pytest skip 暫停：本機 sandbox 的 Starlette `TestClient` 在 fixture／第一個 request 階段會 hang。交易歷史功能的模板與路由契約改由 `test_completed_trade_web.py`（不建立 TestClient）覆蓋；runtime 修復後應移除 skip 並恢復本模組。
+
 ---
 
 ## 11. 已知限制 / 待辦
