@@ -95,6 +95,10 @@ logs/
 .playwright-mcp/
 .playwright-cli/
 
+# Local agent worktrees and visual brainstorming mockups
+.worktrees/
+.superpowers/
+
 # 每日影子報告（執行時生成的產物，不入版控）
 artifacts/reports/daily/
 
@@ -103,4 +107,3 @@ artifacts/reports/backtest/
 
 # 本機告警設定（包含敏感 channel_id，絕不入版控）
 config/alert.local.yaml
-
