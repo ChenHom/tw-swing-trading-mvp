@@ -16,6 +16,7 @@ from src.contracts.stock_names import stock_name
 from src.contracts.reason_codes import signal_reason_text, block_reason_text
 from src.contracts.strategy_names import strategy_name, strategy_desc
 from src.application.services.equity_snapshots import read_equity_curve
+from src.application.services.completed_trades import build_completed_trade_history
 
 ORCHESTRATOR_STRATEGY_ID = "MULTI"
 REPORT_DIR = "artifacts/reports/daily"
@@ -294,7 +295,8 @@ def read_report(name: str, base_dir: str = REPORT_DIR) -> Optional[str]:
 
 
 def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
-                    account_id: str, view_date, exit_strategy_ids=None, market_repo=None) -> dict:
+                    account_id: str, view_date, exit_strategy_ids=None, market_repo=None,
+                    trade_date=None) -> dict:
     d = view_date.isoformat() if isinstance(view_date, date) else str(view_date)
     cash = projection.get_cash_balance(account_id)
     positions = _positions(projection, account_id, exit_strategy_ids, market_repo, view_date)
@@ -315,6 +317,9 @@ def build_dashboard(conn: sqlite3.Connection, projection: PortfolioProjection,
         "reconcile": reconcile,
         "corporate_actions": _corporate_actions(conn, account_id, positions, d),
         "equity_curve": read_equity_curve(conn, account_id),
+        "completed_trade_history": build_completed_trade_history(
+            conn, account_id, requested_date=trade_date
+        ),
         # 向後相容：保留舊鍵供既有測試/消費者（reconcile_ok 布林）。
         "reconcile_ok": reconcile["ok"],
     }

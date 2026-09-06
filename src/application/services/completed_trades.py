@@ -16,9 +16,19 @@ def list_close_dates(conn: sqlite3.Connection, account_id: str) -> list[str]:
     """List dates containing completed FIFO matches, newest first."""
     rows = conn.execute(
         """
-        SELECT DISTINCT substr(matched_at, 1, 10) AS close_date
-        FROM fifo_matches
-        WHERE account_id = ?
+        SELECT DISTINCT substr(fm.matched_at, 1, 10) AS close_date
+        FROM fifo_matches fm
+        JOIN fills bf ON bf.fill_id = fm.buy_fill_id
+                     AND bf.account_id = fm.account_id
+                     AND bf.symbol = fm.symbol
+                     AND bf.strategy_id = fm.strategy_id
+                     AND bf.side = 'BUY'
+        JOIN fills sf ON sf.fill_id = fm.sell_fill_id
+                     AND sf.account_id = fm.account_id
+                     AND sf.symbol = fm.symbol
+                     AND sf.strategy_id = fm.strategy_id
+                     AND sf.side = 'SELL'
+        WHERE fm.account_id = ?
         ORDER BY close_date DESC
         """,
         (account_id,),

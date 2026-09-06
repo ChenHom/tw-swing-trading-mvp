@@ -60,7 +60,8 @@ def _exit_strategy_ids():
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request,
           account: str | None = Query(default=None),
-          view_date: str | None = Query(default=None)):
+          view_date: str | None = Query(default=None),
+          trade_date: date | None = Query(default=None)):
     conn = _conn()
     try:
         accounts = dash.list_accounts(conn)
@@ -76,7 +77,10 @@ def index(request: Request,
         projection = PortfolioProjection(conn)
         # market repo 由路由注入（比照 _exit_strategy_ids），connection 生命週期仍由路由 own。
         market_repo = SqliteMarketBarRepository(conn)
-        data = dash.build_dashboard(conn, projection, account_id, d, _exit_strategy_ids(), market_repo)
+        data = dash.build_dashboard(
+            conn, projection, account_id, d, _exit_strategy_ids(), market_repo,
+            trade_date=trade_date,
+        )
         cap = dash.build_capital_overview(conn, projection, account_id, d, market_repo)
         return templates.TemplateResponse(
             request, "dashboard.html",

@@ -203,6 +203,7 @@ def test_corrupt_cross_account_fill_references_are_not_displayed(conn):
     _match(conn, "bad-account-match", "a", "2330", "buy-b", "sell-b", 10, 1000000, 1100000, 100, 80)
 
     assert read_completed_trades(conn, "a", date(2026, 6, 10)) == []
+    assert list_close_dates(conn, "a") == []
 
 
 def test_fifo_row_not_joined_to_buy_and_sell_sides_is_not_displayed(conn):
@@ -211,6 +212,7 @@ def test_fifo_row_not_joined_to_buy_and_sell_sides_is_not_displayed(conn):
     _match(conn, "bad-side-match", "a", "2330", "wrong-buy", "wrong-sell", 10, 1000000, 1100000, 100, 80)
 
     assert read_completed_trades(conn, "a", date(2026, 6, 10)) == []
+    assert list_close_dates(conn, "a") == []
 
 
 def test_two_sells_same_symbol_strategy_and_date_remain_two_rows(conn):
