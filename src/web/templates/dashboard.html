@@ -137,6 +137,106 @@
     <p class="empty">尚無歷史權益快照。</p>
     {% endif %}
   </div>
+
+  {% set h = d.completed_trade_history %}
+  <div class="card completed-trades-card">
+    <div class="completed-trades-header">
+      <div>
+        <div class="completed-trades-title">歷史交易紀錄</div>
+        <div class="completed-trades-subtitle">每次 SELL 各列一筆，以賣出／平倉日歸類</div>
+      </div>
+      <form method="get" action="{{ base }}/" class="completed-trades-controls">
+        <input type="hidden" name="account" value="{{ d.account_id }}">
+        <input type="hidden" name="view_date" value="{{ view_date }}">
+        {% if h.older_date %}
+        <a class="btn completed-trades-date-btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}&trade_date={{ h.older_date }}">‹ 上個平倉日</a>
+        {% else %}
+        <span class="btn completed-trades-date-btn disabled" aria-disabled="true">‹ 上個平倉日</span>
+        {% endif %}
+        <select name="trade_date" onchange="this.form.submit()" {% if not h.dates %}disabled{% endif %} aria-label="選擇平倉日期">
+          {% if h.dates %}
+            {% if h.selected_date not in h.dates %}
+            <option value="{{ h.selected_date }}" selected>{{ h.selected_date }}（無交易）</option>
+            {% endif %}
+            {% for close_date in h.dates %}
+            <option value="{{ close_date }}" {% if close_date == h.selected_date %}selected{% endif %}>{{ close_date }}</option>
+            {% endfor %}
+          {% else %}
+          <option>尚無平倉日</option>
+          {% endif %}
+        </select>
+        {% if h.newer_date %}
+        <a class="btn completed-trades-date-btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}&trade_date={{ h.newer_date }}">下個平倉日 ›</a>
+        {% else %}
+        <span class="btn completed-trades-date-btn disabled" aria-disabled="true">下個平倉日 ›</span>
+        {% endif %}
+      </form>
+    </div>
+
+    {% if h.trades %}
+    <div class="completed-trades-summary">
+      <div><span>完成交易</span><strong>{{ h.summary.count }} 筆</strong></div>
+      <div><span>毛損益</span><strong class="{{ 'pos' if h.summary.gross_pnl >= 0 else 'neg' }}">{{ "{:+,}".format(h.summary.gross_pnl) }}</strong></div>
+      <div><span>交易成本</span>{% if h.summary.cost_twd is none %}<strong>—</strong>{% else %}<strong class="neg">{{ "-{:,}".format(h.summary.cost_twd) }}</strong>{% endif %}</div>
+      <div class="completed-trades-net"><span>淨損益</span>{% if h.summary.net_pnl is none %}<strong>—</strong>{% else %}<strong class="{{ 'pos' if h.summary.net_pnl >= 0 else 'neg' }}">{{ "{:+,}".format(h.summary.net_pnl) }} TWD</strong>{% endif %}</div>
+    </div>
+    {% if h.summary.has_unknown_net %}
+    <p class="completed-trades-warning">部分交易淨損益不可計算：舊資料無法回算完整費稅。</p>
+    {% endif %}
+
+    <div class="completed-trades-scroll">
+      <div class="completed-trades-table">
+        <div class="completed-trades-grid completed-trades-labels">
+          <span>時間</span><span>標的</span><span>策略</span><span>股數</span><span>買入均價</span><span>賣出價</span><span>持有</span><span>淨損益</span><span>報酬率</span><span></span>
+        </div>
+        {% for trade in h.trades %}
+        <details name="completed-trade-row" class="completed-trades-disclosure">
+          <summary class="completed-trades-grid completed-trades-row">
+            <span>{{ trade.sell_filled_at[11:16] }}</span>
+            <span>{{ symcell(trade.symbol, trade.name) }}</span>
+            <span>{{ trade.strategy_name }}</span>
+            <span class="num">{{ "{:,}".format(trade.quantity) }}</span>
+            <span class="num">{{ "{:,.2f}".format(trade.weighted_buy_price) }}</span>
+            <span class="num">{{ "{:,.2f}".format(trade.sell_price) }}</span>
+            <span class="num">{{ trade.holding_days }} 日</span>
+            {% if trade.net_pnl is none %}
+            <span class="num">—</span>
+            <span class="num">—</span>
+            {% else %}
+            <strong class="num {{ 'pos' if trade.net_pnl >= 0 else 'neg' }}">{{ "{:+,}".format(trade.net_pnl) }}</strong>
+            <span class="num {{ 'pos' if trade.return_pct >= 0 else 'neg' }}">{{ "%+.2f"|format(trade.return_pct) }}%</span>
+            {% endif %}
+            <span class="completed-trades-toggle" aria-hidden="true"></span>
+          </summary>
+          <div class="completed-trades-detail">
+            <div class="completed-trades-detail-title">{{ trade.symbol }} {{ trade.name }}｜FIFO 配對明細</div>
+            <div class="completed-trades-lot completed-trades-lot-labels">
+              <span>買進日</span><span>股數</span><span>買進價</span><span>持有</span><span>成交識別</span>
+            </div>
+            {% for lot in trade.lots %}
+            <div class="completed-trades-lot">
+              <span>{{ lot.buy_date }}</span>
+              <span>{{ "{:,}".format(lot.quantity) }}</span>
+              <span>{{ "{:,.2f}".format(lot.buy_price) }}</span>
+              <span>{{ lot.holding_days }} 日</span>
+              <span class="completed-trades-fill-id">{{ lot.buy_fill_id }} → {{ lot.sell_fill_id }}</span>
+            </div>
+            {% endfor %}
+            {% if trade.net_pnl is none %}
+            <div class="completed-trades-totals">毛損益 <strong class="{{ 'pos' if trade.gross_pnl >= 0 else 'neg' }}">{{ "{:+,}".format(trade.gross_pnl) }}</strong> ｜ 交易成本 — ｜ 淨損益 — <span class="completed-trades-unknown">舊資料無法回算完整費稅</span></div>
+            {% else %}
+            <div class="completed-trades-totals">毛損益 <strong class="{{ 'pos' if trade.gross_pnl >= 0 else 'neg' }}">{{ "{:+,}".format(trade.gross_pnl) }}</strong> ｜ 費用與稅 <strong class="neg">{{ "-{:,}".format(trade.cost_twd) }}</strong> ｜ 淨損益 <strong class="{{ 'pos' if trade.net_pnl >= 0 else 'neg' }}">{{ "{:+,}".format(trade.net_pnl) }}</strong></div>
+            {% endif %}
+          </div>
+        </details>
+        {% endfor %}
+      </div>
+    </div>
+    <p class="completed-trades-hint">點整列或右側＋展開 FIFO 明細；同時間只展開一筆。</p>
+    {% else %}
+    <p class="empty completed-trades-empty">{% if h.dates %}所選日期無已完成交易。{% else %}尚無已完成交易。{% endif %}</p>
+    {% endif %}
+  </div>
 </div>
 
 <!-- 持倉部位 Tab -->

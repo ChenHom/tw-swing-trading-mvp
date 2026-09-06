@@ -357,12 +357,18 @@ tail -n 50 logs/daily_sim.log
 
 ## 7. 測試與驗證
 
-本專案使用 `pytest` 進行完整的單元與整合測試，涵蓋 Shioaji 行情、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、長期持有與 FIFO 隔離、資金配置、排程安全、訊號拒絕閘門、per-account no-add／exit bundle 隔離，以及研究回測層（雙價/CA 帳本、FinMind/TWSE provider、風險/穩健指標、裁決狀態機、Research Ledger、lockbox、參數高原、PIT 流動性 universe）等共計 **329 個測試案例**。
+本專案使用 `pytest` 進行完整的單元與整合測試，涵蓋 Shioaji 行情、參數 Canonicalization、授權驗證、自動拆單、動態帳戶解析、長期持有與 FIFO 隔離、資金配置、排程安全、訊號拒絕閘門、per-account no-add／exit bundle 隔離，以及研究回測層（雙價/CA 帳本、FinMind/TWSE provider、風險/穩健指標、裁決狀態機、Research Ledger、lockbox、參數高原、PIT 流動性 universe）等測試案例。
 
 執行所有測試：
 ```bash
 python3 -m pytest
 ```
+
+目前完整測試結果為 **374 passed, 26 skipped**。26 個 skip 都是明確標註的環境限制，不代表功能測試失敗：
+
+- `tests/unit/test_web_server.py`：目前 sandbox 的 FastAPI/Starlette `TestClient` 在初始化或第一個 request 會 hang；待測試 runtime 修復後移除模組 skip。
+- `record_fill` 相關 CLI 測試：會初始化 Shioaji 原生行情 SDK，現有 sandbox 會 segmentation fault；待行情依賴可注入或 mock 後恢復。
+- `tests/integration/test_m3_backtest.py::test_milestone_3_long_backtest`：測試仍嘗試寫入唯讀的 `/home/hom/.gemini/` artifact 路徑；改用 `tmp_path` 或可寫 artifact 目錄後恢復。
 
 ---
 
