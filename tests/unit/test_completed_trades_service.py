@@ -246,3 +246,43 @@ def test_holding_days_use_earliest_matched_buy_calendar_date(conn):
 
     assert trade["holding_days"] == 3
     assert [lot["holding_days"] for lot in trade["lots"]] == [3, 0]
+
+
+def test_same_symbol_and_close_date_stays_separate_by_strategy(conn):
+    _single_lot_trade(conn, "breakout", strategy="trend_breakout")
+    _single_lot_trade(conn, "rider", strategy="trend_rider")
+
+    trades = read_completed_trades(conn, "a", date(2026, 6, 10))
+
+    assert [(trade["sell_fill_id"], trade["strategy_id"]) for trade in trades] == [
+        ("sell-breakout", "trend_breakout"),
+        ("sell-rider", "trend_rider"),
+    ]
+
+
+def test_close_date_includes_start_and_end_of_day_without_next_day(conn):
+    _single_lot_trade(conn, "start", sell_date="2026-06-10", symbol="2317")
+    _single_lot_trade(conn, "end", sell_date="2026-06-10", symbol="2330")
+    _single_lot_trade(conn, "next", sell_date="2026-06-11", symbol="2454")
+    conn.execute(
+        "UPDATE fifo_matches SET matched_at = ? WHERE match_id = ?",
+        ("2026-06-10T00:00:00+08:00", "match-start"),
+    )
+    conn.execute(
+        "UPDATE fifo_matches SET matched_at = ? WHERE match_id = ?",
+        ("2026-06-10T23:59:59+08:00", "match-end"),
+    )
+    conn.commit()
+
+    trades = read_completed_trades(conn, "a", date(2026, 6, 10))
+
+    assert {trade["sell_fill_id"] for trade in trades} == {"sell-start", "sell-end"}
+
+
+def test_completed_trade_queries_do_not_write(conn):
+    _single_lot_trade(conn, "readonly")
+    changes_before = conn.total_changes
+
+    build_completed_trade_history(conn, "a", date(2026, 6, 10))
+
+    assert conn.total_changes == changes_before
