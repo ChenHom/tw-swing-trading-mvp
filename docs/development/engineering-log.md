@@ -9,6 +9,18 @@
 
 ---
 
+## 2026-09-07 ｜ 每日損益混合圖 + 交易紀錄獨立 Tab
+
+**背景／觸發**：既有「歷史權益曲線」只能看總權益／現金／持倉市值的長期水位，使用者還要直接看每個快照區間實際賺或賠多少。使用者比較兩個 mock 後選方案 2：總權益折線＋每日損益紅綠柱，且要求不要新增第二張圖；交易紀錄則移成資金與持倉之間的獨立 Tab。
+
+**資料語意**：`read_equity_curve()` 改回全部可用快照並新增 `daily_pnl`。第一點為 `None`；後續計算 `本日總權益 - 前一快照總權益 - 區間外部資金淨流入`。外部流只含 `INITIAL_DEPOSIT` 與 `CASH_ADJUSTMENT`，因此補入／提領不製造假損益；`DIVIDEND` 保留為投資收益。一次讀取並依日期走訪資金流，無每點 N+1 query，且不改 schema／帳務寫入路徑。
+
+**Web**：共用 `backtest-charts.js` 看到 `daily_pnl` 時畫總權益 line（左軸）＋每日損益 bar（右軸、零線、紅正綠負）；回測資料沒有該鍵時仍畫原三線圖。完成交易卡完整移至第二個 `tab-trades`，平倉日期導覽與一般 Tab 點擊以 URL hash 保持狀態，FIFO 展開與未知費稅語意不變。
+
+**驗證**：TDD focused tests 18 passed；完整 suite 378 passed、26 個既有明確 skip、1 個既有 Starlette deprecation warning；`node --check` 與 `git diff --check` 通過。以 app.db copy 做資料 readback：`simulation-main` 61 點（2026-06-10～09-04）、27 個正損益區間、29 個負損益區間、首點 `None`。本機未安裝 `playwright-cli`，改用既有 headless Chrome 實際渲染：1440px 混合圖與 390px 資金／交易 Tab 均正常，`#tab-trades` 可在載入時還原第二個 Tab；live readback 於合併部署後執行。
+
+**關聯 commits**：`2beec19`（每日損益 read model）、`e64b3c8`（交易紀錄 Tab）、`f0c32b4`（混合圖）、`81fbaa9`（圖表標題／圖例；rebase 後 commit id）。
+
 ## 2026-09-07 ｜ Web 新模板／舊 Python process 混版造成首頁 500
 
 **背景／觸發**：9/6 合併「歷史交易紀錄」後，使用者開啟 `/trading/` 直接看到 `Internal Server Error`。`trading-web.service` 顯示 active，容易誤判成服務正常。
@@ -19,7 +31,7 @@
 
 **驗證**：相關 completed-trade 測試 19 passed；使用者於重啟後確認頁面恢復正常。完整 traceback 與證據見 `memory/2026-09-07-trading-web-internal-server-error.md`。
 
-**關聯 commit**：待本次文件變更提交時補記。
+**關聯 commit**：`63aefbb`。
 
 ## 2026-06-27 ｜ MCP CLI P0：受控 CLI wrapper + record-fill 預設國泰
 

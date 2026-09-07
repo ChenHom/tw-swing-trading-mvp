@@ -113,12 +113,13 @@
 ## 6. 重要行為與資料語意
 
 - **預設日期 = 今天**（2026-06-15 改）。日期欄反映當下；**只影響三塊日期範圍面板**——`run_status`、`fills_today`、`events`（交易日盤前自然為空，屬正確）。cash/positions/pnl/monitored/reconcile 為即時狀態、`next_execution` 已與日期解耦，皆不隨日期變動。模板另傳 `today`，檢視非今天時於頂部 hint 標示「目前檢視 X，今天是 Y」。
-- **`completed_trade_history`（已完成交易）**：位於「資金總覽」既有歷史權益曲線下方，不新增或改動 tab。日期以 SELL／平倉日為準，預設最近有已完成交易的日期；下拉與前後日只在實際有成交的日期間移動，且與頂部 `view_date` 獨立。每個 SELL fill 各列一筆；同一 SELL 吃到多個 BUY FIFO lot 時，主列顯示加權買進價與合計損益，點擊後展開逐批明細。任一舊 `fifo_matches.net_realized_pnl` 為 NULL 時，該列淨損益、成本及彙總均顯示「—」，不可拿毛利替代。表格為原生 `<details name="completed-trade-row">` 單列展開，鍵盤可操作；手機只讓表格容器橫向捲動。
+- **`completed_trade_history`（已完成交易）**：位於獨立「交易紀錄」Tab（順序為資金總覽之後、持倉部位之前）。日期以 SELL／平倉日為準，預設最近有已完成交易的日期；下拉與前後日只在實際有成交的日期間移動，且與頂部 `view_date` 獨立。每個 SELL fill 各列一筆；同一 SELL 吃到多個 BUY FIFO lot 時，主列顯示加權買進價與合計損益，點擊後展開逐批明細。任一舊 `fifo_matches.net_realized_pnl` 為 NULL 時，該列淨損益、成本及彙總均顯示「—」，不可拿毛利替代。表格為原生 `<details name="completed-trade-row">` 單列展開，鍵盤可操作；手機只讓表格容器橫向捲動。日期導覽 URL 保留 `#tab-trades`，頁面重載後仍回到交易紀錄 Tab；一般 Tab 點擊也以 hash 保存目前位置。
 - **`next_execution`（下次執行）**：**與 `view_date` 解耦**，查 `signal_date == (SELECT MAX(signal_date) FROM signal_bundles)`，即**最近一批產生的訊號**（其 target 為下一交易日的執行計畫）。故交易日盤前也看得到「下次開盤要執行什麼」，不因日期欄停在他日而變空。最新批次若無 item（如 06-12 收盤未產生訊號）則顯示「無」，屬真實狀態。（取代舊 `next_signals`／標題「明日將執行訊號」。）
 - **`events` 中文化**：`_events` 每列附 `event_label`，由 `EVENT_TYPE_LABELS` 將 `execution_events.event_type`（授權閘門代碼，來源 `engine._validate_buy_gate`）譯為中文，未收錄者退回原碼；模板以「中文（原碼小字 tag）」呈現，`detail`（含 bundle id／sha256）留為技術明細。
 - **`monitored_count` / 持倉「監控」欄**：監控對象 = **非長期、且 strategy_id 屬具 exit 區塊的策略**（即 `load_exit_managed_definitions` 範圍，與 `RiskExitEngine`／CLI 一致）；MANUAL 與無 exit 區塊的策略皆排除，顯示 `—`。server 會把該集合（`_exit_strategy_ids()`）注入 `build_dashboard`，`dashboard._positions` 據以判定（非僅排除 MANUAL/長期）。go-live 前既有持倉多為 MANUAL → 監控常為 0，屬正常。**（2026-06-14 已修）** `record-fill --strategy-id` 可將手動成交歸入策略 bucket，**歸入具 exit 區塊的策略後**該部位即納入 risk_exit 監控、於此欄打勾；既有 MANUAL 部位若要納入須以正確 strategy_id 重新補錄（或日後提供轉歸工具）。
 - **`reconcile`（對帳）**：`build_dashboard` 以 `_reconcile_summary()` 把 `projection.reconcile()` 的 dict 轉 `{ok, code, detail_zh}`；通過/失敗皆有中文說明，失敗時 `detail_zh` 含具體差異數字（現金帳本 vs 餘額、成交淨額 vs 庫存、策略桶）。模板卡片顯示 badge + `detail_zh`，並附一行「對帳在比對什麼」。（仍保留 `reconcile_ok` 布林鍵向後相容；`projection.reconcile()` 契約為 `{"status":"RECONCILE_OK"}`，勿用真值判斷。）
 - **`capital`（資金總覽 / 資產配置，C3-1）**：`build_capital_overview` 算市值 = `int(qty*close//10000)`；當日無 bar 以持倉均價 fallback 並標 `stale`（卡片顯示「估算」badge、圓環不缺塊）。圓環**含現金一塊**，各塊比例分母 = 總權益，與卡片一致、加總相等。`return_pct` 分母 = 淨投入本金（`INITIAL_DEPOSIT` 合計，DIVIDEND 不計），分母 0 顯示「—」。跨策略持有同一 symbol 在圓環聚合為一塊。資料以 `<script type="application/json" id="allocData">{{ ...|tojson }}</script>` 傳前端，`dashboard-charts.js` 讀取渲染（無 JS / 載入失敗則圖不顯示、其餘照常）。
+- **實盤／影子每日權益與損益圖**：`read_equity_curve` 回傳該帳號全部 `equity_snapshots`，每點為 `{date, cash, position_value, equity, daily_pnl}`。首點無比較基準，`daily_pnl=None`；其後為 `本日 equity - 前一快照 equity - 區間外部資金淨流入`。外部流只認 `INITIAL_DEPOSIT`、`CASH_ADJUSTMENT`，區間為 `(前一快照日, 本快照日]`；`DIVIDEND` 不扣除，保留為投資收益。dashboard 以 `backtest-charts.js` 畫總權益折線（左軸）＋每日損益紅／綠柱（右軸、零基準）；正值紅、負值綠。現金與持倉市值仍保留在資料中，但 dashboard 不畫，以免混合圖過載。
 - **回測結果 / equity curve（C3-2a）**：`app backtest run` 跑完後由 `write_backtest_result` 落檔至 `artifacts/reports/backtest/<strategy_id>_<run_id>.json`（含 `equity_curve` 逐日 `{date, cash, position_value, equity}` 與 `statistics`），並追加 `INDEX.tsv`、更新 `LATEST.txt`，CLI 印 `BACKTEST_RESULT_PATH=<path>`。`statistics.profit_factor` 若為 `inf`（無虧損交易）落檔時轉成 `null`，detail 頁顯示「∞」。`/backtests/{name}` 以 `<script type="application/json" id="equityCurveData">{{ result.equity_curve|tojson }}</script>` 傳前端，`backtest-charts.js` 畫三條線（總權益/現金/持倉市值）。本機制只多寫結果檔，不改 DB schema、不影響 daily run 或 B1 影子驗證。
 
 ---
@@ -190,7 +191,7 @@ TRADING_WEB_HOST=0.0.0.0 TRADING_WEB_ROOT_PATH="" scripts/web_ui.sh   # 開 http
 
 ## 11. 已知限制 / 待辦
 
-- 資金卡、資產配置圓環、回測權益曲線、實盤／影子每日權益曲線與逐筆已完成交易檢視均已具備。
+- 資金卡、資產配置圓環、回測權益曲線、實盤／影子每日權益＋損益混合圖與逐筆已完成交易檢視均已具備。
 - 無自動刷新（資料一天一更新，手動重整即可）。
 - 無認證（信任區網；如需，nginx basic-auth 一行）。
 - ~~持倉監控欄受 record-fill 全歸 MANUAL 限制，待修。~~ → **已修（2026-06-14）**：`record-fill --strategy-id` 可歸策略並納入監控；既有 MANUAL 部位需重新補錄方納入。
