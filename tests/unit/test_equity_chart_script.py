@@ -15,6 +15,13 @@ def test_equity_chart_script_supports_daily_pnl_mixed_chart_and_backtest_fallbac
     assert "position_value" in script
     assert "cash" in script
 
+    mixed_branch = script.split("if (hasDailyPnl) {", 1)[1].split("} else {", 1)[0]
+    assert "type: 'line', label: '現金'" in mixed_branch
+    assert "type: 'line', label: '持倉市值'" in mixed_branch
+    assert "data: rows.map(function (r) { return r.cash; })" in mixed_branch
+    assert "data: rows.map(function (r) { return r.position_value; })" in mixed_branch
+    assert mixed_branch.count("yAxisID: 'y'") == 3
+
 
 def test_dashboard_equity_chart_accessible_label_mentions_daily_pnl():
     template = (server.BASE_DIR / "templates" / "dashboard.html").read_text(

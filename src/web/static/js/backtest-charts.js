@@ -1,4 +1,4 @@
-/* 權益圖表 render：dashboard 資料畫「總權益 line + 每日損益 bar」；
+/* 權益圖表 render：dashboard 資料畫「總權益／現金／持倉市值 line + 每日損益 bar」；
    回測詳情資料維持既有的總權益／現金／持倉市值三線圖。
    純前端、無框架；找不到 canvas/資料/Chart 時靜默 return（優雅降級）。 */
 (function () {
@@ -27,6 +27,18 @@
         type: 'line', label: '總權益',
         data: rows.map(function (r) { return r.equity; }),
         borderColor: '#1e293b', backgroundColor: '#1e293b',
+        tension: .1, pointRadius: 0, yAxisID: 'y', order: 1
+      },
+      {
+        type: 'line', label: '現金',
+        data: rows.map(function (r) { return r.cash; }),
+        borderColor: '#60a5fa', backgroundColor: '#60a5fa',
+        tension: .1, pointRadius: 0, yAxisID: 'y', order: 1
+      },
+      {
+        type: 'line', label: '持倉市值',
+        data: rows.map(function (r) { return r.position_value; }),
+        borderColor: '#f87171', backgroundColor: '#f87171',
         tension: .1, pointRadius: 0, yAxisID: 'y', order: 1
       },
       {
