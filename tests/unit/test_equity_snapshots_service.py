@@ -4,7 +4,7 @@
 單元測試只能證明「邏輯符合我理解的邏輯」，測不出「我理解的邏輯本身錯了」——
 交叉驗證測試才是抓重播邏輯設計性錯誤的關鍵（見 plan breezy-coalescing-sprout.md）。
 """
-from datetime import date
+from datetime import date, timedelta
 
 from src.portfolio.db import init_db, get_db_connection
 from src.portfolio.ledger import PortfolioLedger
@@ -195,5 +195,65 @@ def test_read_equity_curve_field_mapping_and_order(tmp_path):
     rows = read_equity_curve(conn, "a")
 
     assert [r["date"] for r in rows] == ["2026-06-10", "2026-06-11"]
-    assert rows[0] == {"date": "2026-06-10", "cash": 10, "position_value": 20, "equity": 30}
+    assert rows[0] == {
+        "date": "2026-06-10", "cash": 10, "position_value": 20,
+        "equity": 30, "daily_pnl": None,
+    }
+    assert rows[1]["daily_pnl"] == -27
+    conn.close()
+
+
+def test_read_equity_curve_adjusts_external_flows_but_keeps_dividend_as_profit(tmp_path):
+    conn = _conn(tmp_path)
+    snapshots = [
+        ("2026-06-10", 100_000),
+        ("2026-06-11", 112_000),
+        ("2026-06-12", 106_000),
+        ("2026-06-13", 111_000),
+    ]
+    for snapshot_date, equity in snapshots:
+        save_equity_snapshot(
+            conn, "a", date.fromisoformat(snapshot_date),
+            {"cash": equity, "positions_value": 0, "total_equity": equity},
+        )
+    conn.executemany(
+        "INSERT INTO cash_ledger (ledger_id, account_id, run_id, event_type, amount, currency, "
+        "source_type, source_id, occurred_at, idempotency_key, created_at) "
+        "VALUES (?, 'a', 'r1', ?, ?, 'TWD', ?, ?, ?, ?, ?)",
+        [
+            ("flow-deposit", "INITIAL_DEPOSIT", 10_000, "SYSTEM", "deposit", "2026-06-11T08:00:00+08:00", "idem-deposit", "2026-06-11"),
+            ("flow-withdraw", "CASH_ADJUSTMENT", -5_000, "MANUAL", "withdraw", "2026-06-12T08:00:00+08:00", "idem-withdraw", "2026-06-12"),
+            ("flow-dividend", "DIVIDEND", 3_000, "CORPORATE_ACTION", "dividend", "2026-06-13T08:00:00+08:00", "idem-dividend", "2026-06-13"),
+        ],
+    )
+    conn.commit()
+
+    rows = read_equity_curve(conn, "a")
+
+    assert rows[0]["daily_pnl"] is None
+    assert rows[1]["daily_pnl"] == 2_000
+    assert rows[2]["daily_pnl"] == -1_000
+    assert rows[3]["daily_pnl"] == 5_000
+    conn.close()
+
+
+def test_read_equity_curve_returns_all_available_snapshots(tmp_path):
+    conn = _conn(tmp_path)
+    start = date(2025, 1, 1)
+    conn.executemany(
+        "INSERT INTO equity_snapshots "
+        "(account_id, snapshot_date, cash, positions_value, total_equity, created_at) "
+        "VALUES ('a', ?, ?, 0, ?, datetime('now'))",
+        [
+            ((start + timedelta(days=i)).isoformat(), 100_000 + i, 100_000 + i)
+            for i in range(181)
+        ],
+    )
+    conn.commit()
+
+    rows = read_equity_curve(conn, "a")
+
+    assert len(rows) == 181
+    assert rows[0]["date"] == "2025-01-01"
+    assert rows[-1]["date"] == "2025-06-30"
     conn.close()

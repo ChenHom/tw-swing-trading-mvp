@@ -84,26 +84,56 @@ def backfill_equity_snapshots(conn: sqlite3.Connection, market_repo, account_id:
     return len(dates)
 
 
-def read_equity_curve(conn: sqlite3.Connection, account_id: str, limit: int = 180) -> list[dict]:
-    """供 Web 折線圖：欄位名對齊既有 backtest-charts.js 讀的 {date, cash, position_value, equity}。"""
+def read_equity_curve(conn: sqlite3.Connection, account_id: str) -> list[dict]:
+    """供 Web 混合圖：回傳全部每日權益，並附資金流校正後的每日損益。"""
     rows = conn.execute(
         """
         SELECT snapshot_date, cash, positions_value, total_equity
         FROM equity_snapshots
         WHERE account_id = ?
-        ORDER BY snapshot_date DESC
-        LIMIT ?
+        ORDER BY snapshot_date
         """,
-        (account_id, limit),
+        (account_id,),
     ).fetchall()
-    out = [
-        {
+    if not rows:
+        return []
+
+    capital_flows = conn.execute(
+        """
+        SELECT substr(occurred_at, 1, 10) AS flow_date, SUM(amount) AS amount
+        FROM cash_ledger
+        WHERE account_id = ?
+          AND event_type IN ('INITIAL_DEPOSIT', 'CASH_ADJUSTMENT')
+        GROUP BY substr(occurred_at, 1, 10)
+        ORDER BY flow_date
+        """,
+        (account_id,),
+    ).fetchall()
+
+    out = []
+    flow_index = 0
+    previous_date = None
+    previous_equity = None
+    for r in rows:
+        current_date = r["snapshot_date"]
+        interval_flow = 0
+        while flow_index < len(capital_flows) and capital_flows[flow_index]["flow_date"] <= current_date:
+            flow = capital_flows[flow_index]
+            if previous_date is not None and flow["flow_date"] > previous_date:
+                interval_flow += flow["amount"]
+            flow_index += 1
+
+        out.append({
             "date": r["snapshot_date"],
             "cash": r["cash"],
             "position_value": r["positions_value"],
             "equity": r["total_equity"],
-        }
-        for r in rows
-    ]
-    out.reverse()
+            "daily_pnl": (
+                None if previous_equity is None
+                else r["total_equity"] - previous_equity - interval_flow
+            ),
+        })
+        previous_date = current_date
+        previous_equity = r["total_equity"]
+
     return out
