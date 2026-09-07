@@ -30,7 +30,7 @@
         tension: .1, pointRadius: 0, yAxisID: 'y', order: 1
       },
       {
-        type: 'bar', label: '每日損益',
+        type: 'bar', label: '每日損益（紅賺／綠賠）',
         data: rows.map(function (r) { return r.daily_pnl; }),
         backgroundColor: rows.map(function (r) {
           if (r.daily_pnl === null) return 'transparent';

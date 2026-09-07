@@ -11,6 +11,7 @@ def test_equity_chart_script_supports_daily_pnl_mixed_chart_and_backtest_fallbac
     assert "yPnl" in script
     assert "#e53e3e" in script
     assert "#38a169" in script
+    assert "每日損益（紅賺／綠賠）" in script
     assert "position_value" in script
     assert "cash" in script
 
@@ -21,3 +22,4 @@ def test_dashboard_equity_chart_accessible_label_mentions_daily_pnl():
     )
 
     assert 'aria-label="歷史總權益與每日損益圖"' in template
+    assert "歷史權益與每日損益" in template
