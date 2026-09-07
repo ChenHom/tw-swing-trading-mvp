@@ -81,14 +81,23 @@ def _render_completed_trade_dashboard(tmp_path, unknown_net=False):
     return body
 
 
-def test_completed_trade_card_renders_after_equity_curve_without_changing_tabs(tmp_path):
+def test_completed_trade_card_renders_in_second_standalone_tab(tmp_path):
     body = _render_completed_trade_dashboard(tmp_path)
 
-    assert body.index("歷史權益曲線") < body.index("歷史交易紀錄")
     assert '<details name="completed-trade-row"' in body
     assert "web-buy" in body and "web-sell" in body
-    assert body.count('class="tab-btn') == 5
-    assert body.index("資金總覽") < body.index("持倉部位") < body.index("策略別損益")
+    assert body.count('class="tab-btn') == 6
+    assert (
+        body.index("資金總覽")
+        < body.index("交易紀錄")
+        < body.index("持倉部位")
+        < body.index("策略別損益")
+    )
+    capital_start = body.index('id="tab-capital"')
+    trades_start = body.index('id="tab-trades"')
+    positions_start = body.index('id="tab-positions"')
+    assert "completed-trades-card" not in body[capital_start:trades_start]
+    assert "completed-trades-card" in body[trades_start:positions_start]
 
 
 def test_completed_trade_card_preserves_account_and_view_date_in_controls(tmp_path):
@@ -97,6 +106,12 @@ def test_completed_trade_card_preserves_account_and_view_date_in_controls(tmp_pa
     assert 'name="account" value="simulation-main"' in body
     assert 'name="view_date" value="2026-06-20"' in body
     assert 'name="trade_date"' in body
+    assert 'action="/trading/#tab-trades"' in body
+    assert "window.location.hash" in body
+    assert "history.replaceState" in body
+    template = (server.BASE_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8")
+    assert "trade_date={{ h.older_date }}#tab-trades" in template
+    assert "trade_date={{ h.newer_date }}#tab-trades" in template
 
 
 def test_completed_trade_unknown_net_is_not_rendered_as_gross(tmp_path):

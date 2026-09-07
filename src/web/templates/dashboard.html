@@ -29,23 +29,27 @@
 
 <!-- Tab 分頁導航欄 -->
 <div class="tab-nav">
-  <button class="tab-btn active" onclick="switchTab('capital')">
+  <button type="button" class="tab-btn active" data-tab="capital" onclick="switchTab('capital', this)">
     <span class="tab-text-desktop">資金總覽</span>
     <span class="tab-text-mobile">資金</span>
   </button>
-  <button class="tab-btn" onclick="switchTab('positions')">
+  <button type="button" class="tab-btn" data-tab="trades" onclick="switchTab('trades', this)">
+    <span class="tab-text-desktop">交易紀錄</span>
+    <span class="tab-text-mobile">紀錄</span>
+  </button>
+  <button type="button" class="tab-btn" data-tab="positions" onclick="switchTab('positions', this)">
     <span class="tab-text-desktop">持倉部位</span>
     <span class="tab-text-mobile">持倉</span>
   </button>
-  <button class="tab-btn" onclick="switchTab('pnl')">
+  <button type="button" class="tab-btn" data-tab="pnl" onclick="switchTab('pnl', this)">
     <span class="tab-text-desktop">策略別損益</span>
     <span class="tab-text-mobile">損益</span>
   </button>
-  <button class="tab-btn" onclick="switchTab('next')">
+  <button type="button" class="tab-btn" data-tab="next" onclick="switchTab('next', this)">
     <span class="tab-text-desktop">下次執行</span>
     <span class="tab-text-mobile">執行</span>
   </button>
-  <button class="tab-btn" onclick="switchTab('today')">
+  <button type="button" class="tab-btn" data-tab="today" onclick="switchTab('today', this)">
     <span class="tab-text-desktop">今日成交</span>
     <span class="tab-text-mobile">成交</span>
   </button>
@@ -138,6 +142,10 @@
     {% endif %}
   </div>
 
+</div>
+
+<!-- 交易紀錄 Tab -->
+<div id="tab-trades" class="tab-content">
   {% set h = d.completed_trade_history %}
   <div class="card completed-trades-card">
     <div class="completed-trades-header">
@@ -145,11 +153,11 @@
         <div class="completed-trades-title">歷史交易紀錄</div>
         <div class="completed-trades-subtitle">每次 SELL 各列一筆，以賣出／平倉日歸類</div>
       </div>
-      <form method="get" action="{{ base }}/" class="completed-trades-controls">
+      <form method="get" action="{{ base }}/#tab-trades" class="completed-trades-controls">
         <input type="hidden" name="account" value="{{ d.account_id }}">
         <input type="hidden" name="view_date" value="{{ view_date }}">
         {% if h.older_date %}
-        <a class="btn completed-trades-date-btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}&trade_date={{ h.older_date }}">‹ 上個平倉日</a>
+        <a class="btn completed-trades-date-btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}&trade_date={{ h.older_date }}#tab-trades">‹ 上個平倉日</a>
         {% else %}
         <span class="btn completed-trades-date-btn disabled" aria-disabled="true">‹ 上個平倉日</span>
         {% endif %}
@@ -166,7 +174,7 @@
           {% endif %}
         </select>
         {% if h.newer_date %}
-        <a class="btn completed-trades-date-btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}&trade_date={{ h.newer_date }}">下個平倉日 ›</a>
+        <a class="btn completed-trades-date-btn" href="{{ base }}/?account={{ d.account_id }}&view_date={{ view_date }}&trade_date={{ h.newer_date }}#tab-trades">下個平倉日 ›</a>
         {% else %}
         <span class="btn completed-trades-date-btn disabled" aria-disabled="true">下個平倉日 ›</span>
         {% endif %}
@@ -351,14 +359,14 @@
 <script src="{{ base }}/static/js/dashboard-charts.js"></script>
 <script src="{{ base }}/static/js/backtest-charts.js"></script>
 <script>
-  function switchTab(tabId) {
+  function switchTab(tabId, button, updateHash) {
     // 移除所有按鈕的 active
     var btns = document.querySelectorAll('.tab-btn');
     btns.forEach(function(btn) {
       btn.classList.remove('active');
     });
     // 設定當前按鈕 active
-    event.currentTarget.classList.add('active');
+    button.classList.add('active');
 
     // 隱藏所有內容
     var contents = document.querySelectorAll('.tab-content');
@@ -367,6 +375,15 @@
     });
     // 顯示當前內容
     document.getElementById('tab-' + tabId).classList.add('active');
+    if (updateHash !== false) {
+      history.replaceState(null, '', '#tab-' + tabId);
+    }
+  }
+
+  var initialTab = window.location.hash.replace('#tab-', '');
+  var initialButton = document.querySelector('.tab-btn[data-tab="' + initialTab + '"]');
+  if (initialButton) {
+    switchTab(initialTab, initialButton, false);
   }
 
   // 手機版點擊顯示提示框
