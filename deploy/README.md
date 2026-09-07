@@ -30,5 +30,19 @@ systemctl status trading-web
 journalctl -u trading-web -f            # 看即時日誌
 ```
 
+### Web 變更的完整部署檢查
+
+修改 `src/web/` 或 Web 使用的 Python service/read model 後，以下三步視為同一個不可拆開的部署動作：
+
+```bash
+sudo systemctl restart trading-web.service
+curl -fsS http://127.0.0.1:8800/healthz
+curl -fsS -o /dev/null -w "首頁: %{http_code}\n" http://127.0.0.1:8800/
+```
+
+兩個 endpoint 都成功、首頁顯示 `200` 才算完成。`systemctl status` 顯示 active 只代表 process 存活，不代表首頁可渲染。
+
+> **已知故障模式（2026-09-07）**：更新模板與 dashboard read model 後若未重啟，Jinja 可能讀到磁碟上的新模板，但 uvicorn 仍使用記憶體內的舊 Python module。結果是模板期待新欄位、舊 dict 未提供，首頁直接回 `500 Internal Server Error`。因此 Web 變更不能只 checkout/pull；一定要 restart + 首頁 readback。
+>
 > 更新程式碼後需 `systemctl restart trading-web` 才會生效（uvicorn 未開 --reload）。
 > 前置條件：專案 `.venv` 已建（`uv venv && uv pip install -r requirements.txt -r requirements-web.txt`）。

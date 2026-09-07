@@ -9,6 +9,18 @@
 
 ---
 
+## 2026-09-07 ｜ Web 新模板／舊 Python process 混版造成首頁 500
+
+**背景／觸發**：9/6 合併「歷史交易紀錄」後，使用者開啟 `/trading/` 直接看到 `Internal Server Error`。`trading-web.service` 顯示 active，容易誤判成服務正常。
+
+**根因**：常駐 uvicorn process 自 8/17 起未重啟；Jinja 讀到了磁碟上的新 `dashboard.html`，但 Python process 仍持有舊版 `dashboard.build_dashboard()`。新模板存取 `d.completed_trade_history`，舊 dict 沒有該鍵，journal 因而出現 `jinja2.exceptions.UndefinedError` 並回 500。
+
+**處理與永久規則**：重啟 `trading-web.service` 後恢復正常。同步在 `AGENTS.md` 與 `deploy/README.md` 固化部署邊界：凡變更 `src/web/` 或 Web 使用的 Python service/read model，都必須完成 `sudo systemctl restart trading-web.service`，並 readback `/healthz` 與首頁；unit tests 通過或 service active 均不足以代表 live 部署完成。
+
+**驗證**：相關 completed-trade 測試 19 passed；使用者於重啟後確認頁面恢復正常。完整 traceback 與證據見 `memory/2026-09-07-trading-web-internal-server-error.md`。
+
+**關聯 commit**：待本次文件變更提交時補記。
+
 ## 2026-06-27 ｜ MCP CLI P0：受控 CLI wrapper + record-fill 預設國泰
 
 **背景／觸發**：使用者要為本專案建立 MCP 功能，但範圍收斂為「執行專案內既有 CLI」，不重寫交易邏輯、不接券商下單。P0 需支援日常查詢 / dry-run / 報告與 `record-fill` 手動成交回填，且 `record-fill` 預設帳號為 `國泰`。

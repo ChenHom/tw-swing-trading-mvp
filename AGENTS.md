@@ -25,6 +25,7 @@ MVP 流程閉環的不變式：
 - **下單全手動、不接券商交易 API**：`國泰`＝**真實帳號**但採 `run-daily --no-auto-execute`（plan-only，只產訊號/計畫），**所有下單由人工處理、永不呼叫券商 API 自動成交**；實際成交以 `record-fill` 事後補登。⇒ `broker_orders` 是死表（設計如此）、不做券商對帳。`simulation-main`＝影子帳號（FakeBroker 全自動，永不串實盤）。見記憶 `manual-only-execution`、`real-shadow-account-split`。
 - **Shioaji 權限限制**：僅允許在同步行情時調用 Shioaji API（read-only 行情），帳號不可載入交易 CA 憑證。
 - **cron 跑工作區程式**：每交易日 15:10/15:12 cron 跑「當下 checkout 的程式」，改 code 即影響下次 live run，務必確認 live-safe（如 backtest-scoped 改動不影響 `simulation` mode）。
+- **Web 部署必須 restart + readback**：凡修改 `src/web/`，或修改 Web 會 import 的 service/read model（例如 `src/application/services/dashboard.py`），交付前必須執行 `sudo systemctl restart trading-web.service`，再確認 `/healthz` 與 `/trading/` 首頁皆回 200。Jinja 會從磁碟讀到新模板，但未重啟的 uvicorn 仍持有舊 Python module；兩者混版可造成首頁 `500 Internal Server Error`（2026-09-07 曾發生）。只看到 unit tests 通過或 service 為 active 不算部署完成。
 - **秘密資料保護**：不得在 log、commit、或對話中洩露 `SHIOAJI_API_KEY`、`SHIOAJI_SECRET_KEY` 等敏感變數。本機應使用 `.env` (必須加入 `.gitignore`) 進行設定。
 - **防止浮點數精度問題**：
   - 帳戶現金與交易金額以**整數 (TWD)** 儲存。
