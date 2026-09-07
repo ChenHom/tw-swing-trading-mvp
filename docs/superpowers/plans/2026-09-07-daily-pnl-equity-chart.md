@@ -244,7 +244,7 @@ Expected: focused tests all pass; full suite has zero failures, with only alread
 
 Start or reuse the local Web app. With Playwright, verify desktop and 390px mobile layouts for `simulation-main`: the mixed chart canvas exists, the trade tab is second, trade-date navigation remains on `#tab-trades`, FIFO rows expand, and the document does not overflow horizontally.
 
-- [ ] **Step 4: Commit documentation**
+- [x] **Step 4: Commit documentation**
 
 ```bash
 git add docs/development/engineering-log.md docs/development/ui-development.md docs/superpowers/specs/2026-09-07-daily-pnl-equity-chart-design.md docs/superpowers/plans/2026-09-07-daily-pnl-equity-chart.md
@@ -271,7 +271,7 @@ Expected: health endpoint succeeds and homepage returns 200. If interactive sudo
 - Modify: `docs/development/ui-development.md`
 - Modify: `docs/development/engineering-log.md`
 
-- [ ] **Step 1: Write the failing dashboard chart contract test**
+- [x] **Step 1: Write the failing dashboard chart contract test**
 
 Extend the JavaScript contract test so the `daily_pnl` branch itself must contain datasets labelled `現金` and `持倉市值`, both mapped to the left `y` axis. Do not accept the labels appearing only in the no-`daily_pnl` fallback branch.
 
@@ -284,7 +284,7 @@ assert "data: rows.map(function (r) { return r.position_value; })" in mixed_bran
 assert mixed_branch.count("yAxisID: 'y'") == 3
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -294,7 +294,7 @@ Run:
 
 Expected: FAIL because the mixed-chart branch currently contains only the total-equity line and daily-P&L bars.
 
-- [ ] **Step 3: Add the two line datasets to the mixed-chart branch**
+- [x] **Step 3: Add the two line datasets to the mixed-chart branch**
 
 In `src/web/static/js/backtest-charts.js`, insert the existing cash and position-value line definitions between total equity and daily P&L. Preserve their original labels and colors, assign `yAxisID: 'y'`, and leave the daily-P&L bar on `yPnl`.
 
@@ -313,7 +313,7 @@ In `src/web/static/js/backtest-charts.js`, insert the existing cash and position
 }
 ```
 
-- [ ] **Step 4: Verify focused and full regression tests**
+- [x] **Step 4: Verify focused and full regression tests**
 
 Run:
 
@@ -326,7 +326,7 @@ git diff --check
 
 Expected: all tests pass, JavaScript syntax is valid, and no whitespace errors are reported.
 
-- [ ] **Step 5: Update documentation and commit**
+- [x] **Step 5: Update documentation and commit**
 
 Document that the dashboard mixed chart contains three left-axis lines plus one right-axis bar series, then commit only the correction files.
 
