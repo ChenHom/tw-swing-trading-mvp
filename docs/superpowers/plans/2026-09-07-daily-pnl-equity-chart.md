@@ -262,3 +262,82 @@ curl -fsS -o /dev/null -w "首頁: %{http_code}\n" http://127.0.0.1:8800/
 ```
 
 Expected: health endpoint succeeds and homepage returns 200. If interactive sudo is unavailable, report the exact blocker and do not claim live deployment complete.
+
+### Task 5: Restore the two original component lines
+
+**Files:**
+- Modify: `tests/unit/test_equity_chart_script.py`
+- Modify: `src/web/static/js/backtest-charts.js`
+- Modify: `docs/development/ui-development.md`
+- Modify: `docs/development/engineering-log.md`
+
+- [ ] **Step 1: Write the failing dashboard chart contract test**
+
+Extend the JavaScript contract test so the `daily_pnl` branch itself must contain datasets labelled `現金` and `持倉市值`, both mapped to the left `y` axis. Do not accept the labels appearing only in the no-`daily_pnl` fallback branch.
+
+```python
+mixed_branch = script.split("if (hasDailyPnl) {", 1)[1].split("} else {", 1)[0]
+assert "type: 'line', label: '現金'" in mixed_branch
+assert "type: 'line', label: '持倉市值'" in mixed_branch
+assert "data: rows.map(function (r) { return r.cash; })" in mixed_branch
+assert "data: rows.map(function (r) { return r.position_value; })" in mixed_branch
+assert mixed_branch.count("yAxisID: 'y'") == 3
+```
+
+- [ ] **Step 2: Run the focused test and verify RED**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_equity_chart_script.py -q
+```
+
+Expected: FAIL because the mixed-chart branch currently contains only the total-equity line and daily-P&L bars.
+
+- [ ] **Step 3: Add the two line datasets to the mixed-chart branch**
+
+In `src/web/static/js/backtest-charts.js`, insert the existing cash and position-value line definitions between total equity and daily P&L. Preserve their original labels and colors, assign `yAxisID: 'y'`, and leave the daily-P&L bar on `yPnl`.
+
+```javascript
+{
+  type: 'line', label: '現金',
+  data: rows.map(function (r) { return r.cash; }),
+  borderColor: '#60a5fa', backgroundColor: '#60a5fa',
+  tension: .1, pointRadius: 0, yAxisID: 'y', order: 1
+},
+{
+  type: 'line', label: '持倉市值',
+  data: rows.map(function (r) { return r.position_value; }),
+  borderColor: '#f87171', backgroundColor: '#f87171',
+  tension: .1, pointRadius: 0, yAxisID: 'y', order: 1
+}
+```
+
+- [ ] **Step 4: Verify focused and full regression tests**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_equity_chart_script.py -q
+node --check src/web/static/js/backtest-charts.js
+.venv/bin/python -m pytest tests/ -q
+git diff --check
+```
+
+Expected: all tests pass, JavaScript syntax is valid, and no whitespace errors are reported.
+
+- [ ] **Step 5: Update documentation and commit**
+
+Document that the dashboard mixed chart contains three left-axis lines plus one right-axis bar series, then commit only the correction files.
+
+- [ ] **Step 6: Merge, restart, and read back**
+
+Fast-forward the correction branch into local `master`, then run:
+
+```bash
+sudo systemctl restart trading-web.service
+curl -fsS http://127.0.0.1:8800/healthz
+curl -fsS -o /dev/null -w "首頁: %{http_code}\n" http://127.0.0.1:8800/
+```
+
+Expected: health succeeds, homepage returns 200, and the served chart script contains all four dataset labels. If sudo requires an interactive password, report that remaining deployment step without claiming completion.
