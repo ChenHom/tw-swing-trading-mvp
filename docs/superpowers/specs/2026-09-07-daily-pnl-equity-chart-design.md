@@ -13,6 +13,8 @@
 既有圖表改為雙軸混合圖：
 
 - 深色折線：每日總權益，使用左側 Y 軸。
+- 藍色折線：每日現金餘額，使用左側 Y 軸。
+- 橘紅色折線：每日持倉市值，使用左側 Y 軸。
 - 紅色柱：正的每日損益，使用右側 Y 軸。
 - 綠色柱：負的每日損益，使用右側 Y 軸。
 - 右軸顯示正負值並保留零基準線，台股語意維持紅漲綠跌。
@@ -20,7 +22,7 @@
 - 圖表讀取該帳號全部可用的每日權益快照，不再限制最近 180 筆。
 - 無快照時沿用「尚無歷史權益快照」空狀態；第一筆快照因沒有前一日比較基準，`daily_pnl` 為 `null`，不繪製損益柱。
 
-既有現金與持倉市值資料仍保留在 daily snapshot/read model 中，但不再畫成圖表線，以免與每日損益柱同圖時資訊過載；資金總覽卡與資產配置仍提供當前現金、持倉市值資訊。
+既有現金與持倉市值資料保留在 daily snapshot/read model，並維持原有圖表折線；每日損益柱是加在既有三條折線上，不取代任何原有線條。
 
 ### 每日損益定義
 
@@ -68,7 +70,7 @@ Tab 順序固定為：
 
 1. `src/application/services/equity_snapshots.py` 的 `read_equity_curve()` 讀取全部快照，並依序查出快照區間內的外部資金流，為每列附加 `daily_pnl`。
 2. `src/application/services/dashboard.py` 沿用既有 `equity_curve` 鍵，不新增平行圖表契約。
-3. `src/web/static/js/backtest-charts.js` 以同一份資料畫「總權益 line + 每日損益 bar」混合圖；回測詳情頁沒有 `daily_pnl` 時，仍使用原本三條權益／現金／持倉線，避免破壞共用腳本的既有消費端。
+3. `src/web/static/js/backtest-charts.js` 以同一份資料畫「總權益／現金／持倉市值 line + 每日損益 bar」混合圖；回測詳情頁沒有 `daily_pnl` 時，仍使用原本三條權益／現金／持倉線，避免破壞共用腳本的既有消費端。
 4. `src/web/templates/dashboard.html` 移動完成交易卡片至新 `tab-trades`，並加入位於資金與持倉之間的 Tab 按鈕。
 5. 不變更 SQLite schema、交易帳務寫入路徑或每日執行順序。
 
@@ -83,7 +85,7 @@ Tab 順序固定為：
 
 - Service 單元測試：一般跨日損益、補入、提領、配息、首筆 `null`、日期區間與完整歷史排序。
 - Template 測試：六個 Tab、正確順序、交易紀錄位於 `tab-trades` 且不再位於 `tab-capital`。
-- JavaScript 契約測試：有 `daily_pnl` 時建立 mixed line/bar datasets；無此欄位時保留回測詳情舊行為。
+- JavaScript 契約測試：有 `daily_pnl` 時建立三條既有折線與每日損益柱；無此欄位時保留回測詳情舊行為。
 - Focused tests 通過後執行完整可運行測試集。
 - 瀏覽器驗收：桌機與 390px 手機寬度檢查圖表、Tab 點擊、交易列展開及頁面無水平溢出。
 - Live 部署：依 `AGENTS.md` 執行 `sudo systemctl restart trading-web.service`，並確認 `/healthz` 與 `/trading/` 首頁皆回 200。
