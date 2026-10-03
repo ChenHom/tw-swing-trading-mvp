@@ -27,6 +27,8 @@ from src.approval.store import load_active_manifests, activate_manifest, deactiv
 from src.strategy.canonicalizer import StrategyParameterCanonicalizer
 from src.strategy import registry as strategy_registry
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot, PositionSnapshot
+from src.application.reporting.sector_flow import UnknownCategoryError, build_sector_flow_report
+from src.application.reporting.sector_flow_report import render_sector_flow_markdown
 from src.trading.planner import OrderPlanner, PortfolioState
 from src.trading.allocator import GlobalLimits
 from src.broker.fake_broker import FakeBroker
@@ -130,6 +132,30 @@ def cmd_report_daily(args):
     print(text)
     print(f"REPORT_PATH={path}")
     conn.close()
+
+
+def cmd_report_sector_flow(args):
+    """Build deterministic JSON and Markdown sector-flow artifacts from the raw cache (offline)."""
+    try:
+        payload = build_sector_flow_report(
+            cache_dir=Path(args.cache_dir),
+            start_date=args.start_date,
+            end_date=args.end_date,
+            detail_categories=getattr(args, "category", None) or (),
+            top=getattr(args, "top", 10),
+        )
+    except UnknownCategoryError as exc:
+        raise SystemExit(f"error: {exc}") from exc  # raised before any output file is written
+    output = Path(args.output)
+    report_output = Path(args.report_output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report_output.parent.mkdir(parents=True, exist_ok=True)
+    report_output.write_text(render_sector_flow_markdown(payload), encoding="utf-8")
+    print(output)
+    print(report_output)
+    if payload["status"] == "blocked":
+        raise SystemExit(1)
 
 
 def cmd_report_pnl(args):

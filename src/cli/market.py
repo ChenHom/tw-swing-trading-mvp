@@ -27,6 +27,7 @@ from src.approval.store import load_active_manifests, activate_manifest, deactiv
 from src.strategy.canonicalizer import StrategyParameterCanonicalizer
 from src.strategy import registry as strategy_registry
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot, PositionSnapshot
+from src.market_data.sector_flow_sources import UrllibJsonHttpClient, ingest_sector_flow
 from src.trading.planner import OrderPlanner, PortfolioState
 from src.trading.allocator import GlobalLimits
 from src.broker.fake_broker import FakeBroker
@@ -307,6 +308,19 @@ def cmd_market_sync_chips(args):
     summary = chip_sync.sync_chips(conn, symbols, start, end)
     print(f"Done: {summary}")
     conn.close()
+
+
+def cmd_market_sync_sector_flow(args):
+    """Fetch public official sector-flow sources (TWSE/TPEx/TDCC) into the raw cache."""
+    summary = ingest_sector_flow(
+        cache_dir=Path(args.cache_dir),
+        start_date=args.start_date,
+        end_date=args.end_date,
+        client=UrllibJsonHttpClient(),
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if summary["failed"] > 0:
+        raise SystemExit(1)
 
 
 def cmd_market_validate(args):

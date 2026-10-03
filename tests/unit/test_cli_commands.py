@@ -1076,3 +1076,18 @@ def test_execute_pending_skips_rejected_signal(temp_db_path, monkeypatch, capsys
     # Rejected signal should NOT be executed (not filled)
     assert "2327" not in symbols
     conn.close()
+
+
+def test_sector_flow_subcommands_are_registered(monkeypatch):
+    import sys
+    from unittest.mock import patch
+    from src.cli.main import main
+
+    seen = []
+    with patch("src.cli.main.cmd_market_sync_sector_flow", seen.append), patch("src.cli.main.cmd_report_sector_flow", seen.append):
+        monkeypatch.setattr(sys, "argv", ["app", "market", "sync-sector-flow", "--start-date", "2026-09-24", "--end-date", "2026-10-01"])
+        main()
+        monkeypatch.setattr(sys, "argv", ["app", "report", "sector-flow", "--start-date", "2026-09-24", "--end-date", "2026-10-01",
+                                          "--output", "o.json", "--report-output", "o.md", "--category", "電子工業", "--top", "3"])
+        main()
+    assert (seen[0].cache_dir, seen[1].category, seen[1].top) == ("data/raw", ["電子工業"], 3)

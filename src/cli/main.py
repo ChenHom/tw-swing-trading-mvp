@@ -33,7 +33,7 @@ from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
-from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_validate, cmd_market_build_universe, cmd_market_build_adj
+from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_sync_sector_flow, cmd_market_validate, cmd_market_build_universe, cmd_market_build_adj
 from src.cli.strategy import cmd_strategy_inspect
 from src.cli.approval import cmd_approval_create, cmd_approval_validate, cmd_approval_activate, cmd_approval_deactivate, cmd_approval_list, cmd_approval_status
 from src.cli.account import cmd_account_init, cmd_account_adjust_cash, cmd_account_adjust
@@ -42,8 +42,15 @@ from src.cli.simulation import cmd_simulation_run_daily, cmd_simulation_reset, c
 from src.cli.signal import cmd_signal_generate, cmd_signal_list
 from src.cli.trade import cmd_trade_plan, cmd_trade_reject_signal, cmd_trade_un_reject_signal, cmd_trade_record_fill, cmd_trade_close_all, cmd_trade_exit_check, cmd_trade_set_long_term, cmd_trade_backfill_names
 from src.cli.portfolio import cmd_portfolio_reconcile, cmd_portfolio_rebuild_projections
-from src.cli.report import cmd_report_pnl, cmd_report_daily
+from src.cli.report import cmd_report_pnl, cmd_report_daily, cmd_report_sector_flow
 from src.cli.corporate_action import cmd_corporate_action_record, cmd_corporate_action_apply, cmd_corporate_action_list, cmd_corporate_action_check
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return number
 
 
 def main():
@@ -66,6 +73,11 @@ def main():
     parser_sync_chips.add_argument("--date", type=str, default=None, help="結束日期 YYYY-MM-DD（預設今天）")
     
     parser_sync_names = market_subs.add_parser("sync-names", help="全市場代碼→中文名補齊（FinMind，含 ETF；修復顯示空白）")
+
+    parser_sync_sector_flow = market_subs.add_parser("sync-sector-flow", help="抓取族群資金流公開來源（TWSE/TPEx/TDCC）到 raw cache（唯讀 GET）")
+    parser_sync_sector_flow.add_argument("--start-date", required=True, help="起日 YYYY-MM-DD")
+    parser_sync_sector_flow.add_argument("--end-date", required=True, help="迄日 YYYY-MM-DD")
+    parser_sync_sector_flow.add_argument("--cache-dir", default="data/raw", help="raw cache 目錄")
 
     parser_validate = market_subs.add_parser("validate", help="驗證資料庫中的日 K 線行情")
     parser_validate.add_argument("--last-sessions", type=int, default=60, help="驗證最近幾筆交易日的行情數據")
@@ -294,6 +306,15 @@ def main():
     parser_rep_daily.add_argument("--date", type=str, help="報告日期 YYYY-MM-DD（預設今天）")
     parser_rep_daily.add_argument("--dir", type=str, default="artifacts/reports/daily", help="報告輸出目錄")
 
+    parser_rep_sector = report_subs.add_parser("sector-flow", help="族群資金流報表（完全離線，由 raw cache 重播；金額為估算值）")
+    parser_rep_sector.add_argument("--start-date", required=True, help="起日 YYYY-MM-DD")
+    parser_rep_sector.add_argument("--end-date", required=True, help="迄日 YYYY-MM-DD")
+    parser_rep_sector.add_argument("--cache-dir", default="data/raw", help="raw cache 目錄")
+    parser_rep_sector.add_argument("--output", required=True, help="JSON 輸出路徑")
+    parser_rep_sector.add_argument("--report-output", required=True, help="Markdown 輸出路徑")
+    parser_rep_sector.add_argument("--category", action="append", help="細看單一族群（可重複；同義詞會正規化）")
+    parser_rep_sector.add_argument("--top", type=_positive_int, default=10, help="細看時流入/流出前 N 檔個股")
+
     # 11. corporate-action group
     parser_corpact = subparsers.add_parser("corporate-action", help="公司行動（除息、配股）管理")
     corpact_subs = parser_corpact.add_subparsers(dest="subcommand", required=True)
@@ -329,6 +350,7 @@ def main():
         ("market", "sync"): cmd_market_sync,
         ("market", "sync-chips"): cmd_market_sync_chips,
         ("market", "sync-names"): cmd_market_sync_names,
+        ("market", "sync-sector-flow"): cmd_market_sync_sector_flow,
         ("market", "validate"): cmd_market_validate,
         ("strategy", "inspect"): cmd_strategy_inspect,
         ("approval", "create"): cmd_approval_create,
@@ -358,6 +380,7 @@ def main():
         ("portfolio", "rebuild-projections"): cmd_portfolio_rebuild_projections,
         ("report", "pnl"): cmd_report_pnl,
         ("report", "daily"): cmd_report_daily,
+        ("report", "sector-flow"): cmd_report_sector_flow,
         ("corporate-action", "record"): cmd_corporate_action_record,
         ("corporate-action", "apply"): cmd_corporate_action_apply,
         ("corporate-action", "list"): cmd_corporate_action_list,
