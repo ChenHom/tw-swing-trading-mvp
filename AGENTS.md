@@ -172,7 +172,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 
 - 產生器 `src/application/reporting/sector_flow_dashboard.py`（`build_sector_flow_dashboard`）：end_date 往前 140 日曆天找出最近 90 個交易日，每個視窗（20/30/60/90）各跑一次 `build_sector_flow_report(..., max_days=None)`，輸出各族群每日淨額、類股指數與個股排行。數字與同日期區間的 `report sector-flow` 完全一致（2026-10-03 以真實資料逐視窗核對）。
 - 網頁經 `GET /api/sector-flow` 原樣讀這個檔。格式是 producer 與 web 共用的合約，不可單方面改。
-- cron 腳本 `scripts/sync_sector_flow.sh [days=7]`：先 `market sync-sector-flow`（今天往前 days 天，Asia/Taipei），無論成敗都接著跑 dashboard；任一步失敗 exit 非 0 並發 Discord 告警。crontab（需手動安裝）：
+- cron 腳本 `scripts/sync_sector_flow.sh [days=7]`：先 `market sync-sector-flow`（今天往前 days 天，Asia/Taipei），無論成敗都接著跑 dashboard；任一步失敗 exit 非 0 並發 Discord 告警。crontab（2026-10-03 已安裝於使用者 crontab）：
   `0 22 * * 1-5 /usr/bin/flock -n /tmp/sector_flow_sync.lock /home/hom/services/stock/tw-day-trading/scripts/sync_sector_flow.sh >> /home/hom/services/stock/tw-day-trading/logs/sync_sector_flow_cron.log 2>&1`
 - 31 天上限只限制連網的 `market sync-sector-flow` 與 CLI `report sector-flow`；`build_sector_flow_report` 的 `max_days=None` 只給離線長區間（dashboard）用。不要改回分段計算再加總：分段會讓缺價股票只被部分計入，占比和子類檔數都會偏掉。
 - 視窗若因缺價改用 `net_shares` 排名，個股 `amt` 為 null，網頁顯示「—」。`stocks` 內的 f/t/dl 單位是股，`rows` 內是元。
@@ -197,7 +197,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 - 累積第二期 TDCC 週 snapshot 之後，才能宣稱大戶持股變化。
 - 更新 FinMind 產業分類 snapshot。
 - 維持唯讀公開資料：不碰 Shioaji、Telegram 或 GitHub 發佈。
-- 22:00 cron 腳本已寫好（`scripts/sync_sector_flow.sh`），crontab 尚未安裝。
+- 平日 22:00 cron 已安裝（2026-10-03）；網頁「族群資金」頁籤讀 `GET /api/sector-flow`。
 
 ## 台股相關資料夾對照（2026-10-03 盤點）
 
@@ -205,7 +205,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 
 | 資料夾 | GitHub repo | 目標 | CLI | 站台 | 狀態 |
 |---|---|---|---|---|---|
-| `~/services/stock/tw-day-trading` | `ChenHom/tw-swing-trading-mvp` | 台股**波段**量化交易 MVP：回測、每日模擬（paper / FakeBroker）、風控授權、FIFO 對帳。另有族群資金流報表（2026-10-03 自 lab 搬入）。資料夾名稱是歷史遺留，**不是當沖** | `python3 -m app <account\|market\|simulation\|backtest\|report…>` | 有：`https://192.168.50.109/trading/`（台股波段交易儀表板，`trading-web.service` → 127.0.0.1:8800） | 運作中：平日 15:10 / 15:12 影子模擬、21:00 籌碼同步（cron） |
+| `~/services/stock/tw-day-trading` | `ChenHom/tw-swing-trading-mvp` | 台股**波段**量化交易 MVP：回測、每日模擬（paper / FakeBroker）、風控授權、FIFO 對帳。另有族群資金流報表與站台「族群資金」頁籤（2026-10-03 自 lab 搬入）。資料夾名稱是歷史遺留，**不是當沖** | `python3 -m app <account\|market\|simulation\|backtest\|report…>` | 有：`https://192.168.50.109/trading/`（台股波段交易儀表板，`trading-web.service` → 127.0.0.1:8800） | 運作中：平日 15:10 / 15:12 影子模擬、21:00 籌碼同步、22:00 族群資金（cron） |
 | `~/services/stock/tw-day-trading-lab` | `ChenHom/tw-day-trading-lab` | 台股**當沖**重建實驗室：候選名單、replay / paper 驗證、Shioaji **模擬**執行鏈驗證 | `tw-daytrade`（`PYTHONPATH=src python3 -m tw_day_trading_lab.cli …`） | 無 | 開發中；無有效排程（crontab 內 8/19–21 的收集排程已過期） |
 | `~/services/stock/quantitative-trading-decision-system` | `ChenHom/quantitative-trading-decision-system` | 舊版 Shioaji 盤中當沖機器人；`tw-day-trading-lab` 只把它當資料來源與失敗案例 | `scripts/run_trading_system.sh`、`scripts/run_intraday_event_monitor.sh` | 無 | 程式凍結於 2026-04，但平日 08:30 / 08:58 仍由 cron 以**模擬模式**執行 |
 | `~/services/stock/quant-feather-integration` | 無（非 git） | 整合 quantitative-trading-decision-system 與 StrategyExecutor_feather 的骨架 | 無 | 無 | 封存（2026-03） |
