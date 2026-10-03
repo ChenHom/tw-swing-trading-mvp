@@ -33,7 +33,7 @@ from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
-from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_sync_sector_flow, cmd_market_validate, cmd_market_build_universe, cmd_market_build_adj
+from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_sync_sector_flow, cmd_market_sync_sector_taxonomy, cmd_market_validate, cmd_market_build_universe, cmd_market_build_adj
 from src.cli.strategy import cmd_strategy_inspect
 from src.cli.approval import cmd_approval_create, cmd_approval_validate, cmd_approval_activate, cmd_approval_deactivate, cmd_approval_list, cmd_approval_status
 from src.cli.account import cmd_account_init, cmd_account_adjust_cash, cmd_account_adjust
@@ -78,6 +78,9 @@ def main():
     parser_sync_sector_flow.add_argument("--start-date", required=True, help="起日 YYYY-MM-DD")
     parser_sync_sector_flow.add_argument("--end-date", required=True, help="迄日 YYYY-MM-DD")
     parser_sync_sector_flow.add_argument("--cache-dir", default="data/raw", help="raw cache 目錄")
+    parser_sync_taxonomy = market_subs.add_parser("sync-sector-taxonomy", help="更新族群資金的產業分類快照（FinMind TaiwanStockInfo；內容沒變就不寫）")
+    parser_sync_taxonomy.add_argument("--as-of", default=None, help="快照日期 YYYY-MM-DD（預設 Asia/Taipei 今天）")
+    parser_sync_taxonomy.add_argument("--cache-dir", default="data/raw", help="raw cache 目錄")
 
     parser_validate = market_subs.add_parser("validate", help="驗證資料庫中的日 K 線行情")
     parser_validate.add_argument("--last-sessions", type=int, default=60, help="驗證最近幾筆交易日的行情數據")
@@ -355,6 +358,7 @@ def main():
         ("market", "sync-chips"): cmd_market_sync_chips,
         ("market", "sync-names"): cmd_market_sync_names,
         ("market", "sync-sector-flow"): cmd_market_sync_sector_flow,
+        ("market", "sync-sector-taxonomy"): cmd_market_sync_sector_taxonomy,
         ("market", "validate"): cmd_market_validate,
         ("strategy", "inspect"): cmd_strategy_inspect,
         ("approval", "create"): cmd_approval_create,

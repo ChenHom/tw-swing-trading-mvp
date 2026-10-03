@@ -27,7 +27,7 @@ from src.approval.store import load_active_manifests, activate_manifest, deactiv
 from src.strategy.canonicalizer import StrategyParameterCanonicalizer
 from src.strategy import registry as strategy_registry
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot, PositionSnapshot
-from src.market_data.sector_flow_sources import UrllibJsonHttpClient, ingest_sector_flow
+from src.market_data.sector_flow_sources import UrllibJsonHttpClient, ingest_sector_flow, ingest_taxonomy
 from src.trading.planner import OrderPlanner, PortfolioState
 from src.trading.allocator import GlobalLimits
 from src.broker.fake_broker import FakeBroker
@@ -321,6 +321,18 @@ def cmd_market_sync_sector_flow(args):
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     if summary["failed"] > 0:
         raise SystemExit(1)
+
+
+def cmd_market_sync_sector_taxonomy(args):
+    """Snapshot FinMind TaiwanStockInfo (sector-flow industry categories); writes only when it changed."""
+    from zoneinfo import ZoneInfo
+    as_of = args.as_of or datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat()
+    try:
+        summary = ingest_taxonomy(cache_dir=Path(args.cache_dir), as_of=as_of, client=UrllibJsonHttpClient())
+    except Exception as exc:  # network or schema: report and fail the cron step
+        print(json.dumps({"state": "error", "error": str(exc)}, ensure_ascii=False))
+        raise SystemExit(1)
+    print(json.dumps(summary, ensure_ascii=False))
 
 
 def cmd_market_validate(args):

@@ -450,5 +450,37 @@ def ingest_sector_flow(
     return summary
 
 
+FINMIND_STOCK_INFO_URL = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo"
+TAXONOMY_MIN_ROWS = 1000  # ponytail: floor against a truncated reply; a full snapshot has ~4,000 rows
+_TAXONOMY_KEYS = {"stock_id", "stock_name", "industry_category", "type"}
+
+
+def ingest_taxonomy(*, cache_dir: Path, as_of: str, client: JsonHttpClient) -> dict[str, Any]:
+    """Snapshot FinMind TaiwanStockInfo (industry categories) to finmind/TaiwanStockInfo/{as_of}/market.jsonl.
+
+    Writes only when the rows differ from the newest snapshot at or before `as_of`, so a daily cron
+    does not pile up identical copies. `load_taxonomy` picks the newest snapshot <= a report's end date.
+    """
+    _validate_iso_date(as_of)
+    payload = client.get_json(FINMIND_STOCK_INFO_URL)
+    rows = payload.get("data") if isinstance(payload, Mapping) else None
+    if not isinstance(rows, list) or len(rows) < TAXONOMY_MIN_ROWS:
+        raise ProviderSchemaError(f"FinMind TaiwanStockInfo returned {len(rows) if isinstance(rows, list) else 'no'} rows")
+    if not all(isinstance(row, Mapping) and _TAXONOMY_KEYS <= row.keys() for row in rows):
+        raise ProviderSchemaError("FinMind TaiwanStockInfo row shape changed")
+    lines = sorted(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows)
+    root = cache_dir / "finmind" / "TaiwanStockInfo"
+    previous = sorted((p for p in root.glob("*/market.jsonl") if p.parent.name <= as_of), key=lambda p: p.parent.name)
+    if previous and sorted(previous[-1].read_text(encoding="utf-8").splitlines()) == lines:
+        return {"state": "unchanged", "snapshot_date": previous[-1].parent.name, "row_count": len(lines)}
+    path = root / as_of / "market.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        handle.write("\n".join(lines) + "\n")
+        temporary = Path(handle.name)
+    temporary.replace(path)
+    return {"state": "ok", "snapshot_date": as_of, "row_count": len(lines), "cache_path": str(path)}
+
+
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))

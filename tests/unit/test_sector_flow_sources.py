@@ -11,12 +11,16 @@ from src.market_data.sector_flow_sources import (
     UrllibJsonHttpClient,
     build_daily_requests,
     ingest_sector_flow,
+    TAXONOMY_MIN_ROWS,
+    ingest_taxonomy,
     parse_tdcc_holdings,
     parse_tpex_closes,
     parse_tpex_institutional,
     parse_twse_closes,
     parse_twse_institutional,
 )
+
+from src.application.reporting.sector_flow import load_taxonomy
 
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "sector-flow"
@@ -282,3 +286,35 @@ class SectorFlowIngestionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TaxonomyIngestionTest(unittest.TestCase):
+    ROWS = [{"date": "2020-01-01", "industry_category": "半導體業", "stock_id": str(1000 + i), "stock_name": f"股{i}", "type": "twse"}
+            for i in range(TAXONOMY_MIN_ROWS)]
+
+    class Client:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def get_json(self, url):
+            return {"data": self.rows}
+
+    def test_writes_snapshot_skips_unchanged_and_report_uses_newest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            self.assertEqual(ingest_taxonomy(cache_dir=cache, as_of="2026-10-03", client=self.Client(self.ROWS))["state"], "ok")
+            again = ingest_taxonomy(cache_dir=cache, as_of="2026-10-05", client=self.Client(list(reversed(self.ROWS))))
+            self.assertEqual((again["state"], again["snapshot_date"]), ("unchanged", "2026-10-03"))
+            self.assertFalse((cache / "finmind" / "TaiwanStockInfo" / "2026-10-05").exists())
+            moved = self.ROWS[:-1] + [{**self.ROWS[-1], "industry_category": "光電業"}]
+            self.assertEqual(ingest_taxonomy(cache_dir=cache, as_of="2026-10-06", client=self.Client(moved))["state"], "ok")
+            entry = load_taxonomy(cache, end_date="2026-10-06")[self.ROWS[-1]["stock_id"]]
+            self.assertEqual((list(entry.categories), entry.snapshot_date), (["光電業"], "2026-10-06"))
+            self.assertEqual(list(load_taxonomy(cache, end_date="2026-10-05")[self.ROWS[-1]["stock_id"]].categories), ["半導體業"])
+
+    def test_rejects_truncated_or_reshaped_reply_without_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for rows in (self.ROWS[:10], [{"stock_id": "1101"}] * TAXONOMY_MIN_ROWS):
+                with self.assertRaises(ProviderSchemaError):
+                    ingest_taxonomy(cache_dir=Path(tmp), as_of="2026-10-03", client=self.Client(rows))
+            self.assertFalse((Path(tmp) / "finmind").exists())
