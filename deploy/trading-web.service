@@ -1,5 +1,5 @@
 [Unit]
-Description=tw-day-trading 唯讀 Web 儀表板 (FastAPI/uvicorn)
+Description=tw-swing-trading-mvp 台股波段交易唯讀 Web 儀表板 (FastAPI/uvicorn)
 After=network-online.target
 Wants=network-online.target
 

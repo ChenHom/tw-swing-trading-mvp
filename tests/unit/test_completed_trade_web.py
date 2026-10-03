@@ -128,3 +128,11 @@ def test_completed_trade_styles_keep_taiwan_pnl_colors_and_accessible_motion():
     assert ".completed-trades-card .neg { color: #38a169; }" in css
     assert ".completed-trades-disclosure[open] .completed-trades-toggle" in css
     assert "@media (prefers-reduced-motion: reduce)" in css
+
+
+def test_site_is_branded_as_swing_trading(tmp_path):
+    body = _render_completed_trade_dashboard(tmp_path)
+
+    assert "<title>台股波段交易儀表板</title>" in body
+    assert '<span class="brand-text-desktop">台股波段交易</span>' in body
+    assert "tw-day-trading" not in body

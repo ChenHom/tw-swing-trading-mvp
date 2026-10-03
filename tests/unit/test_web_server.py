@@ -47,7 +47,7 @@ def test_dashboard_renders(client):
     r = client.get("/?view_date=2026-06-12")
     assert r.status_code == 200
     body = r.text
-    assert "tw-day-trading" in body
+    assert "台股波段交易" in body
     assert "可用現金" in body
     assert "對帳" in body
     assert "simulation-main" in body

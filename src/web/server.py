@@ -31,7 +31,7 @@ from src.contracts.strategy_names import strategy_name
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_PATH = os.environ.get("TRADING_WEB_ROOT_PATH", "/trading")
 
-app = FastAPI(title="tw-day-trading 儀表板", root_path=ROOT_PATH)
+app = FastAPI(title="台股波段交易儀表板", root_path=ROOT_PATH)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # 子路徑前綴：模板以 {{ base }}/... 產生連結，nginx 子路徑與本機直連皆正確。
