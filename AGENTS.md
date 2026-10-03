@@ -1,5 +1,7 @@
 # AGENTS.md - tw-swing-trading-mvp
 
+> **本資料夾**：這個資料夾是台股**波段**系統（GitHub `tw-swing-trading-mvp`），名稱 `tw-day-trading` 是歷史遺留，與當沖實驗室 `tw-day-trading-lab` 無關。站台：`https://192.168.50.109/trading/`。詳見文末「台股相關資料夾對照」。
+
 本專案為台股波段量化交易系統 MVP (Taiwan Stock Swing Trading Quantitative Trading System MVP)。本文件旨在為後續參與開發的 AI 協作代理 (Agents) 提供全局上下文、邊界規則與當前進度指引。
 
 ## Project Mission (專案任務)
@@ -142,3 +144,19 @@ pytest tests/
 # 執行特定模組單元測試
 pytest tests/unit/test_canonicalizer.py
 ```
+
+## 台股相關資料夾對照（2026-10-03 盤點）
+
+本機有多個名稱相近、目標不同的台股專案。各資料夾的文件都放同一張表；有變動時請一併更新。
+
+| 資料夾 | GitHub repo | 目標 | CLI | 站台 | 狀態 |
+|---|---|---|---|---|---|
+| `~/services/stock/tw-day-trading` | `ChenHom/tw-swing-trading-mvp` | 台股**波段**量化交易 MVP：回測、每日模擬（paper / FakeBroker）、風控授權、FIFO 對帳。資料夾名稱是歷史遺留，**不是當沖** | `python3 -m app <account\|market\|simulation\|backtest\|report…>` | 有：`https://192.168.50.109/trading/`（台股波段交易儀表板，`trading-web.service` → 127.0.0.1:8800） | 運作中：平日 15:10 / 15:12 影子模擬、21:00 籌碼同步（cron） |
+| `~/services/stock/tw-day-trading-lab` | `ChenHom/tw-day-trading-lab` | 台股**當沖**重建實驗室：候選名單、replay / paper 驗證、Shioaji **模擬**執行鏈驗證；另有族群資金流報表 | `tw-daytrade`（`PYTHONPATH=src python3 -m tw_day_trading_lab.cli …`） | 無 | 開發中；無有效排程（crontab 內 8/19–21 的收集排程已過期） |
+| `~/services/stock/quantitative-trading-decision-system` | `ChenHom/quantitative-trading-decision-system` | 舊版 Shioaji 盤中當沖機器人；`tw-day-trading-lab` 只把它當資料來源與失敗案例 | `scripts/run_trading_system.sh`、`scripts/run_intraday_event_monitor.sh` | 無 | 程式凍結於 2026-04，但平日 08:30 / 08:58 仍由 cron 以**模擬模式**執行 |
+| `~/services/stock/quant-feather-integration` | 無（非 git） | 整合 quantitative-trading-decision-system 與 StrategyExecutor_feather 的骨架 | 無 | 無 | 封存（2026-03） |
+| `~/services/stock/StrategyExecutor_feather` | `phenomenoner/StrategyExecutor_feather`（第三方） | 富邦 Neo SDK 當沖機器人，本機分支改寫為 Shioaji | `python strategy_async_demo.py` | 無 | 封存（本機改寫停在 2026-02） |
+| `~/services/stock/taiwan-stock-market-evaluation` | 無（非 git） | 空資料夾（只有 `.serena/`） | 無 | 無 | 可刪除 |
+| `~/services/AI-Trading-Copilot` | `ChenHom/AI-Trading-Copilot` | FinMind 盤前 / 盤後分析與投資組合助手 | `./run.sh`、`python main.py --mode OPEN\|CLOSE` | 無 | 本機停用；GitHub Actions 排程是否仍啟用未查證 |
+| `~/services/stocks-db` | 無遠端（本機 git） | FinMind → 本機 TiDB 匯入 | `./run.sh import-stocks` | 無 | 封存（TiDB 未啟動） |
+| `~/services/tw-stock-research-platform` | `ChenHom/tw-stock-research-platform` | 以公開資訊為核心的台股研究決策平台（TypeScript CLI） | `npm run research` 等 | 無 | 停用（`redis-cache` 容器仍在執行） |
