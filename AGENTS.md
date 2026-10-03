@@ -147,13 +147,16 @@ pytest tests/unit/test_canonicalizer.py
 
 ## 族群資金流（Sector Flow V1，2026-10-03 自 tw-day-trading-lab 搬入）
 
-獨立的報表軌道，**不碰交易、不碰 Shioaji / Telegram / Discord / GitHub 發佈**。設計見 `docs/superpowers/specs/2026-10-02-sector-flow-v1-design.md`（文末含資料合約），原實作計畫見 `docs/superpowers/plans/2026-10-02-sector-flow-v1.md`。
+獨立的報表軌道，**不碰交易、不碰 Shioaji / Telegram / GitHub 發佈**；唯一的對外通知是 cron 失敗時的 Discord 告警（與 `sync_chips.sh` 相同）。設計見 `docs/superpowers/specs/2026-10-02-sector-flow-v1-design.md`（文末含報表資料合約），頁籤 JSON 合約見 `docs/superpowers/specs/2026-10-03-sector-flow-tab-contract.md`，原實作計畫見 `docs/superpowers/plans/2026-10-02-sector-flow-v1.md`，開發紀錄（含在 lab 的歷史）見 `docs/development/sector-flow-history.md`。
 
 ### 指令
 
 ```bash
 # 唯一連網的一步：只做唯讀 GET（TWSE T86 / MI_INDEX、TPEx、TDCC），寫入 data/raw；有來源 failed 時 exit 1
 python3 -m app market sync-sector-flow --start-date 2026-09-24 --end-date 2026-10-01 --cache-dir data/raw
+
+# 產業分類快照（FinMind TaiwanStockInfo，唯讀 GET）；內容與最新快照相同就不寫；寫在 data/raw/finmind/TaiwanStockInfo/{as_of}/
+python3 -m app market sync-sector-taxonomy [--as-of YYYY-MM-DD]
 
 # 完全離線，由快取重播；報表 blocked 時 exit 1（degraded 仍 exit 0）
 python3 -m app report sector-flow --start-date 2026-09-24 --end-date 2026-10-01 --cache-dir data/raw \
@@ -172,7 +175,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 
 - 產生器 `src/application/reporting/sector_flow_dashboard.py`（`build_sector_flow_dashboard`）：end_date 往前 140 日曆天找出最近 90 個交易日，每個視窗（20/30/60/90）各跑一次 `build_sector_flow_report(..., max_days=None)`，輸出各族群每日淨額、類股指數與個股排行。數字與同日期區間的 `report sector-flow` 完全一致（2026-10-03 以真實資料逐視窗核對）。
 - 網頁經 `GET /api/sector-flow` 原樣讀這個檔。格式是 producer 與 web 共用的合約，不可單方面改。
-- cron 腳本 `scripts/sync_sector_flow.sh [days=7]`：先 `market sync-sector-flow`（今天往前 days 天，Asia/Taipei），無論成敗都接著跑 dashboard；任一步失敗 exit 非 0 並發 Discord 告警。crontab（2026-10-03 已安裝於使用者 crontab）：
+- cron 腳本 `scripts/sync_sector_flow.sh [days=7]`：依序 `market sync-sector-taxonomy`、`market sync-sector-flow`（今天往前 days 天，Asia/Taipei），無論成敗都接著跑 dashboard；任一步失敗 exit 非 0 並發 Discord 告警。crontab（2026-10-03 已安裝於使用者 crontab）：
   `0 22 * * 1-5 /usr/bin/flock -n /tmp/sector_flow_sync.lock /home/hom/services/stock/tw-day-trading/scripts/sync_sector_flow.sh >> /home/hom/services/stock/tw-day-trading/logs/sync_sector_flow_cron.log 2>&1`
 - 31 天上限只限制連網的 `market sync-sector-flow` 與 CLI `report sector-flow`；`build_sector_flow_report` 的 `max_days=None` 只給離線長區間（dashboard）用。不要改回分段計算再加總：分段會讓缺價股票只被部分計入，占比和子類檔數都會偏掉。
 - 視窗若因缺價改用 `net_shares` 排名，個股 `amt` 為 null，網頁顯示「—」。`stocks` 內的 f/t/dl 單位是股，`rows` 內是元。
@@ -181,7 +184,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 
 ### 語意規則（一條都不能漏）
 
-- **網路邊界**：`market sync-sector-flow`（`sector_flow_sources.py`）是唯一網路出口；`report sector-flow` 完全離線，可只靠 `data/raw` 重播。
+- **網路邊界**：`sector_flow_sources.py` 是唯一網路出口（`market sync-sector-flow`、`market sync-sector-taxonomy`）；`report sector-flow` 與 dashboard 完全離線，可只靠 `data/raw` 重播。
 - **金額是估算值**：金額為 `net_shares_times_close`（法人淨股數 × 收盤價）估算，**不可稱為精確資金流**。法人淨股數本身是官方值。
 - **多分類全部計入、族群間不可加總**：一檔股票有多個 FinMind 分類時，正規化後計入所有分類（`CATEGORY_SYNONYMS` 合併 TPEx／舊名；創新板股票／創新版股票剔除；`其他` 只在唯一分類時才算）。族群互相重疊，**絕不可跨族群加總**。電子工業 / 化學生技醫療為 `is_broad`。不要改回一檔一分類：那會讓族群歸屬取決於快取列順序。
 - **宇宙**：只含四碼普通股；**91xx 台灣存託憑證排除**。
@@ -190,12 +193,12 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 - **`source_status[*][*].cache_path` 是相對於 `--cache-dir` 的路徑**，不論 cache dir 怎麼寫，JSON 都逐位元組相同。不要把絕對路徑放回報告。
 - **TDCC 大戶要兩期**：levels 12-15 需要兩期週 snapshot；少於兩期時報告 `insufficient_data`，不可宣稱大戶增減。
 - **TWSE 日期不符視為 `no_data`**：TWSE 在非交易日可能回前一交易日資料；payload 日期與請求日期不同就是 `no_data`。
-- **現況（2026-10-03）**：快取涵蓋 2026-05-15..10-02 共 97 個交易日，TWSE / TPEx 四個資料集日期完全對齊（5 秒間隔回補，0 失敗；先前的 HTTP 520 未再出現）。TDCC 已有 2026-09-24、10-02 兩期週 snapshot。報告仍為 `degraded`，唯一原因是產業分類（FinMind TaiwanStockInfo）snapshot 停在 2026-06-03（7 筆未分類）。
+- **現況（2026-10-03）**：快取涵蓋 2026-05-15..10-02 共 97 個交易日，TWSE / TPEx 四個資料集日期完全對齊（5 秒間隔回補，0 失敗；先前的 HTTP 520 未再出現）。TDCC 已有 2026-09-24、10-02 兩期週 snapshot。產業分類 snapshot 已更新為 2026-10-03（4,329 筆），分類覆蓋率 100%，「未分類」族群消失（38 → 37 個），報告狀態 `ok`。產業分類是有日期的 snapshot：報表用「≤ end_date 的最新一份」，所以 end_date 早於 10-03 的報表仍用 06-03 那份。
 
 ### 後續維護（原 Track 3）
 
 - TDCC 已有兩期（09-24、10-02），`report sector-flow` 的大戶代理指標可以計算；頁籤目前沒有顯示它。
-- 更新 FinMind 產業分類 snapshot。
+- 產業分類由 cron 每天檢查，內容有變才寫新 snapshot；FinMind 若出現新的分類名稱，要檢查是否需補 `CATEGORY_SYNONYMS`。
 - 維持唯讀公開資料：不碰 Shioaji、Telegram 或 GitHub 發佈。
 - 平日 22:00 cron 已安裝（2026-10-03）；網頁「族群資金」頁籤讀 `GET /api/sector-flow`。
 
