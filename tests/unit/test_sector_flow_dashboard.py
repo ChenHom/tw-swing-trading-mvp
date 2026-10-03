@@ -74,6 +74,28 @@ class SectorFlowDashboardTest(unittest.TestCase):
         self.assertEqual(row["idxv"], [None, 1500.5])  # D1 payload has no matching index table
         self.assertEqual(out["taiex"], [None, 30000.0])
 
+    def _tdcc(self, day, rows):
+        path = self.cache / "tdcc" / "holding_distribution" / day / "market.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([{"證券代號": s, "持股分級": "12", "人數": "1", "股數": f"{n:,}", "占集保庫存數比例%": str(pct),
+                                     "資料日期": day.replace("-", "")} for s, n, pct in rows], ensure_ascii=False), encoding="utf-8")
+
+    def test_large_holder_ranks_weekly_change_by_value(self):
+        self._tdcc("2026-09-18", [("2330", 400_000, 1.0), ("6488", 300_000, 2.0)])
+        self._tdcc("2026-09-24", [("2330", 600_000, 1.5), ("6488", 250_000, 1.6)])
+        lh = build_sector_flow_dashboard(cache_dir=self.cache, end_date=END)["large_holder"]
+        self.assertEqual((lh["status"], lh["prior"], lh["latest"], lh["snapshots"]), ("ok", "2026-09-18", "2026-09-24", 2))
+        row = next(r for r in lh["rows"] if r["name"] == "半導體業")
+        self.assertEqual((row["up"], row["down"]), (1, 1))
+        self.assertEqual(([s["sym"] for s in row["in"]], [s["sym"] for s in row["out"]]), (["2330"], ["6488"]))
+        self.assertEqual((row["in"][0]["shares"], row["in"][0]["pp"], row["out"][0]["shares"]), (200_000, 0.5, -50_000))
+        self.assertEqual(row["amt"], row["in"][0]["amt"] + row["out"][0]["amt"])
+
+    def test_large_holder_needs_two_snapshots(self):
+        self._tdcc("2026-09-24", [("2330", 600_000, 1.5)])
+        lh = build_sector_flow_dashboard(cache_dir=self.cache, end_date=END)["large_holder"]
+        self.assertEqual((lh["status"], lh["rows"], lh["snapshots"]), ("insufficient_data", [], 1))
+
     def test_blocked_without_data(self):
         out = build_sector_flow_dashboard(cache_dir=self.cache / "empty", end_date=END)
         self.assertEqual((out["status"], out["dates"], out["rows"]), ("blocked", [], []))

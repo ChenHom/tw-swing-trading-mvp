@@ -429,6 +429,11 @@ a.sym-link:hover { color: #1a0dab; text-decoration: underline; }
 #tab-sector .tag { font-size: .7rem; color: #718096; background: transparent; border: 1px solid #edf2f7; padding: 0 .3rem; margin-left: .3rem; }
 #tab-sector tr.pick { cursor: pointer; }
 #tab-sector tr.pick:hover td, #tab-sector tr.pick.sel td { background: #ebf4ff; }
+#tab-sector tr.sf-sub, #tab-sector tr.sf-lh-row, #tab-sector .sf-crumb [data-crumb] { cursor: pointer; }
+#tab-sector tr.sf-sub:hover td, #tab-sector tr.sf-sub.sel td, #tab-sector tr.sf-lh-row:hover td, #tab-sector tr.sf-lh-row.sel td { background: #ebf4ff; }
+#tab-sector tr.sf-sub:focus-visible, #tab-sector tr.sf-lh-row:focus-visible, #tab-sector .sf-crumb [data-crumb]:focus-visible { outline: 2px solid #2b6cb0; outline-offset: 2px; }
+#tab-sector .sf-crumb { font-size: .85rem; color: #4a5568; }
+#tab-sector .sf-crumb [data-crumb] { color: #2b6cb0; font-size: inherit; text-decoration: underline; }
 #tab-sector .sf-heat td.h { width: 30px; min-width: 30px; height: 22px; padding: 0; border: 1px solid #fff; }
 #tab-sector .sf-heat.dense td.h { width: 11px; min-width: 11px; border-width: 1px 0; }
 #tab-sector .sf-heat th.d { font-size: .7rem; padding: .2rem 0; text-align: center; writing-mode: vertical-rl; }

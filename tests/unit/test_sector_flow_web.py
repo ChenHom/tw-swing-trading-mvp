@@ -38,3 +38,10 @@ def test_sector_flow_api_404_when_file_missing(tmp_path, monkeypatch):
 
     assert res.status_code == 404
     assert "尚無族群資金資料" in res.json()["error"]
+
+
+def test_large_holder_section_sits_between_rank_and_detail(tmp_path):
+    body = _render_completed_trade_dashboard(tmp_path)
+
+    assert body.index('<table id="sf-rank">') < body.index('id="sf-lh"') < body.index('id="sf-detail"')
+    assert "大戶持股（週）" in body

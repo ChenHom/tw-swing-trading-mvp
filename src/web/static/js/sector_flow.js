@@ -24,7 +24,7 @@
 
   function init(D) {
     var byName = {}; D.rows.forEach(function (r) { byName[r.name] = r; });
-  var N = D.windows[0], sel = byName['半導體業'] ? '半導體業' : D.rows[0].name;
+  var N = D.windows[0], sel = byName['半導體業'] ? '半導體業' : D.rows[0].name, subSel = null, lhSel = null;
   function yi(v) { var x = v / 1e8; return (x > 0 ? '+' : '') + x.toFixed(Math.abs(x) >= 100 ? 0 : 1) + ' 億'; }
   function cls(v) { return v > 0 ? 'pos' : v < 0 ? 'neg' : ''; }
   function md(d) { return d.slice(5).replace('-', '/'); }
@@ -89,13 +89,45 @@
       (list.length ? list.map(function (s) { return '<tr><td>' + symLink(s.sym) + '</td><td>' + esc(s.name) + '</td><td class="num ' + cls(s.amt) + '">' + (s.amt == null ? '—' : yi(s.amt)) + '</td><td class="num">' + s.share.toFixed(1) + '%</td><td class="num ' + cls(s.f) + '">' + Math.round(s.f / 1000).toLocaleString() + '</td><td class="num ' + cls(s.t) + '">' + Math.round(s.t / 1000).toLocaleString() + '</td></tr>'; }).join('') : '<tr><td colspan="6">無</td></tr>') + '</tbody></table></div></div>';
   }
   function show(name) {
+    if (name !== sel) subSel = null; // 換族群就清掉子類選取；換區間 (render -> show(sel)) 則保留
     sel = name;
     var r = byName[name], st = ((D.stocks || {})[N] || {})[name] || { in: [], out: [], subs: [], members: 0 }, k = n();
     root.querySelectorAll('tr.pick').forEach(function (tr) { tr.classList.toggle('sel', tr.getAttribute('data-n') === name); });
-    var subs = st.subs.length ? '<div class="card-label" style="margin:.8rem 0 .3rem">子類小計（近 ' + k + ' 日）</div><div class="sf-scroll"><table><thead><tr><th>子類</th><th class="num">檔數</th><th class="num">估算金額</th></tr></thead><tbody>' +
-      st.subs.map(function (g) { return '<tr><td>' + esc(g.name) + '</td><td class="num">' + g.n + '</td><td class="num ' + cls(g.amt) + '">' + yi(g.amt) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
+    var sg = null; st.subs.forEach(function (g) { if (g.name === subSel && g.in && g.out) sg = g; });
+    if (!sg) subSel = null; // 新區間沒有這個子類：回到大類
+    var subs = st.subs.length ? '<div class="card-label" style="margin:.8rem 0 .3rem">子類小計（近 ' + k + ' 日）' + (st.subs.some(function (g) { return g.in && g.out; }) ? '，點選一列看該子類排名' : '') + '</div><div class="sf-scroll"><table><thead><tr><th>子類</th><th class="num">檔數</th><th class="num">估算金額</th></tr></thead><tbody>' +
+      st.subs.map(function (g) { var ok = g.in && g.out; return '<tr' + (ok ? ' class="sf-sub' + (g === sg ? ' sel' : '') + '" tabindex="0" data-sub="' + esc(g.name) + '"' : '') + '><td>' + esc(g.name) + '</td><td class="num">' + g.n + '</td><td class="num ' + cls(g.amt) + '">' + yi(g.amt) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
     $('detail').innerHTML = '<h3>族群細看：' + nm(r) + '</h3><p class="hint">' + st.members + ' 檔成分股。近 ' + k + ' 日累計 <b class="' + cls(r.dn) + '">' + yi(r.dn) + '</b>，近 5 日 <b class="' + cls(r.d5) + '">' + yi(r.d5) + '</b>。</p>' +
-      chart(r) + subs + '<div class="sf-two" style="margin-top:.8rem">' + stockTable(st.in, '近 ' + k + ' 日流入前 5 名', '流入') + stockTable(st.out, '近 ' + k + ' 日流出前 5 名', '流出') + '</div>';
+      chart(r) + subs + (sg ? '<div class="sf-crumb" style="margin-top:.8rem"><span class="card-label" role="button" tabindex="0" data-crumb="1">' + esc(name) + '</span> › <b>' + esc(sg.name) + '</b></div>' : '') +
+      '<div class="sf-two" style="margin-top:' + (sg ? '.3rem' : '.8rem') + '">' + stockTable((sg || st).in, '近 ' + k + ' 日流入前 5 名', '流入') + stockTable((sg || st).out, '近 ' + k + ' 日流出前 5 名', '流出') + '</div>';
+  }
+
+  // 大戶持股（週）：週資料，不隨區間切換
+  function lhTable(list, title) {
+    return '<div style="min-width:0"><div class="card-label" style="margin-bottom:.3rem">' + title + '</div><div class="sf-scroll"><table><thead><tr><th>代號</th><th>名稱</th><th class="num">估算金額</th><th class="num">大戶張數變化</th><th class="num">持股比例變化</th></tr></thead><tbody>' +
+      (list.length ? list.map(function (s) { var lots = Math.round(s.shares / 1000);
+        return '<tr><td>' + symLink(s.sym) + '</td><td>' + esc(s.name) + '</td><td class="num ' + cls(s.amt) + '">' + yi(s.amt) + '</td><td class="num ' + cls(lots) + '">' + (lots > 0 ? '+' : '') + lots.toLocaleString() + '</td><td class="num ' + cls(s.pp) + '">' + (s.pp > 0 ? '+' : '') + s.pp.toFixed(2) + ' pp</td></tr>'; }).join('') : '<tr><td colspan="5">無</td></tr>') + '</tbody></table></div></div>';
+  }
+  function renderLh() {
+    var lh = D.large_holder, el = $('lh');
+    if (!lh) { el.hidden = true; return; }
+    el.hidden = false;
+    var body = $('lhbody');
+    if (lh.status !== 'ok' || !lh.rows || !lh.rows.length) {
+      var why = lh.status === 'schema_error' ? 'TDCC 快照無法讀取'
+        : lh.reason === 'snapshots_not_consecutive_weeks' ? '最近兩期 TDCC 週資料相隔超過兩週（' + esc(lh.prior) + ' → ' + esc(lh.latest) + '），不計算變化'
+        : lh.reason === 'latest_snapshot_too_old' ? '最新的 TDCC 週資料（' + esc(lh.latest) + '）太舊，不計算變化'
+        : '大戶變化需要兩期 TDCC 週資料，目前 ' + (lh.snapshots || 0) + ' 期';
+      body.innerHTML = '<p class="hint" style="margin:0">' + why + '</p>';
+      return;
+    }
+    var cur = null; lh.rows.forEach(function (r) { if (r.name === lhSel) cur = r; });
+    if (!cur) { cur = lh.rows[0]; lhSel = cur.name; }
+    body.innerHTML = '<p class="hint">' + esc(lh.prior) + ' → ' + esc(lh.latest) + '｜TDCC 集保週資料，已累積 ' + lh.snapshots + ' 期；不受上方區間切換影響。大戶＝單一集保帳戶持有 400 張以上（含法人、ETF、大股東），增資、減資也會讓股數跳動。金額為大戶股數變化 × 收盤價的估算。</p>' +
+      '<div class="sf-scroll"><table><thead><tr><th>族群</th><th class="num">大戶估算金額</th><th class="num">增加檔數</th><th class="num">減少檔數</th></tr></thead><tbody>' +
+      lh.rows.map(function (r) { return '<tr class="sf-lh-row' + (r === cur ? ' sel' : '') + '" tabindex="0" data-n="' + esc(r.name) + '"><td>' + nm(r) + '</td><td class="num ' + cls(r.amt) + '">' + yi(r.amt) + '</td><td class="num">' + r.up + '</td><td class="num">' + r.down + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+      (cur.missing > 0 ? '<p class="hint" style="margin:.4rem 0 0">' + cur.missing + ' 檔無收盤價，未計入金額</p>' : '') +
+      '<div class="sf-two" style="margin-top:.8rem">' + lhTable(cur.in || [], esc(cur.name) + ' 大戶增加前 5 名') + lhTable(cur.out || [], esc(cur.name) + ' 大戶減少前 5 名') + '</div>';
   }
 
   function render() {
@@ -162,10 +194,19 @@
       if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) dlg.close();
       return;
     }
+    var sr = e.target.closest('tr.sf-sub'), cr = e.target.closest('[data-crumb]'), lr = e.target.closest('tr.sf-lh-row'), keep = null;
+    if (sr || cr) { // 只換前 5 名表，不捲動、不動 sel 的族群
+      var want = sr ? sr.getAttribute('data-sub') : null;
+      keep = subSel; subSel = sr && want !== subSel ? want : null; show(sel);
+      var back = root.querySelector('tr.sf-sub.sel') || Array.prototype.filter.call(root.querySelectorAll('tr.sf-sub'), function (t) { return t.getAttribute('data-sub') === keep; })[0];
+      if (back) back.focus({ preventScroll: true });
+      return;
+    }
+    if (lr) { lhSel = lr.getAttribute('data-n'); renderLh(); var again = Array.prototype.filter.call(root.querySelectorAll('tr.sf-lh-row'), function (t) { return t.getAttribute('data-n') === lhSel; })[0]; if (again) again.focus({ preventScroll: true }); return; }
     var tr = e.target.closest('tr.pick');
     if (tr) { if (dlg.open) dlg.close(); show(tr.getAttribute('data-n')); $('detail').scrollIntoView({ behavior: reduced(), block: 'start' }); }
   });
-  root.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.matches('tr.pick, [data-flip]')) e.target.click(); });
+  root.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.matches('tr.pick, [data-flip], tr.sf-sub, tr.sf-lh-row, [data-crumb]')) e.target.click(); });
 
     // 附註：產業分類快照日期、資料警告（預設收合）
     if (D.taxonomy_snapshot_date) $('taxo').textContent = '產業分類為 ' + D.taxonomy_snapshot_date + ' 的快照。';
@@ -179,6 +220,7 @@
     var toTop = $('totop');
     addEventListener('scroll', function () { toTop.hidden = scrollY < innerHeight; }, { passive: true });
     toTop.addEventListener('click', function () { scrollTo({ top: 0, behavior: reduced() }); });
+    renderLh();
     render();
   }
 })();

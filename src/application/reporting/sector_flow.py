@@ -301,7 +301,9 @@ def build_large_holder_proxy(
     end_date: str,
     start_date: str,
     universe: Collection[str],
+    include_stocks: bool = False,
 ) -> dict[str, Any]:
+    """`include_stocks=True` adds per-stock deltas (the web tab ranks them); off by default so reports stay unchanged."""
     eligible = sorted(key for key in holdings_by_date if key <= end_date)
     latest = eligible[-1] if eligible else None
     if len(eligible) < 2:
@@ -335,10 +337,21 @@ def build_large_holder_proxy(
     counted = in_universe & old_symbols & new_symbols
     excluded = {"outside_listed_universe": len(candidates - listed), "not_in_both_snapshots": len(in_universe - counted)}
     categories: dict[str, dict[str, Any]] = {}
+    stocks: list[dict[str, Any]] = []
     for symbol in sorted(counted):
         share_delta = new.get(symbol, (0, 0.0))[0] - old.get(symbol, (0, 0.0))[0]
         percent_delta = new.get(symbol, (0, 0.0))[1] - old.get(symbol, (0, 0.0))[1]
-        for category in _categories_of(taxonomy.get(symbol)):
+        metadata = taxonomy.get(symbol)
+        if include_stocks:
+            stocks.append({
+                "symbol": symbol,
+                "name": metadata.name if metadata else symbol,
+                "categories": list(_categories_of(metadata)),
+                "large_holder_share_delta": share_delta,
+                "percent_point_delta": round(float(percent_delta), 6),
+                "estimated_change_twd": round(float(share_delta * closes[symbol]), 2) if symbol in closes else None,
+            })
+        for category in _categories_of(metadata):
             item = categories.setdefault(category, {"category": category, "is_broad": category in BROAD_CATEGORIES, "large_holder_share_delta": 0, "sum_stock_percent_point_delta": 0.0, "estimated_change_twd": 0.0, "missing_price_count": 0})
             item["large_holder_share_delta"] += share_delta
             item["sum_stock_percent_point_delta"] += percent_delta
@@ -349,7 +362,7 @@ def build_large_holder_proxy(
     for item in categories.values():
         item["sum_stock_percent_point_delta"] = round(float(item["sum_stock_percent_point_delta"]), 6)
         item["estimated_change_twd"] = round(float(item["estimated_change_twd"]), 2)
-    return {
+    result = {
         "status": "ok",
         "method": "holding_change_proxy",
         "prior_as_of_date": prior,
@@ -358,6 +371,9 @@ def build_large_holder_proxy(
         "excluded_symbols": excluded,
         "categories": sorted(categories.values(), key=lambda row: (row["large_holder_share_delta"], row["category"]), reverse=True),
     }
+    if include_stocks:
+        result["stocks"] = stocks
+    return result
 
 
 ONLY_BROAD_GROUP = "（僅大類）"
@@ -436,14 +452,31 @@ def build_category_detail(
             for d, cell in zip(dates, cells)
         ]
 
+    def ranked(group: Sequence[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        measured = [stock for stock in group if stock[metric] is not None]
+        result: dict[str, list[dict[str, Any]]] = {}
+        for side, ordered in (
+            ("top_inflows", sorted((s for s in measured if s[metric] > 0), key=lambda s: (-s[metric], s["symbol"]))),
+            ("top_outflows", sorted((s for s in measured if s[metric] < 0), key=lambda s: (s[metric], s["symbol"]))),
+        ):
+            denominator = sum(s[metric] for s in ordered)
+            result[side] = [
+                {
+                    "market": s["market"],
+                    "symbol": s["symbol"],
+                    "name": s["name"],
+                    **{field: s[field] for field in _SHARE_FIELDS},
+                    "estimated_net_amount_twd": None if s["estimated_net_amount_twd"] is None else round(float(s["estimated_net_amount_twd"]), 2),
+                    "share_of_side_pct": round(s[metric] / denominator * 100, 2),
+                    "daily": daily_of(s),
+                }
+                for s in ordered[:top]
+            ]
+        return result
+
     result = []
     for category in requested:
         members = [stock for stock in stocks.values() if category in stock["_categories"]]
-        measured = [stock for stock in members if stock[metric] is not None]
-        sides = {
-            "top_inflows": sorted((s for s in measured if s[metric] > 0), key=lambda s: (-s[metric], s["symbol"])),
-            "top_outflows": sorted((s for s in measured if s[metric] < 0), key=lambda s: (s[metric], s["symbol"])),
-        }
         item: dict[str, Any] = {
             "category": category,
             "is_broad": category in BROAD_CATEGORIES,
@@ -467,6 +500,7 @@ def build_category_detail(
                     "member_count": len(group),
                     **{field: sum(s[field] for s in group) for field in _SHARE_FIELDS},
                     "estimated_institutional_net_amount_twd": round(float(sum(s["_priced_amount"] for s in group)), 2),
+                    **ranked(group),  # the stocks behind this subtotal, not the same-named top-level category
                 }
                 for name, group in groups.items()
             ]
@@ -474,27 +508,14 @@ def build_category_detail(
             item["subcategories"] = sorted(rows, key=lambda row: (-row[key], row["category"]))
             item["subcategory_overlap"] = True
             item["subcategory_overlap_count"] = overlap
-        for side, ordered in sides.items():
-            denominator = sum(s[metric] for s in ordered)
-            item[side] = [
-                {
-                    "market": s["market"],
-                    "symbol": s["symbol"],
-                    "name": s["name"],
-                    **{field: s[field] for field in _SHARE_FIELDS},
-                    "estimated_net_amount_twd": None if s["estimated_net_amount_twd"] is None else round(float(s["estimated_net_amount_twd"]), 2),
-                    "share_of_side_pct": round(s[metric] / denominator * 100, 2),
-                    "daily": daily_of(s),
-                }
-                for s in ordered[:top]
-            ]
+        item.update(ranked(members))
         result.append(item)
     return result
 
 
 def build_sector_flow_report(
     *, cache_dir: Path, start_date: str, end_date: str, detail_categories: Sequence[str] = (), top: int = 10,
-    max_days: int | None = 31,
+    max_days: int | None = 31, large_holder_stocks: bool = False,
 ) -> dict[str, Any]:
     """`max_days=None` lifts the CLI's 31-day cap for offline callers that need longer windows (the web tab)."""
     requested_dates = _dates(start_date, end_date, max_days)
@@ -576,7 +597,7 @@ def build_sector_flow_report(
         warnings.append(f"TDCC snapshot unreadable: {', '.join(item['as_of_date'] for item in holding_errors)}")
         status = "degraded" if status != "blocked" else status
     else:
-        large_holder = build_large_holder_proxy(holdings_by_date=holdings, taxonomy=taxonomy, closes=all_closes_by_symbol, end_date=end_date, start_date=start_date, universe=universe)
+        large_holder = build_large_holder_proxy(holdings_by_date=holdings, taxonomy=taxonomy, closes=all_closes_by_symbol, end_date=end_date, start_date=start_date, universe=universe, include_stocks=large_holder_stocks)
     period_summary = _aggregate_period(day_inputs, taxonomy, ranking_method)
     report = {
         "schema_version": 1,

@@ -104,6 +104,18 @@ class CategoryDetailTest(unittest.TestCase):
         self.assertTrue(item["subcategory_overlap"])
         self.assertEqual(item["subcategory_overlap_count"], 1)  # 2222 sits in 半導體業 and 光電業
 
+    def test_subcategory_ranks_its_own_members(self):
+        item = detail([BROAD])[0]
+        others = {sym: [c for c in entry.categories if c not in (BROAD, "化學生技醫療")] for sym, entry in TAXONOMY.items()}
+        for group in item["subcategories"]:
+            ranked = group["top_inflows"] + group["top_outflows"]
+            members = {s["symbol"] for s in item["top_inflows"] + item["top_outflows"]
+                       if (group["category"] in others[s["symbol"]]) or (group["category"] == "（僅大類）" and not others[s["symbol"]])}
+            self.assertLessEqual({s["symbol"] for s in ranked}, members, group["category"])
+            for side in ("top_inflows", "top_outflows"):
+                if group[side]:
+                    self.assertAlmostEqual(sum(s["share_of_side_pct"] for s in group[side]), 100.0, delta=0.05)  # top=10 covers every member here
+
     def test_another_broad_category_is_never_a_subcategory(self):
         taxonomy = {"1111": _tax("1111", BROAD, "化學生技醫療", "生技醫療業")}
         day_inputs = [(D1, [_row(D1, "1111", 1000)], {("twse", "1111"): 10.0})]

@@ -179,6 +179,8 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
   `0 22 * * 1-5 /usr/bin/flock -n /tmp/sector_flow_sync.lock /home/hom/services/stock/tw-day-trading/scripts/sync_sector_flow.sh >> /home/hom/services/stock/tw-day-trading/logs/sync_sector_flow_cron.log 2>&1`
 - 31 天上限只限制連網的 `market sync-sector-flow` 與 CLI `report sector-flow`；`build_sector_flow_report` 的 `max_days=None` 只給離線長區間（dashboard）用。不要改回分段計算再加總：分段會讓缺價股票只被部分計入，占比和子類檔數都會偏掉。
 - 視窗若因缺價改用 `net_shares` 排名，個股 `amt` 為 null，網頁顯示「—」。`stocks` 內的 f/t/dl 單位是股，`rows` 內是元。
+- 大類的 `subs[].in/out` 是該子類**在這個大類裡**的成員排名，不是同名頂層族群：FinMind 給上櫃股的分類幾乎沒有「電子工業」標籤，所以「電子工業 › 半導體業」幾乎只有上市股，頂層「半導體業」約一半是上櫃。
+- `large_holder`：TDCC 大戶（分級 12–15，400 張以上）最新兩期週快照的變化，依族群列估算金額（Σ 股數變化 × 收盤）、增加／減少檔數、增減前 5 名個股。來自 `build_sector_flow_report(..., large_holder_stocks=True)` 的個股明細；這個旗標預設關閉，所以報表輸出不變。不要用跨股票加總的張數當主指標：會被低價股主導。
 
 程式位置：`src/market_data/sector_flow_sources.py`（網路邊界 + raw cache）、`src/application/reporting/sector_flow.py`（彙整與狀態判定）、`src/application/reporting/sector_flow_report.py`（Markdown）；CLI 在 `src/cli/market.py` / `src/cli/report.py`；測試 `tests/unit/test_sector_flow*.py`，fixtures 在 `tests/fixtures/sector-flow/`。快取放 `data/raw/{twse,tpex,tdcc,finmind/TaiwanStockInfo}`（`data/` 已 gitignore）。
 
@@ -188,7 +190,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 - **金額是估算值**：金額為 `net_shares_times_close`（法人淨股數 × 收盤價）估算，**不可稱為精確資金流**。法人淨股數本身是官方值。
 - **多分類全部計入、族群間不可加總**：一檔股票有多個 FinMind 分類時，正規化後計入所有分類（`CATEGORY_SYNONYMS` 合併 TPEx／舊名；創新板股票／創新版股票剔除；`其他` 只在唯一分類時才算）。族群互相重疊，**絕不可跨族群加總**。電子工業 / 化學生技醫療為 `is_broad`。不要改回一檔一分類：那會讓族群歸屬取決於快取列順序。
 - **宇宙**：只含四碼普通股；**91xx 台灣存託憑證排除**。
-- **細看**：`--category NAME [--top N]` 加上 `category_detail`（流入／流出前 N 檔，含外資／投信／自營商拆分、佔該側比重、每日序列；大類先列子類小計）。不帶 `--category` 時輸出必須與之前逐位元組相同。
+- **細看**：`--category NAME [--top N]` 加上 `category_detail`（流入／流出前 N 檔，含外資／投信／自營商拆分、佔該側比重、每日序列；大類先列子類小計，每個子類也有自己的流入／流出前 N 檔）。不帶 `--category` 時輸出必須與之前逐位元組相同（2026-10-04 加子類排名與大戶個股明細後仍以 09-24..10-01 報表的 sha256 核對過）。
 - **交易日判定**：一個日期只要至少一個來源 `ok` 即為交易日，該日任何非 `ok` 來源都會讓報告 `degraded`。**四個來源全部 `missing` / `no_data` 的日期**進 `dates_without_data`，**視為休市**（使用者 2026-10-03 決定；不另建假日曆）。抓取失敗仍會浮現，因為 `sync-sector-flow` 會 exit 1，所以只有「從沒抓過」的日子可能被誤判為休市。**`schema_error` 一律 degrade**。
 - **`source_status[*][*].cache_path` 是相對於 `--cache-dir` 的路徑**，不論 cache dir 怎麼寫，JSON 都逐位元組相同。不要把絕對路徑放回報告。
 - **TDCC 大戶要兩期**：levels 12-15 需要兩期週 snapshot；少於兩期時報告 `insufficient_data`，不可宣稱大戶增減。
@@ -197,7 +199,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 
 ### 後續維護（原 Track 3）
 
-- TDCC 已有兩期（09-24、10-02），`report sector-flow` 的大戶代理指標可以計算；頁籤目前沒有顯示它。
+- 頁籤已顯示大戶週變化（2026-10-04 起）。TDCC 公開資料只給最新一週、無法回補，週快照從 2026-09-24 起由 cron 累積；累積 4 週以上後可考慮加週走勢。
 - 產業分類由 cron 每天檢查，內容有變才寫新 snapshot；FinMind 若出現新的分類名稱，要檢查是否需補 `CATEGORY_SYNONYMS`。
 - 維持唯讀公開資料：不碰 Shioaji、Telegram 或 GitHub 發佈。
 - 平日 22:00 cron 已安裝（2026-10-03）；網頁「族群資金」頁籤讀 `GET /api/sector-flow`。
