@@ -26,6 +26,7 @@ TODAY="$(TZ=Asia/Taipei date +%F)"
 START="$(TZ=Asia/Taipei date -d "$TODAY - $DAYS days" +%F)"
 
 echo "=== sync_sector_flow $(TZ=Asia/Taipei date) $START..$TODAY ===" | tee -a "$LOG_FILE"
+echo "抓取中：每次請求間隔 ≥3 秒，約需 1～3 分鐘；明細寫在 $LOG_FILE"
 
 $PYTHON_EXEC -m app market sync-sector-flow --start-date "$START" --end-date "$TODAY" >> "$LOG_FILE" 2>&1
 RC1=$?
