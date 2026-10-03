@@ -440,7 +440,8 @@ a.sym-link:hover { color: #1a0dab; text-decoration: underline; }
 #tab-sector .sf-notes { color: #718096; font-size: .8rem; display: grid; gap: .2rem; }
 #tab-sector .sf-notes summary { cursor: pointer; }
 #tab-sector .sf-notes ul { margin: .3rem 0 0; padding-left: 1.3rem; }
-#tab-sector .sf-totop { position: fixed; right: 16px; bottom: 20px; z-index: 5; width: 44px; height: 44px; border-radius: 999px; border: 1px solid #cbd5e0; background: #fff; color: #2b6cb0; font: inherit; font-size: 1.25rem; line-height: 1; box-shadow: 0 4px 12px rgba(0, 0, 0, .12); cursor: pointer; }
+/* right edge = main content edge (main: max-width 1200px, padding 1.5rem, border-box); % is of the viewport, so the scrollbar is excluded */
+#tab-sector .sf-totop { position: fixed; right: max(1.5rem, calc((100% - 1200px) / 2 + 1.5rem)); bottom: 20px; z-index: 5; width: 44px; height: 44px; border-radius: 999px; border: 1px solid #cbd5e0; background: #fff; color: #2b6cb0; font: inherit; font-size: 1.25rem; line-height: 1; box-shadow: 0 4px 12px rgba(0, 0, 0, .12); cursor: pointer; }
 #tab-sector .sf-totop:hover { background: #ebf4ff; }
 #tab-sector dialog { border: 1px solid #edf2f7; border-radius: 10px; padding: 1rem 1.1rem; width: min(640px, calc(100vw - 32px)); color: #2d3748; background: #fff; box-shadow: 0 10px 30px rgba(0, 0, 0, .15); }
 #tab-sector dialog::backdrop { background: rgba(26, 32, 44, .35); }
