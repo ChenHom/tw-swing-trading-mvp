@@ -163,6 +163,20 @@ python3 -m app report sector-flow --start-date 2026-09-24 --end-date 2026-10-01 
 python3 -m app report sector-flow ... --category 電子工業 --category 半導體業 --top 10
 ```
 
+### 網頁「族群資金」頁籤的資料（dashboard）
+
+```bash
+# 完全離線；輸出 data/sector_flow/dashboard.json（暫存檔 + rename 原子寫入）；blocked（無任何交易日）exit 1
+python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir data/raw] [--output data/sector_flow/dashboard.json]
+```
+
+- 產生器 `src/application/reporting/sector_flow_dashboard.py`（`build_sector_flow_dashboard`）：end_date 往前 140 日曆天找出最近 90 個交易日，每個視窗（20/30/60/90）各跑一次 `build_sector_flow_report(..., max_days=None)`，輸出各族群每日淨額、類股指數與個股排行。數字與同日期區間的 `report sector-flow` 完全一致（2026-10-03 以真實資料逐視窗核對）。
+- 網頁經 `GET /api/sector-flow` 原樣讀這個檔。格式是 producer 與 web 共用的合約，不可單方面改。
+- cron 腳本 `scripts/sync_sector_flow.sh [days=7]`：先 `market sync-sector-flow`（今天往前 days 天，Asia/Taipei），無論成敗都接著跑 dashboard；任一步失敗 exit 非 0 並發 Discord 告警。crontab（需手動安裝）：
+  `0 22 * * 1-5 /usr/bin/flock -n /tmp/sector_flow_sync.lock /home/hom/services/stock/tw-day-trading/scripts/sync_sector_flow.sh >> /home/hom/services/stock/tw-day-trading/logs/sync_sector_flow_cron.log 2>&1`
+- 31 天上限只限制連網的 `market sync-sector-flow` 與 CLI `report sector-flow`；`build_sector_flow_report` 的 `max_days=None` 只給離線長區間（dashboard）用。不要改回分段計算再加總：分段會讓缺價股票只被部分計入，占比和子類檔數都會偏掉。
+- 視窗若因缺價改用 `net_shares` 排名，個股 `amt` 為 null，網頁顯示「—」。`stocks` 內的 f/t/dl 單位是股，`rows` 內是元。
+
 程式位置：`src/market_data/sector_flow_sources.py`（網路邊界 + raw cache）、`src/application/reporting/sector_flow.py`（彙整與狀態判定）、`src/application/reporting/sector_flow_report.py`（Markdown）；CLI 在 `src/cli/market.py` / `src/cli/report.py`；測試 `tests/unit/test_sector_flow*.py`，fixtures 在 `tests/fixtures/sector-flow/`。快取放 `data/raw/{twse,tpex,tdcc,finmind/TaiwanStockInfo}`（`data/` 已 gitignore）。
 
 ### 語意規則（一條都不能漏）
@@ -183,7 +197,7 @@ python3 -m app report sector-flow ... --category 電子工業 --category 半導�
 - 累積第二期 TDCC 週 snapshot 之後，才能宣稱大戶持股變化。
 - 更新 FinMind 產業分類 snapshot。
 - 維持唯讀公開資料：不碰 Shioaji、Telegram 或 GitHub 發佈。
-- 站台「族群資金」頁籤與平日 22:00 cron 尚未建立（搬遷時刻意不做）。
+- 22:00 cron 腳本已寫好（`scripts/sync_sector_flow.sh`），crontab 尚未安裝。
 
 ## 台股相關資料夾對照（2026-10-03 盤點）
 

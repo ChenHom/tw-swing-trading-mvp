@@ -28,6 +28,7 @@ from src.strategy.canonicalizer import StrategyParameterCanonicalizer
 from src.strategy import registry as strategy_registry
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot, PositionSnapshot
 from src.application.reporting.sector_flow import UnknownCategoryError, build_sector_flow_report
+from src.application.reporting.sector_flow_dashboard import build_sector_flow_dashboard
 from src.application.reporting.sector_flow_report import render_sector_flow_markdown
 from src.trading.planner import OrderPlanner, PortfolioState
 from src.trading.allocator import GlobalLimits
@@ -154,6 +155,21 @@ def cmd_report_sector_flow(args):
     report_output.write_text(render_sector_flow_markdown(payload), encoding="utf-8")
     print(output)
     print(report_output)
+    if payload["status"] == "blocked":
+        raise SystemExit(1)
+
+
+def cmd_report_sector_flow_dashboard(args):
+    """Write the sector-flow tab JSON atomically (offline, from the raw cache)."""
+    from zoneinfo import ZoneInfo
+    end_date = args.end_date or datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat()
+    payload = build_sector_flow_dashboard(cache_dir=Path(args.cache_dir), end_date=end_date)
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output.with_name(output.name + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    os.replace(tmp, output)
+    print(output)
     if payload["status"] == "blocked":
         raise SystemExit(1)
 

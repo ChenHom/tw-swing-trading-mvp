@@ -42,7 +42,7 @@ from src.cli.simulation import cmd_simulation_run_daily, cmd_simulation_reset, c
 from src.cli.signal import cmd_signal_generate, cmd_signal_list
 from src.cli.trade import cmd_trade_plan, cmd_trade_reject_signal, cmd_trade_un_reject_signal, cmd_trade_record_fill, cmd_trade_close_all, cmd_trade_exit_check, cmd_trade_set_long_term, cmd_trade_backfill_names
 from src.cli.portfolio import cmd_portfolio_reconcile, cmd_portfolio_rebuild_projections
-from src.cli.report import cmd_report_pnl, cmd_report_daily, cmd_report_sector_flow
+from src.cli.report import cmd_report_pnl, cmd_report_daily, cmd_report_sector_flow, cmd_report_sector_flow_dashboard
 from src.cli.corporate_action import cmd_corporate_action_record, cmd_corporate_action_apply, cmd_corporate_action_list, cmd_corporate_action_check
 
 
@@ -314,6 +314,10 @@ def main():
     parser_rep_sector.add_argument("--report-output", required=True, help="Markdown 輸出路徑")
     parser_rep_sector.add_argument("--category", action="append", help="細看單一族群（可重複；同義詞會正規化）")
     parser_rep_sector.add_argument("--top", type=_positive_int, default=10, help="細看時流入/流出前 N 檔個股")
+    parser_rep_dash = report_subs.add_parser("sector-flow-dashboard", help="族群資金頁籤 JSON（離線，由 raw cache 產生；原子寫入）")
+    parser_rep_dash.add_argument("--end-date", default=None, help="結束日 YYYY-MM-DD（預設 Asia/Taipei 今天）")
+    parser_rep_dash.add_argument("--cache-dir", default="data/raw", help="raw cache 目錄")
+    parser_rep_dash.add_argument("--output", default="data/sector_flow/dashboard.json", help="JSON 輸出路徑")
 
     # 11. corporate-action group
     parser_corpact = subparsers.add_parser("corporate-action", help="公司行動（除息、配股）管理")
@@ -381,6 +385,7 @@ def main():
         ("report", "pnl"): cmd_report_pnl,
         ("report", "daily"): cmd_report_daily,
         ("report", "sector-flow"): cmd_report_sector_flow,
+        ("report", "sector-flow-dashboard"): cmd_report_sector_flow_dashboard,
         ("corporate-action", "record"): cmd_corporate_action_record,
         ("corporate-action", "apply"): cmd_corporate_action_apply,
         ("corporate-action", "list"): cmd_corporate_action_list,

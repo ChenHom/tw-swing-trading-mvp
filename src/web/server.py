@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Query, Form
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -30,6 +30,8 @@ from src.contracts.strategy_names import strategy_name
 
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_PATH = os.environ.get("TRADING_WEB_ROOT_PATH", "/trading")
+# 族群資金頁籤資料（由 report sector-flow-dashboard 產生）；放常數讓測試可 monkeypatch。
+SECTOR_FLOW_PATH = BASE_DIR.parents[1] / "data" / "sector_flow" / "dashboard.json"
 
 app = FastAPI(title="台股波段交易儀表板", root_path=ROOT_PATH)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -159,6 +161,16 @@ def llm_review_save(signal_id: str, account: str = Form("國泰"),
         return RedirectResponse(f"{base}/llm/{signal_id}?account={account}", status_code=303)
     finally:
         conn.close()
+
+
+@app.get("/api/sector-flow")
+def sector_flow():
+    """原樣回傳族群資金 dashboard.json；檔案不存在回 404 JSON。"""
+    try:
+        body = SECTOR_FLOW_PATH.read_bytes()
+    except FileNotFoundError:
+        return JSONResponse({"error": "尚無族群資金資料，等平日 22:00 排程產生"}, status_code=404)
+    return Response(body, media_type="application/json")
 
 
 @app.get("/healthz", response_class=PlainTextResponse)

@@ -33,6 +33,10 @@
     <span class="tab-text-desktop">資金總覽</span>
     <span class="tab-text-mobile">資金</span>
   </button>
+  <button type="button" class="tab-btn" data-tab="sector" onclick="switchTab('sector', this)">
+    <span class="tab-text-desktop">族群資金</span>
+    <span class="tab-text-mobile">族群</span>
+  </button>
   <button type="button" class="tab-btn" data-tab="trades" onclick="switchTab('trades', this)">
     <span class="tab-text-desktop">交易紀錄</span>
     <span class="tab-text-mobile">紀錄</span>
@@ -142,6 +146,51 @@
     {% endif %}
   </div>
 
+</div>
+
+<!-- 族群資金 Tab（資料由 static/js/sector_flow.js 第一次切到此頁籤時才抓） -->
+<div id="tab-sector" class="tab-content" data-api="{{ base }}/api/sector-flow">
+  <p class="hint" id="sf-msg" hidden></p>
+  <div id="sf-panel" hidden>
+    <div class="sf-range" role="group" aria-label="觀察區間" id="sf-range"></div>
+    <div class="sf-cards" id="sf-cards"></div>
+
+    <section class="card">
+      <h3>流向轉變</h3>
+      <p class="hint">近 5 個交易日內，近 5 日累計淨額方向翻轉的族群。走勢為近 <span class="sf-nlabel"></span> 個交易日的每日淨額。</p>
+      <div class="sf-scroll"><table id="sf-flips"></table></div>
+    </section>
+
+    <section class="card">
+      <h3>族群 × 日期</h3>
+      <p class="hint">每格是該族群當天的法人淨額（估算）。紅色流入、綠色流出，顏色越深金額越大。依近 <span class="sf-nlabel"></span> 日累計排序。</p>
+      <div class="sf-scroll"><table class="sf-heat" id="sf-heat"></table></div>
+      <div class="sf-legend"><span>流出</span><i style="background:#2f855a"></i><i style="background:#9ae6b4"></i><i style="background:#f7fafc;border:1px solid #edf2f7"></i><i style="background:#feb2b2"></i><i style="background:#c53030"></i><span>流入</span><span id="sf-scale"></span></div>
+    </section>
+
+    <section class="card">
+      <h3>族群排行</h3>
+      <p class="hint">點選一列，下方顯示該族群細看。連續天數：每日淨額連續同方向的天數。外資／投信／自營商為近 <span class="sf-nlabel"></span> 日拆分。</p>
+      <div class="sf-scroll"><table id="sf-rank"></table></div>
+    </section>
+
+    <section class="card" id="sf-detail"></section>
+
+    <section class="card sf-notes" aria-label="說明">
+      <div>金額是「法人淨股數 × 當日收盤價」的估算，不是實際成交金額。</div>
+      <div>一檔股票可能同時屬於多個族群（例如大類「電子工業」與細類「半導體業」），族群之間不可加總。</div>
+      <div>四個官方來源皆無資料的日期視為休市。資料來源：TWSE、TPEx 三大法人與收盤價，FinMind 產業分類；指數來自 TWSE 每日收盤行情。<span id="sf-taxo"></span></div>
+      <details id="sf-warnings" hidden><summary>資料警告（<span id="sf-wcount"></span>）</summary><ul id="sf-wlist"></ul></details>
+    </section>
+  </div>
+
+  <button type="button" class="sf-totop" id="sf-totop" aria-label="回到頂端" title="回到頂端" hidden>↑</button>
+
+  <dialog id="sf-dlg" aria-labelledby="sf-dlgtitle">
+    <div class="sf-dhead"><h3 id="sf-dlgtitle" style="margin:0"></h3><form method="dialog"><button class="sf-x">關閉</button></form></div>
+    <p class="hint" id="sf-dlghint"></p>
+    <div class="sf-scroll"><table id="sf-dlgtable"></table></div>
+  </dialog>
 </div>
 
 <!-- 交易紀錄 Tab -->
@@ -358,6 +407,7 @@
 <script src="{{ base }}/static/js/chart.umd.min.js"></script>
 <script src="{{ base }}/static/js/dashboard-charts.js"></script>
 <script src="{{ base }}/static/js/backtest-charts.js"></script>
+<script src="{{ base }}/static/js/sector_flow.js"></script>
 <script>
   function switchTab(tabId, button, updateHash) {
     // 移除所有按鈕的 active
@@ -375,6 +425,7 @@
     });
     // 顯示當前內容
     document.getElementById('tab-' + tabId).classList.add('active');
+    if (tabId === 'sector' && window.sectorFlowLoad) window.sectorFlowLoad();
     if (updateHash !== false) {
       history.replaceState(null, '', '#tab-' + tabId);
     }

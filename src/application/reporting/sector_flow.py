@@ -69,13 +69,13 @@ def _iso_date(value: str) -> date:
         raise ValueError(f"invalid ISO date: {value}") from exc
 
 
-def _dates(start_date: str, end_date: str) -> list[str]:
+def _dates(start_date: str, end_date: str, max_days: int | None = 31) -> list[str]:
     start = _iso_date(start_date)
     end = _iso_date(end_date)
     if start > end:
         raise ValueError("start date must not exceed end date")
-    if (end - start).days > 30:
-        raise ValueError("sector-flow range must not exceed 31 calendar days")
+    if max_days is not None and (end - start).days >= max_days:
+        raise ValueError(f"sector-flow range must not exceed {max_days} calendar days")
     result = []
     cursor = start
     while cursor <= end:
@@ -493,9 +493,11 @@ def build_category_detail(
 
 
 def build_sector_flow_report(
-    *, cache_dir: Path, start_date: str, end_date: str, detail_categories: Sequence[str] = (), top: int = 10
+    *, cache_dir: Path, start_date: str, end_date: str, detail_categories: Sequence[str] = (), top: int = 10,
+    max_days: int | None = 31,
 ) -> dict[str, Any]:
-    requested_dates = _dates(start_date, end_date)
+    """`max_days=None` lifts the CLI's 31-day cap for offline callers that need longer windows (the web tab)."""
+    requested_dates = _dates(start_date, end_date, max_days)
     taxonomy = load_taxonomy(cache_dir, end_date=end_date)
     source_status: dict[str, dict[str, Any]] = {}
     day_inputs: list[tuple[str, list[InstitutionalFlowRow], dict[tuple[str, str], float]]] = []
