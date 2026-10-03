@@ -190,11 +190,11 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 - **`source_status[*][*].cache_path` 是相對於 `--cache-dir` 的路徑**，不論 cache dir 怎麼寫，JSON 都逐位元組相同。不要把絕對路徑放回報告。
 - **TDCC 大戶要兩期**：levels 12-15 需要兩期週 snapshot；少於兩期時報告 `insufficient_data`，不可宣稱大戶增減。
 - **TWSE 日期不符視為 `no_data`**：TWSE 在非交易日可能回前一交易日資料；payload 日期與請求日期不同就是 `no_data`。
-- **現況**：產業分類（FinMind TaiwanStockInfo）snapshot 為 2026-06-03（7 筆未分類），TDCC 只有一期，故第一版報告為 `degraded`。TPEx 2026-07-01..10-02 的回補曾被 HTTP 520 擋下，快取可能不完整。
+- **現況（2026-10-03）**：快取涵蓋 2026-05-15..10-02 共 97 個交易日，TWSE / TPEx 四個資料集日期完全對齊（5 秒間隔回補，0 失敗；先前的 HTTP 520 未再出現）。TDCC 已有 2026-09-24、10-02 兩期週 snapshot。報告仍為 `degraded`，唯一原因是產業分類（FinMind TaiwanStockInfo）snapshot 停在 2026-06-03（7 筆未分類）。
 
 ### 後續維護（原 Track 3）
 
-- 累積第二期 TDCC 週 snapshot 之後，才能宣稱大戶持股變化。
+- TDCC 已有兩期（09-24、10-02），`report sector-flow` 的大戶代理指標可以計算；頁籤目前沒有顯示它。
 - 更新 FinMind 產業分類 snapshot。
 - 維持唯讀公開資料：不碰 Shioaji、Telegram 或 GitHub 發佈。
 - 平日 22:00 cron 已安裝（2026-10-03）；網頁「族群資金」頁籤讀 `GET /api/sector-flow`。
