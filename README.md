@@ -282,7 +282,7 @@ python3 -m app portfolio reconcile
 
 ### 第八步（獨立報表）：族群資金流（Sector Flow V1）
 
-與交易線完全分離的唯讀研究報表（2026-10-03 自 tw-day-trading-lab 搬入）：`python3 -m app market sync-sector-flow` 抓 TWSE / TPEx / TDCC 公開資料到 `data/raw`（唯一會連網的一步），`python3 -m app report sector-flow` 完全離線由快取重播。金額為估算值，非精確資金流。`python3 -m app report sector-flow-dashboard` 產生網頁「族群資金」頁籤用的 `data/sector_flow/dashboard.json`（平日 22:00 由 `scripts/sync_sector_flow.sh` 更新）。指令、語意規則與設計見 `AGENTS.md`「族群資金流」一節與 `docs/superpowers/specs/2026-10-02-sector-flow-v1-design.md`。
+與交易線完全分離的唯讀研究報表（2026-10-03 自 tw-day-trading-lab 搬入）：`python3 -m app market sync-sector-flow` 抓 TWSE / TPEx / TDCC 公開資料到 `data/raw`（唯一會連網的一步），`python3 -m app report sector-flow` 完全離線由快取重播。金額為估算值，非精確資金流。`python3 -m app report sector-flow-dashboard` 產生網頁「族群資金」「大戶持股」頁籤用的 `data/sector_flow/dashboard.json`（平日 22:00 由 `scripts/sync_sector_flow.sh` 更新）。指令、語意規則與設計見 `AGENTS.md`「族群資金流」一節與 `docs/superpowers/specs/2026-10-02-sector-flow-v1-design.md`。
 
 ---
 

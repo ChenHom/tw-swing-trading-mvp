@@ -1,11 +1,11 @@
 /* 族群資金頁籤：第一次切到頁籤才 fetch /api/sector-flow，之後只渲染一次。資料合約見 data/sector_flow/dashboard.json 的產生器。 */
 (function () {
-  var root = document.getElementById('tab-sector');
-  if (!root) return;
+  var root = document.getElementById('tab-sector'), holder = document.getElementById('tab-holder');
+  if (!root || !holder) return;
   var started = false, inited = false;
   function $(id) { return document.getElementById('sf-' + id); }
   function reduced() { return matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'; }
-  function message(text) { var m = $('msg'); m.textContent = text; m.hidden = !text; }
+  function message(text) { ['msg', 'lhmsg'].forEach(function (id) { var m = $(id); m.textContent = text; m.hidden = !text; }); }
 
   window.sectorFlowLoad = function () {
     if (started) return;
@@ -19,7 +19,7 @@
         });
       })
       .then(function (D) { message(''); $('panel').hidden = false; inited = true; init(D); })
-      .catch(function (err) { started = inited; message('族群資金資料載入失敗：' + err.message + '。切換頁籤可重試。'); });
+      .catch(function (err) { started = inited; message('資料載入失敗：' + err.message + '。切換頁籤可重試。'); });
   };
 
   function init(D) {
@@ -102,7 +102,7 @@
       '<div class="sf-two" style="margin-top:' + (sg ? '.3rem' : '.8rem') + '">' + stockTable((sg || st).in, '近 ' + k + ' 日流入前 5 名', '流入') + stockTable((sg || st).out, '近 ' + k + ' 日流出前 5 名', '流出') + '</div>';
   }
 
-  // 大戶持股（週）：週資料，不隨區間切換
+  // 大戶持股（週）：週資料，在 #tab-holder，不隨族群資金的區間切換
   function lhTable(list, title) {
     return '<div style="min-width:0"><div class="card-label" style="margin-bottom:.3rem">' + title + '</div><div class="sf-scroll"><table><thead><tr><th>代號</th><th>名稱</th><th class="num">估算金額</th><th class="num">大戶張數變化</th><th class="num">持股比例變化</th></tr></thead><tbody>' +
       (list.length ? list.map(function (s) { var lots = Math.round(s.shares / 1000);
@@ -123,7 +123,7 @@
     }
     var cur = null; lh.rows.forEach(function (r) { if (r.name === lhSel) cur = r; });
     if (!cur) { cur = lh.rows[0]; lhSel = cur.name; }
-    body.innerHTML = '<p class="hint">' + esc(lh.prior) + ' → ' + esc(lh.latest) + '｜TDCC 集保週資料，已累積 ' + lh.snapshots + ' 期；不受上方區間切換影響。大戶＝單一集保帳戶持有 400 張以上（含法人、ETF、大股東），增資、減資也會讓股數跳動。金額為大戶股數變化 × 收盤價的估算。</p>' +
+    body.innerHTML = '<p class="hint">' + esc(lh.prior) + ' → ' + esc(lh.latest) + '｜TDCC 集保週資料，已累積 ' + lh.snapshots + ' 期。大戶＝單一集保帳戶持有 400 張以上（含法人、ETF、大股東），增資、減資也會讓股數跳動。金額為大戶股數變化 × 收盤價的估算。</p>' +
       '<div class="sf-scroll"><table><thead><tr><th>族群</th><th class="num">大戶估算金額</th><th class="num">增加檔數</th><th class="num">減少檔數</th></tr></thead><tbody>' +
       lh.rows.map(function (r) { return '<tr class="sf-lh-row' + (r === cur ? ' sel' : '') + '" tabindex="0" data-n="' + esc(r.name) + '"><td>' + nm(r) + '</td><td class="num ' + cls(r.amt) + '">' + yi(r.amt) + '</td><td class="num">' + r.up + '</td><td class="num">' + r.down + '</td></tr>'; }).join('') + '</tbody></table></div>' +
       (cur.missing > 0 ? '<p class="hint" style="margin:.4rem 0 0">' + cur.missing + ' 檔無收盤價，未計入金額</p>' : '') +
@@ -194,7 +194,7 @@
       if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) dlg.close();
       return;
     }
-    var sr = e.target.closest('tr.sf-sub'), cr = e.target.closest('[data-crumb]'), lr = e.target.closest('tr.sf-lh-row'), keep = null;
+    var sr = e.target.closest('tr.sf-sub'), cr = e.target.closest('[data-crumb]'), keep = null;
     if (sr || cr) { // 只換前 5 名表，不捲動、不動 sel 的族群
       var want = sr ? sr.getAttribute('data-sub') : null;
       keep = subSel; subSel = sr && want !== subSel ? want : null; show(sel);
@@ -202,11 +202,19 @@
       if (back) back.focus({ preventScroll: true });
       return;
     }
-    if (lr) { lhSel = lr.getAttribute('data-n'); renderLh(); var again = Array.prototype.filter.call(root.querySelectorAll('tr.sf-lh-row'), function (t) { return t.getAttribute('data-n') === lhSel; })[0]; if (again) again.focus({ preventScroll: true }); return; }
     var tr = e.target.closest('tr.pick');
     if (tr) { if (dlg.open) dlg.close(); show(tr.getAttribute('data-n')); $('detail').scrollIntoView({ behavior: reduced(), block: 'start' }); }
   });
-  root.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.matches('tr.pick, [data-flip], tr.sf-sub, tr.sf-lh-row, [data-crumb]')) e.target.click(); });
+  root.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.matches('tr.pick, [data-flip], tr.sf-sub, [data-crumb]')) e.target.click(); });
+  // 大戶持股在自己的頁籤
+  holder.addEventListener('click', function (e) {
+    var lr = e.target.closest('tr.sf-lh-row');
+    if (!lr) return;
+    lhSel = lr.getAttribute('data-n'); renderLh();
+    var again = Array.prototype.filter.call(holder.querySelectorAll('tr.sf-lh-row'), function (t) { return t.getAttribute('data-n') === lhSel; })[0];
+    if (again) again.focus({ preventScroll: true });
+  });
+  holder.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.matches('tr.sf-lh-row')) e.target.click(); });
 
     // 附註：產業分類快照日期、資料警告（預設收合）
     if (D.taxonomy_snapshot_date) $('taxo').textContent = '產業分類為 ' + D.taxonomy_snapshot_date + ' 的快照。';

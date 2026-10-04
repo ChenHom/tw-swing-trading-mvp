@@ -86,7 +86,7 @@ def test_completed_trade_card_renders_in_second_standalone_tab(tmp_path):
 
     assert '<details name="completed-trade-row"' in body
     assert "web-buy" in body and "web-sell" in body
-    assert body.count('class="tab-btn') == 7
+    assert body.count('class="tab-btn') == 8
     assert (
         body.index("資金總覽")
         < body.index("交易紀錄")

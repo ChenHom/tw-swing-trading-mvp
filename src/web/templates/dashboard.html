@@ -37,6 +37,10 @@
     <span class="tab-text-desktop">族群資金</span>
     <span class="tab-text-mobile">族群</span>
   </button>
+  <button type="button" class="tab-btn" data-tab="holder" onclick="switchTab('holder', this)">
+    <span class="tab-text-desktop">大戶持股</span>
+    <span class="tab-text-mobile">大戶</span>
+  </button>
   <button type="button" class="tab-btn" data-tab="trades" onclick="switchTab('trades', this)">
     <span class="tab-text-desktop">交易紀錄</span>
     <span class="tab-text-mobile">紀錄</span>
@@ -174,11 +178,6 @@
       <div class="sf-scroll"><table id="sf-rank"></table></div>
     </section>
 
-    <section class="card" id="sf-lh" hidden>
-      <h3>大戶持股（週）</h3>
-      <div id="sf-lhbody"></div>
-    </section>
-
     <section class="card" id="sf-detail"></section>
 
     <section class="card sf-notes" aria-label="說明">
@@ -196,6 +195,15 @@
     <p class="hint" id="sf-dlghint"></p>
     <div class="sf-scroll"><table id="sf-dlgtable"></table></div>
   </dialog>
+</div>
+
+<!-- 大戶持股 Tab（與族群資金共用 /api/sector-flow，第一次切到其中一個頁籤時才抓） -->
+<div id="tab-holder" class="tab-content">
+  <p class="hint" id="sf-lhmsg" hidden></p>
+  <section class="card" id="sf-lh" hidden>
+    <h3>大戶持股（週）</h3>
+    <div id="sf-lhbody"></div>
+  </section>
 </div>
 
 <!-- 交易紀錄 Tab -->
@@ -430,7 +438,7 @@
     });
     // 顯示當前內容
     document.getElementById('tab-' + tabId).classList.add('active');
-    if (tabId === 'sector' && window.sectorFlowLoad) window.sectorFlowLoad();
+    if ((tabId === 'sector' || tabId === 'holder') && window.sectorFlowLoad) window.sectorFlowLoad();
     if (updateHash !== false) {
       history.replaceState(null, '', '#tab-' + tabId);
     }

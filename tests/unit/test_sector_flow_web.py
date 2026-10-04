@@ -40,8 +40,12 @@ def test_sector_flow_api_404_when_file_missing(tmp_path, monkeypatch):
     assert "尚無族群資金資料" in res.json()["error"]
 
 
-def test_large_holder_section_sits_between_rank_and_detail(tmp_path):
+def test_large_holder_has_its_own_tab_right_of_sector(tmp_path):
     body = _render_completed_trade_dashboard(tmp_path)
 
-    assert body.index('<table id="sf-rank">') < body.index('id="sf-lh"') < body.index('id="sf-detail"')
+    assert body.index('data-tab="sector"') < body.index('data-tab="holder"') < body.index('data-tab="trades"')
+    assert '<span class="tab-text-desktop">大戶持股</span>' in body
+    assert '<span class="tab-text-mobile">大戶</span>' in body
+    assert body.index('id="tab-sector"') < body.index('id="tab-holder"') < body.index('id="sf-lh"') < body.index('id="tab-trades"')
+    assert "tabId === 'holder'" in body
     assert "大戶持股（週）" in body

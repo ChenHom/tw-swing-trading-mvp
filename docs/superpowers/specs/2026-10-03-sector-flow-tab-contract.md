@@ -4,7 +4,7 @@
 
 - **檔案**：`data/sector_flow/dashboard.json`。`data/` 已在 .gitignore。
 - **產生**：`python3 -m app report sector-flow-dashboard`，完全離線，用暫存檔加 rename 原子寫入。每個平日 22:00 由 `scripts/sync_sector_flow.sh` 更新。
-- **讀取**：`GET {base}/api/sector-flow` 原樣回傳這個檔；檔案不存在時回 404 JSON `{"error": ...}`。頁籤第一次被打開時才會去抓。
+- **讀取**：`GET {base}/api/sector-flow` 原樣回傳這個檔；檔案不存在時回 404 JSON `{"error": ...}`。「族群資金」或「大戶持股」頁籤第一次被打開時才會去抓；兩個頁籤共用這份資料，只抓一次。
 
 ## 格式
 
@@ -39,7 +39,7 @@
     },
     "30": {}, "60": {}, "90": {}
   },
-  "large_holder": {                    // TDCC 大戶（分級 12–15，單一帳戶 400 張以上），週資料，不隨視窗變
+  "large_holder": {                    // 「大戶持股」頁籤用。TDCC 大戶（分級 12–15，單一帳戶 400 張以上），週資料，不隨視窗變
     "status": "ok" | "insufficient_data" | "schema_error",
     "reason": null | "fewer_than_two_eligible_snapshots" | "...",
     "prior": "2026-09-24", "latest": "2026-10-02",   // 比較的兩期週快照

@@ -166,7 +166,7 @@ python3 -m app report sector-flow --start-date 2026-09-24 --end-date 2026-10-01 
 python3 -m app report sector-flow ... --category 電子工業 --category 半導體業 --top 10
 ```
 
-### 網頁「族群資金」頁籤的資料（dashboard）
+### 網頁「族群資金」「大戶持股」頁籤的資料（dashboard）
 
 ```bash
 # 完全離線；輸出 data/sector_flow/dashboard.json（暫存檔 + rename 原子寫入）；blocked（無任何交易日）exit 1
@@ -199,10 +199,10 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 
 ### 後續維護（原 Track 3）
 
-- 頁籤已顯示大戶週變化（2026-10-04 起）。TDCC 公開資料只給最新一週、無法回補，週快照從 2026-09-24 起由 cron 累積；累積 4 週以上後可考慮加週走勢。
+- 「大戶持股」頁籤顯示大戶週變化（2026-10-04 起；同日從「族群資金」頁籤移出成獨立頁籤）。TDCC 公開資料只給最新一週、無法回補，週快照從 2026-09-24 起由 cron 累積；累積 4 週以上後可考慮加週走勢。
 - 產業分類由 cron 每天檢查，內容有變才寫新 snapshot；FinMind 若出現新的分類名稱，要檢查是否需補 `CATEGORY_SYNONYMS`。
 - 維持唯讀公開資料：不碰 Shioaji、Telegram 或 GitHub 發佈。
-- 平日 22:00 cron 已安裝（2026-10-03）；網頁「族群資金」頁籤讀 `GET /api/sector-flow`。
+- 平日 22:00 cron 已安裝（2026-10-03）；網頁「族群資金」與「大戶持股」頁籤共用 `GET /api/sector-flow`，先打開哪個就由哪個抓，只抓一次。
 
 ## 台股相關資料夾對照（2026-10-03 盤點）
 
