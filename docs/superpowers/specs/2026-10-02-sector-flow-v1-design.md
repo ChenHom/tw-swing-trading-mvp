@@ -356,7 +356,9 @@ ingest 端視為無效 cache 並重新抓取，不會 traceback。TPEx table 內
 
 - 範圍：只計入該期間「上市櫃宇宙」＝任一觀察日法人 flow rows 出現過的代號；且只計入兩個 snapshot 都出現的代號
   （期間內新上市／下市的股票不會把整筆持股算成變化）。排除數量輸出於
-  `excluded_symbols: {"outside_listed_universe": n, "not_in_both_snapshots": n}`。
+  `excluded_symbols: {"outside_listed_universe": n, "not_in_both_snapshots": n, "custody_shares_changed": n}`。
+- 股本變動（2026-10-04 加）：兩期之間集保總股數（分級 17）變動 ≥ `TDCC_MAX_CUSTODY_CHANGE = 0.01` 的股票，
+  該期不計入（配股、增資、合併、減資會讓大戶股數跟著跳，不是買賣）。數量記在 `custody_shares_changed`。
 - 視窗：配對為「不晚於 `end_date` 的最新 snapshot」與其前一個。常數 `TDCC_MAX_STALENESS_DAYS = 7`、
   `TDCC_MAX_SNAPSHOT_GAP_DAYS = 14`。`latest < start_date - 7 天` → `status=insufficient_data`,
   `reason=latest_snapshot_too_old`；`latest - prior > 14 天` → `reason=snapshots_not_consecutive_weeks`。

@@ -399,23 +399,32 @@ def backfill_tdcc_holdings(*, cache_dir: Path, as_of: str, symbols: Sequence[str
                            retries: int = 3, progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
     """Rebuild one past week's TDCC snapshot from qryStock, all-or-nothing.
 
-    Never overwrites a snapshot (open data wins). Any symbol that still fails after retries means no
-    file is written: a partial snapshot would silently drop stocks from that week's large-holder sums.
+    Never touches an open-data snapshot (no backfill.json next to it). Rerunning a backfilled week only
+    re-asks the stocks TDCC answered 查無此資料 for and merges them in. Any symbol that still fails after
+    retries means nothing is written: a partial snapshot would silently drop stocks from that week's sums.
     """
     _validate_iso_date(as_of)
     path = cache_dir / "tdcc" / "holding_distribution" / as_of / "market.json"
-    if path.exists():
-        return {"state": "exists", "as_of_date": as_of, "cache_path": str(path)}
+    meta_path = path.with_name("backfill.json")
     rows: list[dict[str, str]] = []
+    total = len(symbols)
+    if path.exists():
+        if not meta_path.exists():
+            return {"state": "exists", "as_of_date": as_of, "cache_path": str(path)}
+        rows, meta = read_json(path), read_json(meta_path)
+        symbols, total = meta["no_data"], meta["symbols"]
     no_data: list[str] = []
     failed: list[dict[str, str]] = []
     for index, symbol in enumerate(symbols, 1):
         for attempt in range(retries + 1):
             try:
                 got = parse_tdcc_stock_page(fetch(symbol, as_of), symbol, as_of)
-                break
             except (OSError, ValueError) as exc:  # URLError/timeouts are OSError; schema and decode are ValueError
                 error = str(exc)
+                continue
+            # qryStock sometimes answers 查無此資料 for a stock it has (2026-10-04: 2395 on 09-18), so ask again
+            if got or attempt == retries:
+                break
         else:
             failed.append({"symbol": symbol, "error": error})
             if len(failed) >= 20:  # TDCC is refusing us; stop instead of hammering it
@@ -424,12 +433,12 @@ def backfill_tdcc_holdings(*, cache_dir: Path, as_of: str, symbols: Sequence[str
         rows.extend(got) if got else no_data.append(symbol)
         if progress:
             progress(index, len(symbols))
-    summary = {"as_of_date": as_of, "symbols": len(symbols), "row_count": len(rows), "no_data": no_data, "failed": failed}
+    summary = {"as_of_date": as_of, "symbols": total, "row_count": len(rows), "no_data": no_data, "failed": failed}
     if failed:
         return {"state": "error", **summary}
     parse_tdcc_holdings(rows)  # same validation the report applies
     _atomic_json(path, rows)
-    _atomic_json(path.with_name("backfill.json"), {"source": TDCC_QRY_STOCK_URL, **summary})
+    _atomic_json(meta_path, {"source": TDCC_QRY_STOCK_URL, **summary})
     return {"state": "ok", "cache_path": str(path), **summary}
 
 def build_daily_requests(cache_dir: Path, requested_date: str) -> list[SourceRequest]:

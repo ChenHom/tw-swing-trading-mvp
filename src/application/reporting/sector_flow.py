@@ -37,6 +37,10 @@ CATCH_ALL_CATEGORY = "其他"
 UNCLASSIFIED = "未分類"
 TDCC_MAX_SNAPSHOT_GAP_DAYS = 14
 TDCC_MAX_STALENESS_DAYS = 7
+# A stock whose custody total (level 17) moved this much between the two snapshots had a corporate action
+# (stock dividend, capital increase, merger); its large-holder delta is not buying or selling, so it is
+# left out of that week. 1% chosen with the user on 2026-10-04 after 2884 / 6488 / 6949 dominated sectors.
+TDCC_MAX_CUSTODY_CHANGE = 0.01
 PRICE_COVERAGE_MIN = 0.9
 BROAD_CATEGORIES = frozenset({"電子工業", "化學生技醫療"})
 CATEGORY_OVERLAP_NOTE = "一檔股票可能同時計入多個族群（例如大類「電子工業」與細類「半導體業」），族群之間互有重疊，不可加總。"
@@ -332,10 +336,16 @@ def build_large_holder_proxy(
     listed = set(universe)
     old_symbols = {row.symbol for row in holdings_by_date[prior]}
     new_symbols = {row.symbol for row in holdings_by_date[latest]}
+    old_total = {row.symbol: row.shares for row in holdings_by_date[prior] if row.level == 17}
+    new_total = {row.symbol: row.shares for row in holdings_by_date[latest] if row.level == 17}
     candidates = old_symbols | new_symbols
     in_universe = candidates & listed
-    counted = in_universe & old_symbols & new_symbols
-    excluded = {"outside_listed_universe": len(candidates - listed), "not_in_both_snapshots": len(in_universe - counted)}
+    in_both = in_universe & old_symbols & new_symbols
+    reshaped = {symbol for symbol in in_both if symbol in old_total and symbol in new_total and new_total[symbol] != old_total[symbol]
+                and abs(new_total[symbol] - old_total[symbol]) >= TDCC_MAX_CUSTODY_CHANGE * old_total[symbol]}
+    counted = in_both - reshaped
+    excluded = {"outside_listed_universe": len(candidates - listed), "not_in_both_snapshots": len(in_universe - in_both),
+                "custody_shares_changed": len(reshaped)}
     categories: dict[str, dict[str, Any]] = {}
     stocks: list[dict[str, Any]] = []
     for symbol in sorted(counted):

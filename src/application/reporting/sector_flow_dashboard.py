@@ -62,7 +62,7 @@ def _large_holder(main: dict[str, Any], weekly: list[tuple[str, dict[str, Any]]]
     """
     out: dict[str, Any] = {"status": main["status"], "reason": main.get("reason"), "prior": main.get("prior_as_of_date"),
                            "latest": main.get("latest_as_of_date"), "snapshots": snapshots, "window": LH_WINDOW,
-                           "start": start, "weeks": [d for d, _ in weekly], "rows": []}
+                           "start": start, "weeks": [d for d, _ in weekly], "reshaped": 0, "rows": []}
     if main["status"] != "ok":
         return out
     if not weekly:
@@ -72,6 +72,7 @@ def _large_holder(main: dict[str, Any], weekly: list[tuple[str, dict[str, Any]]]
     for i, (_, lh) in enumerate(weekly):
         if lh["status"] != "ok":
             continue
+        out["reshaped"] += lh["excluded_symbols"]["custody_shares_changed"]
         for c in lh["categories"]:
             cat = cats.setdefault(c["category"], {"broad": c["is_broad"], "wk": [None] * len(weekly), "stocks": {}})
             cat["wk"][i] = c["estimated_change_twd"]
@@ -116,7 +117,7 @@ def build_sector_flow_dashboard(*, cache_dir: Path, end_date: str, windows=(20, 
         "status": "blocked", "warnings": [], "taxonomy_snapshot_date": None, "holidays": [], "rows": [],
         "stocks": {str(w): {} for w in windows},
         "large_holder": {"status": "insufficient_data", "reason": "no_trading_dates", "prior": None, "latest": None, "snapshots": 0,
-                         "window": LH_WINDOW, "start": None, "weeks": [], "rows": []},
+                         "window": LH_WINDOW, "start": None, "weeks": [], "reshaped": 0, "rows": []},
     }
     if not dates:
         out["warnings"] = ["no trading dates found in cache"]

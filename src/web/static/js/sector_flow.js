@@ -144,7 +144,8 @@
     if (!cur) { cur = lh.rows[0]; lhSel = cur.name; }
     var wks = lh.weeks.length, holes = lh.weeks.filter(function (_, i) { return lh.rows.every(function (r) { return r.wk[i] == null; }); }).length;
     body.innerHTML = '<p class="hint">近 ' + lh.window + ' 個交易日（' + md(lh.start) + ' 起）共 ' + wks + ' 週的 TDCC 集保週資料，每週與前一週比較' + (holes ? '，其中 ' + holes + ' 週與前一期相隔超過兩週、無法比較' : '') + '；快取已累積 ' + lh.snapshots + ' 期。' +
-      '大戶＝單一集保帳戶持有 400 張以上（含法人、ETF、大股東），增資、減資也會讓股數跳動。金額為每週大戶股數變化 × 當週收盤價的估算再加總；增加／減少檔數看 ' + lh.window + ' 日內大戶股數的淨增減。</p>' +
+      (lh.reshaped ? '集保總股數單週變動 1% 以上的股票（配股、增資、合併、減資）當週不計入，共 ' + lh.reshaped + ' 個股票週。' : '') +
+      '大戶＝單一集保帳戶持有 400 張以上（含法人、ETF、借券等專戶、大股東），單週常有大進大出，看累計較穩。金額為每週大戶股數變化 × 當週收盤價的估算再加總；增加／減少檔數看 ' + lh.window + ' 日內大戶股數的淨增減。</p>' +
       '<div class="sf-scroll"><table><thead><tr><th>族群</th><th>近 ' + lh.window + ' 日走勢</th><th class="num">近 ' + lh.window + ' 日累計</th><th class="num">最新一週</th><th class="num">增加檔數</th><th class="num">減少檔數</th></tr></thead><tbody>' +
       lh.rows.map(function (r) { var last = r.wk[r.wk.length - 1];
         return '<tr class="sf-lh-row' + (r === cur ? ' sel' : '') + '" tabindex="0" data-n="' + esc(r.name) + '"><td>' + nm(r) + '</td><td>' + spark(r.wk.map(function (v) { return v || 0; })) + '</td><td class="num ' + cls(r.amt) + '">' + yi(r.amt) + '</td><td class="num ' + cls(last) + '">' + (last == null ? '—' : yi(last)) + '</td><td class="num">' + r.up + '</td><td class="num">' + r.down + '</td></tr>'; }).join('') + '</tbody></table></div>' +

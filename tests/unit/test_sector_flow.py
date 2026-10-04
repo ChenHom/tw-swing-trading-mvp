@@ -297,7 +297,7 @@ class SectorFlowAggregationTest(unittest.TestCase):
         holder = self._report(end="2026-10-01")["large_holder"]
         self.assertEqual(holder["status"], "ok")
         self.assertEqual(sum(row["large_holder_share_delta"] for row in holder["categories"]), 50)
-        self.assertEqual(holder["excluded_symbols"], {"outside_listed_universe": 2, "not_in_both_snapshots": 1})
+        self.assertEqual(holder["excluded_symbols"], {"outside_listed_universe": 2, "not_in_both_snapshots": 1, "custody_shares_changed": 0})
 
     def test_corrupt_tdcc_snapshot_in_cache_is_schema_error_not_skipped(self):
         self._write_holdings("2026-09-17", "{not json")
@@ -346,7 +346,7 @@ class SectorFlowLargeHolderTest(unittest.TestCase):
             ],
             "2026-09-24": [
                 HoldingDistributionRow("2026-09-24", "2330", 12, 11, 150_000, 1.5),
-                HoldingDistributionRow("2026-09-24", "2330", 17, 100, 1_100_000, 100.0),
+                HoldingDistributionRow("2026-09-24", "2330", 17, 100, 1_005_000, 100.0),
             ],
         }
         taxonomy = {"2330": type("Entry", (), {"categories": ("半導體業",), "name": "台積電"})()}
@@ -375,7 +375,21 @@ class SectorFlowLargeHolderTest(unittest.TestCase):
         result = build_large_holder_proxy(holdings_by_date=holdings, taxonomy=taxonomy, closes={}, end_date="2026-10-01", start_date="2026-09-24", universe={"2330", "1111", "2222"})
         self.assertEqual(result["categories"][0]["large_holder_share_delta"], 30)
         self.assertEqual(sum(row["large_holder_share_delta"] for row in result["categories"]), 30)
-        self.assertEqual(result["excluded_symbols"], {"outside_listed_universe": 1, "not_in_both_snapshots": 2})
+        self.assertEqual(result["excluded_symbols"], {"outside_listed_universe": 1, "not_in_both_snapshots": 2, "custody_shares_changed": 0})
+
+    def test_stock_whose_custody_total_moved_one_percent_is_left_out_of_that_week(self):
+        def rows(day, total_2330, total_2303):
+            return [HoldingDistributionRow(day, "2330", 12, 1, 100_000 if day < "2026-09-24" else 190_000, 1.0), HoldingDistributionRow(day, "2330", 17, 1, total_2330, 100.0),
+                    HoldingDistributionRow(day, "2303", 12, 1, 100_000 if day < "2026-09-24" else 105_000, 1.0), HoldingDistributionRow(day, "2303", 17, 1, total_2303, 100.0)]
+        taxonomy = {s: type("Entry", (), {"categories": ("半導體業",), "name": s})() for s in ("2330", "2303")}
+        # 2330: stock dividend +10% (1,000,000 -> 1,100,000) is out; 2303: +0.99% conversion stays in
+        holdings = {"2026-09-18": rows("2026-09-18", 1_000_000, 1_000_000), "2026-09-24": rows("2026-09-24", 1_100_000, 1_009_900)}
+        result = build_large_holder_proxy(holdings_by_date=holdings, taxonomy=taxonomy, closes={}, end_date="2026-10-01", start_date="2026-09-24", universe={"2330", "2303"}, include_stocks=True)
+        self.assertEqual((result["categories"][0]["large_holder_share_delta"], [s["symbol"] for s in result["stocks"]]), (5_000, ["2303"]))
+        self.assertEqual(result["excluded_symbols"]["custody_shares_changed"], 1)
+        holdings["2026-09-24"] = rows("2026-09-24", 990_000, 1_000_000)  # a 1% drop (capital reduction) is out too
+        result = build_large_holder_proxy(holdings_by_date=holdings, taxonomy=taxonomy, closes={}, end_date="2026-10-01", start_date="2026-09-24", universe={"2330", "2303"})
+        self.assertEqual((result["categories"][0]["large_holder_share_delta"], result["excluded_symbols"]["custody_shares_changed"]), (5_000, 1))
 
     def test_stale_latest_snapshot_is_insufficient_without_numbers(self):
         holdings = {"2026-08-25": [], "2026-09-01": []}

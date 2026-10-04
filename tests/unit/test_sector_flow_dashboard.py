@@ -90,7 +90,7 @@ class SectorFlowDashboardTest(unittest.TestCase):
         self.assertEqual(([s["sym"] for s in row["in"]], [s["sym"] for s in row["out"]]), (["2330"], ["6488"]))
         self.assertEqual((row["in"][0]["shares"], row["in"][0]["pp"], row["out"][0]["shares"]), (200_000, 0.5, -50_000))
         self.assertEqual(row["amt"], row["in"][0]["amt"] + row["out"][0]["amt"])
-        self.assertEqual((lh["weeks"], row["wk"], lh["window"], lh["start"]), (["2026-09-24"], [row["amt"]], 20, D1))
+        self.assertEqual((lh["weeks"], row["wk"], lh["window"], lh["start"], lh["reshaped"]), (["2026-09-24"], [row["amt"]], 20, D1, 0))
 
     def test_large_holder_sums_weeks_in_window(self):
         self._tdcc("2026-09-10", [("2330", 400_000, 1.0), ("6488", 300_000, 2.0)])

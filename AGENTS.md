@@ -185,6 +185,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 - 視窗若因缺價改用 `net_shares` 排名，個股 `amt` 為 null，網頁顯示「—」。`stocks` 內的 f/t/dl 單位是股，`rows` 內是元。
 - 大類的 `subs[].in/out` 是該子類**在這個大類裡**的成員排名，不是同名頂層族群：FinMind 給上櫃股的分類幾乎沒有「電子工業」標籤，所以「電子工業 › 半導體業」幾乎只有上市股，頂層「半導體業」約一半是上櫃。
 - `large_holder`：TDCC 大戶（分級 12–15，400 張以上）近 20 個交易日內每週的變化。視窗內每一期週快照各跑一次 `build_sector_flow_report(start=dates[0], end=該週, large_holder_stocks=True, taxonomy_date=end_date)`，所以每週數字等於該日期的 `report sector-flow`（只差產業分類固定用頁籤那份）；族群列有每週估算金額 `wk`、20 日累計 `amt`（排序依據）、20 日淨增減檔數、20 日增減前 5 名個股。`large_holder_stocks` 與 `taxonomy_date` 預設關閉，所以報表輸出不變。不要用跨股票加總的張數當主指標：會被低價股主導。
+  - 集保總股數（分級 17）兩期相差 ≥1% 的股票，該週不計入（`TDCC_MAX_CUSTODY_CHANGE`，2026-10-04 與使用者決定），`report sector-flow` 的 `excluded_symbols.custody_shares_changed` 記數量。沒有這條時，9 月配股季的 2884 玉山金（+9.5%）、6949 沛爾生醫（合併後總股數 20 倍）、6488 環球晶（+10.5%）會主導整個族群，例如生技醫療業單週 +1.9 兆。
   - 每週必須用同一份產業分類：報表預設用「≤ end_date 的最新 snapshot」，週報表若各自挑會用到 06-03 那份不完整的分類，多出「未分類」、數字也會偏（2026-10-04 實際踩到）。
 
 程式位置：`src/market_data/sector_flow_sources.py`（網路邊界 + raw cache）、`src/application/reporting/sector_flow.py`（彙整與狀態判定）、`src/application/reporting/sector_flow_report.py`（Markdown）；CLI 在 `src/cli/market.py` / `src/cli/report.py`；測試 `tests/unit/test_sector_flow*.py`，fixtures 在 `tests/fixtures/sector-flow/`。快取放 `data/raw/{twse,tpex,tdcc,finmind/TaiwanStockInfo}`（`data/` 已 gitignore）。
@@ -200,7 +201,7 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 - **`source_status[*][*].cache_path` 是相對於 `--cache-dir` 的路徑**，不論 cache dir 怎麼寫，JSON 都逐位元組相同。不要把絕對路徑放回報告。
 - **TDCC 大戶要兩期**：levels 12-15 需要兩期週 snapshot；少於兩期時報告 `insufficient_data`，不可宣稱大戶增減。過去的週快照可用 `market backfill-tdcc-holdings` 從 qryStock 回補（約保留一年）；2026-10-04 抽 42 檔 × 2 週與 open data 比對，人數、股數、比例 0 差異。qryStock 的「合計」列編號會是 16 或 17（看有沒有差異數調整列），回補一律存成 open data 的 17。
 - **TWSE 日期不符視為 `no_data`**：TWSE 在非交易日可能回前一交易日資料；payload 日期與請求日期不同就是 `no_data`。
-- **現況（2026-10-03）**：快取涵蓋 2026-05-15..10-02 共 97 個交易日，TWSE / TPEx 四個資料集日期完全對齊（5 秒間隔回補，0 失敗；先前的 HTTP 520 未再出現）。TDCC 已有 2026-09-24、10-02 兩期週 snapshot。產業分類 snapshot 已更新為 2026-10-03（4,329 筆），分類覆蓋率 100%，「未分類」族群消失（38 → 37 個），報告狀態 `ok`。產業分類是有日期的 snapshot：報表用「≤ end_date 的最新一份」，所以 end_date 早於 10-03 的報表仍用 06-03 那份。
+- **現況（2026-10-03）**：快取涵蓋 2026-05-15..10-02 共 97 個交易日，TWSE / TPEx 四個資料集日期完全對齊（5 秒間隔回補，0 失敗；先前的 HTTP 520 未再出現）。TDCC 已有 2026-08-28..10-02 共 6 期週 snapshot（前 4 期由 qryStock 回補，有 `backfill.json`）。產業分類 snapshot 已更新為 2026-10-03（4,329 筆），分類覆蓋率 100%，「未分類」族群消失（38 → 37 個），報告狀態 `ok`。產業分類是有日期的 snapshot：報表用「≤ end_date 的最新一份」，所以 end_date 早於 10-03 的報表仍用 06-03 那份。
 
 ### 後續維護（原 Track 3）
 

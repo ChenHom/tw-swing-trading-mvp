@@ -364,7 +364,20 @@ class TdccBackfillTest(unittest.TestCase):
             path = cache / "tdcc" / "holding_distribution" / "2026-08-28" / "market.json"
             self.assertEqual({r.symbol for r in parse_tdcc_holdings(read_json(path))}, {"1101", "2330"})
             self.assertEqual(json.loads(path.with_name("backfill.json").read_text(encoding="utf-8"))["failed"], [])
-            self.assertEqual(backfill_tdcc_holdings(cache_dir=cache, as_of="2026-08-28", symbols=["2330"], fetch=flaky)["state"], "exists")
+            self.assertEqual(calls.count("9999"), 4)  # 查無此資料 is asked again before it is believed
+
+            # a rerun re-asks only last time's 查無 stocks and merges them in
+            pages["9999"] = _qry_stock_page("9999", "115年08月28日")
+            calls.clear()
+            again = backfill_tdcc_holdings(cache_dir=cache, as_of="2026-08-28", symbols=["1101", "2330", "9999"], fetch=flaky)
+            self.assertEqual((again["state"], again["no_data"], again["row_count"], again["symbols"], calls), ("ok", [], 48, 3, ["9999"]))
+            self.assertEqual({r.symbol for r in parse_tdcc_holdings(read_json(path))}, {"1101", "2330", "9999"})
+
+            opendata = cache / "tdcc" / "holding_distribution" / "2026-10-02" / "market.json"
+            opendata.parent.mkdir(parents=True)
+            opendata.write_text("[]", encoding="utf-8")
+            self.assertEqual(backfill_tdcc_holdings(cache_dir=cache, as_of="2026-10-02", symbols=["2330"], fetch=flaky)["state"], "exists")
+            self.assertEqual(opendata.read_text(encoding="utf-8"), "[]")
 
             def broken(symbol, as_of):
                 raise OSError("refused") if symbol == "1101" else None
