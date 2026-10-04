@@ -335,6 +335,103 @@ def parse_tdcc_holdings(payload: Sequence[Mapping[str, Any]]) -> list[HoldingDis
     return result
 
 
+# TDCC open data (1-5) only serves the latest week; qryStock serves ~1 year of weeks, one stock per POST.
+TDCC_QRY_STOCK_URL = "https://www.tdcc.com.tw/portal/zh/smWeb/qryStock"
+_TDCC_FORM_RE = re.compile(r'name="(SYNCHRONIZER_TOKEN|SYNCHRONIZER_URI|firDate)" value="([^"]*)"')
+_TDCC_PAGE_RE = re.compile(r"證券代號：\s*(\S+)")
+_TDCC_DATE_RE = re.compile(r"資料日期：(\d+)年(\d+)月(\d+)日")
+_TDCC_ROW_RE = re.compile(r"<tr>\s*<td[^>]*>\s*(\d+)\s*</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([\d,]+)</td>\s*<td[^>]*>([\d,]+)</td>\s*<td[^>]*>([\d.]+)</td>")
+
+
+def parse_tdcc_stock_page(html: str, symbol: str, as_of: str) -> list[dict[str, str]]:
+    """One stock-week from qryStock as open-data 1-5 rows (no level 16); [] when TDCC has no data."""
+    found = _TDCC_DATE_RE.search(html)
+    if not found:
+        if "查無此資料" in html:
+            return []
+        raise ProviderSchemaError("TDCC qryStock page has no data date")
+    got = date(int(found[1]) + 1911, int(found[2]), int(found[3])).isoformat()
+    page_symbol = _TDCC_PAGE_RE.search(html)
+    if got != as_of or not page_symbol or page_symbol[1] != symbol:
+        raise ProviderSchemaError(f"TDCC qryStock answered {page_symbol and page_symbol[1]} {got}, wanted {symbol} {as_of}")
+    # The total row is numbered 16 or 17 depending on whether a 差異數調整 row is shown; open data always uses 17.
+    rows = [("17" if "合" in label else "16" if "差異" in label else level, people, shares, percent)
+            for level, label, people, shares, percent in _TDCC_ROW_RE.findall(html)]
+    levels = [level for level, *_ in rows]
+    if len(set(levels)) != len(levels) or ({str(n) for n in range(1, 16)} | {"17"}) - set(levels):
+        raise ProviderSchemaError("TDCC qryStock table changed")
+    compact = as_of.replace("-", "")
+    return [{"資料日期": compact, "證券代號": symbol, "持股分級": level, "人數": people.replace(",", ""),
+             "股數": shares.replace(",", ""), "占集保庫存數比例%": percent} for level, people, shares, percent in rows]
+
+
+class TdccStockQuery:
+    """qryStock form client. The form token rotates on every response, so each POST uses the last one."""
+
+    def __init__(self, *, timeout_seconds: float = 20, min_interval_seconds: float = 0.35,
+                 sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic) -> None:
+        import http.cookiejar
+        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self._opener.addheaders = [("User-Agent", "tw-day-trading/sector-flow-backfill")]
+        self.timeout_seconds, self.min_interval_seconds = timeout_seconds, min_interval_seconds
+        self._sleep, self._clock, self._last, self._form = sleep, clock, None, None
+
+    def _open(self, data: bytes | None = None) -> str:
+        if self._last is not None and (wait := self.min_interval_seconds - (self._clock() - self._last)) > 0:
+            self._sleep(wait)
+        self._last = self._clock()
+        with self._opener.open(urllib.request.Request(TDCC_QRY_STOCK_URL, data=data), timeout=self.timeout_seconds) as response:
+            html = response.read(2_000_000).decode("utf-8")
+        form = dict(_TDCC_FORM_RE.findall(html))
+        self._form = form if {"SYNCHRONIZER_TOKEN", "SYNCHRONIZER_URI", "firDate"} <= form.keys() else None
+        return html
+
+    def fetch(self, symbol: str, as_of: str) -> str:
+        if self._form is None:
+            self._open()
+        if self._form is None:
+            raise ProviderSchemaError("TDCC qryStock form token missing")
+        return self._open(urllib.parse.urlencode({**self._form, "method": "submit", "scaDate": as_of.replace("-", ""),
+                                                  "sqlMethod": "StockNo", "stockNo": symbol, "stockName": ""}).encode())
+
+
+def backfill_tdcc_holdings(*, cache_dir: Path, as_of: str, symbols: Sequence[str], fetch: Callable[[str, str], str],
+                           retries: int = 3, progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
+    """Rebuild one past week's TDCC snapshot from qryStock, all-or-nothing.
+
+    Never overwrites a snapshot (open data wins). Any symbol that still fails after retries means no
+    file is written: a partial snapshot would silently drop stocks from that week's large-holder sums.
+    """
+    _validate_iso_date(as_of)
+    path = cache_dir / "tdcc" / "holding_distribution" / as_of / "market.json"
+    if path.exists():
+        return {"state": "exists", "as_of_date": as_of, "cache_path": str(path)}
+    rows: list[dict[str, str]] = []
+    no_data: list[str] = []
+    failed: list[dict[str, str]] = []
+    for index, symbol in enumerate(symbols, 1):
+        for attempt in range(retries + 1):
+            try:
+                got = parse_tdcc_stock_page(fetch(symbol, as_of), symbol, as_of)
+                break
+            except (OSError, ValueError) as exc:  # URLError/timeouts are OSError; schema and decode are ValueError
+                error = str(exc)
+        else:
+            failed.append({"symbol": symbol, "error": error})
+            if len(failed) >= 20:  # TDCC is refusing us; stop instead of hammering it
+                break
+            continue
+        rows.extend(got) if got else no_data.append(symbol)
+        if progress:
+            progress(index, len(symbols))
+    summary = {"as_of_date": as_of, "symbols": len(symbols), "row_count": len(rows), "no_data": no_data, "failed": failed}
+    if failed:
+        return {"state": "error", **summary}
+    parse_tdcc_holdings(rows)  # same validation the report applies
+    _atomic_json(path, rows)
+    _atomic_json(path.with_name("backfill.json"), {"source": TDCC_QRY_STOCK_URL, **summary})
+    return {"state": "ok", "cache_path": str(path), **summary}
+
 def build_daily_requests(cache_dir: Path, requested_date: str) -> list[SourceRequest]:
     parsed = _validate_iso_date(requested_date)
     compact = parsed.strftime("%Y%m%d")

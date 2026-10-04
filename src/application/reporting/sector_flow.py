@@ -515,11 +515,15 @@ def build_category_detail(
 
 def build_sector_flow_report(
     *, cache_dir: Path, start_date: str, end_date: str, detail_categories: Sequence[str] = (), top: int = 10,
-    max_days: int | None = 31, large_holder_stocks: bool = False,
+    max_days: int | None = 31, large_holder_stocks: bool = False, taxonomy_date: str | None = None,
 ) -> dict[str, Any]:
-    """`max_days=None` lifts the CLI's 31-day cap for offline callers that need longer windows (the web tab)."""
+    """`max_days=None` lifts the CLI's 31-day cap for offline callers that need longer windows (the web tab).
+
+    `taxonomy_date` picks the industry snapshot (default `end_date`); the web tab's weekly reports pass its
+    own end date so every week groups stocks the same way.
+    """
     requested_dates = _dates(start_date, end_date, max_days)
-    taxonomy = load_taxonomy(cache_dir, end_date=end_date)
+    taxonomy = load_taxonomy(cache_dir, end_date=taxonomy_date or end_date)
     source_status: dict[str, dict[str, Any]] = {}
     day_inputs: list[tuple[str, list[InstitutionalFlowRow], dict[tuple[str, str], float]]] = []
     all_closes_by_symbol: dict[str, float] = {}

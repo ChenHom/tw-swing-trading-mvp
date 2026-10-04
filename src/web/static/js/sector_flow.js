@@ -102,11 +102,29 @@
       '<div class="sf-two" style="margin-top:' + (sg ? '.3rem' : '.8rem') + '">' + stockTable((sg || st).in, '近 ' + k + ' 日流入前 5 名', '流入') + stockTable((sg || st).out, '近 ' + k + ' 日流出前 5 名', '流出') + '</div>';
   }
 
-  // 大戶持股（週）：週資料，在 #tab-holder，不隨族群資金的區間切換
+  // 大戶持股（週）：週資料，在 #tab-holder，固定近 20 日，不隨族群資金的區間切換
   function lhTable(list, title) {
     return '<div style="min-width:0"><div class="card-label" style="margin-bottom:.3rem">' + title + '</div><div class="sf-scroll"><table><thead><tr><th>代號</th><th>名稱</th><th class="num">估算金額</th><th class="num">大戶張數變化</th><th class="num">持股比例變化</th></tr></thead><tbody>' +
       (list.length ? list.map(function (s) { var lots = Math.round(s.shares / 1000);
         return '<tr><td>' + symLink(s.sym) + '</td><td>' + esc(s.name) + '</td><td class="num ' + cls(s.amt) + '">' + yi(s.amt) + '</td><td class="num ' + cls(lots) + '">' + (lots > 0 ? '+' : '') + lots.toLocaleString() + '</td><td class="num ' + cls(s.pp) + '">' + (s.pp > 0 ? '+' : '') + s.pp.toFixed(2) + ' pp</td></tr>'; }).join('') : '<tr><td colspan="5">無</td></tr>') + '</tbody></table></div></div>';
+  }
+  function lhChart(r) { // 每週一根柱 + 累計線；無法比較的週留空
+    var vals = r.wk.map(function (v) { return v || 0; }), cum = [], c = 0;
+    vals.forEach(function (v) { c += v; cum.push(c); });
+    var w = 640, h = 200, pl = 52, pr = 16, pt = 12, pb = 26;
+    var lo = Math.min(0, Math.min.apply(null, vals), Math.min.apply(null, cum)), hi = Math.max(0, Math.max.apply(null, vals), Math.max.apply(null, cum));
+    var y = function (v) { return pt + (hi - v) / (hi - lo || 1) * (h - pt - pb); }, bw = (w - pl - pr) / vals.length, x = function (i) { return pl + i * bw + bw / 2; };
+    var s = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" role="img" aria-label="' + esc(r.name) + ' 大戶每週估算金額與累計">';
+    [hi, lo, 0].forEach(function (t) { s += '<line x1="' + pl + '" x2="' + (w - pr) + '" y1="' + y(t) + '" y2="' + y(t) + '" stroke="' + (t === 0 ? '#94a3b8' : '#edf2f7') + '"/><text x="' + (pl - 6) + '" y="' + (y(t) + 4) + '" text-anchor="end" font-size="10" fill="#718096">' + (t / 1e8).toFixed(0) + '億</text>'; });
+    r.wk.forEach(function (v, i) {
+      var label = md(D.large_holder.weeks[i]) + ' 當週：' + (v == null ? '無法比較' : yi(v));
+      s += v == null ? '<text x="' + x(i) + '" y="' + (y(0) - 4) + '" text-anchor="middle" font-size="10" fill="#a0aec0">—<title>' + label + '</title></text>'
+        : '<rect x="' + (x(i) - Math.min(bw * .35, 24)) + '" width="' + Math.min(bw * .7, 48) + '" y="' + Math.min(y(v), y(0)) + '" height="' + Math.max(Math.abs(y(v) - y(0)), .5) + '" fill="' + (v > 0 ? '#e53e3e' : '#38a169') + '" opacity=".85"><title>' + label + '</title></rect>';
+      s += '<text x="' + x(i) + '" y="' + (h - 8) + '" text-anchor="middle" font-size="10" fill="#718096">' + md(D.large_holder.weeks[i]) + '</text>';
+    });
+    s += '<polyline fill="none" stroke="#2b6cb0" stroke-width="2" points="' + cum.map(function (v, i) { return x(i) + ',' + y(v); }).join(' ') + '"/><circle cx="' + x(cum.length - 1) + '" cy="' + y(c) + '" r="3.5" fill="#2b6cb0"/>';
+    var key = function (style, label) { return '<span style="white-space:nowrap"><i style="' + style + '"></i> ' + label + '</span>'; };
+    return s + '</svg><div class="sf-legend">' + key('background:#e53e3e', '當週增加') + key('background:#38a169', '當週減少') + key('background:#2b6cb0;height:3px', '累計') + '</div>';
   }
   function renderLh() {
     var lh = D.large_holder, el = $('lh');
@@ -116,6 +134,7 @@
     if (lh.status !== 'ok' || !lh.rows || !lh.rows.length) {
       var why = lh.status === 'schema_error' ? 'TDCC 快照無法讀取'
         : lh.reason === 'snapshots_not_consecutive_weeks' ? '最近兩期 TDCC 週資料相隔超過兩週（' + esc(lh.prior) + ' → ' + esc(lh.latest) + '），不計算變化'
+        : lh.reason === 'no_snapshot_in_window' ? '近 ' + lh.window + ' 個交易日內沒有 TDCC 週資料（最新 ' + esc(lh.latest) + '）'
         : lh.reason === 'latest_snapshot_too_old' ? '最新的 TDCC 週資料（' + esc(lh.latest) + '）太舊，不計算變化'
         : '大戶變化需要兩期 TDCC 週資料，目前 ' + (lh.snapshots || 0) + ' 期';
       body.innerHTML = '<p class="hint" style="margin:0">' + why + '</p>';
@@ -123,11 +142,15 @@
     }
     var cur = null; lh.rows.forEach(function (r) { if (r.name === lhSel) cur = r; });
     if (!cur) { cur = lh.rows[0]; lhSel = cur.name; }
-    body.innerHTML = '<p class="hint">' + esc(lh.prior) + ' → ' + esc(lh.latest) + '｜TDCC 集保週資料，已累積 ' + lh.snapshots + ' 期。大戶＝單一集保帳戶持有 400 張以上（含法人、ETF、大股東），增資、減資也會讓股數跳動。金額為大戶股數變化 × 收盤價的估算。</p>' +
-      '<div class="sf-scroll"><table><thead><tr><th>族群</th><th class="num">大戶估算金額</th><th class="num">增加檔數</th><th class="num">減少檔數</th></tr></thead><tbody>' +
-      lh.rows.map(function (r) { return '<tr class="sf-lh-row' + (r === cur ? ' sel' : '') + '" tabindex="0" data-n="' + esc(r.name) + '"><td>' + nm(r) + '</td><td class="num ' + cls(r.amt) + '">' + yi(r.amt) + '</td><td class="num">' + r.up + '</td><td class="num">' + r.down + '</td></tr>'; }).join('') + '</tbody></table></div>' +
-      (cur.missing > 0 ? '<p class="hint" style="margin:.4rem 0 0">' + cur.missing + ' 檔無收盤價，未計入金額</p>' : '') +
-      '<div class="sf-two" style="margin-top:.8rem">' + lhTable(cur.in || [], esc(cur.name) + ' 大戶增加前 5 名') + lhTable(cur.out || [], esc(cur.name) + ' 大戶減少前 5 名') + '</div>';
+    var wks = lh.weeks.length, holes = lh.weeks.filter(function (_, i) { return lh.rows.every(function (r) { return r.wk[i] == null; }); }).length;
+    body.innerHTML = '<p class="hint">近 ' + lh.window + ' 個交易日（' + md(lh.start) + ' 起）共 ' + wks + ' 週的 TDCC 集保週資料，每週與前一週比較' + (holes ? '，其中 ' + holes + ' 週與前一期相隔超過兩週、無法比較' : '') + '；快取已累積 ' + lh.snapshots + ' 期。' +
+      '大戶＝單一集保帳戶持有 400 張以上（含法人、ETF、大股東），增資、減資也會讓股數跳動。金額為每週大戶股數變化 × 當週收盤價的估算再加總；增加／減少檔數看 ' + lh.window + ' 日內大戶股數的淨增減。</p>' +
+      '<div class="sf-scroll"><table><thead><tr><th>族群</th><th>近 ' + lh.window + ' 日走勢</th><th class="num">近 ' + lh.window + ' 日累計</th><th class="num">最新一週</th><th class="num">增加檔數</th><th class="num">減少檔數</th></tr></thead><tbody>' +
+      lh.rows.map(function (r) { var last = r.wk[r.wk.length - 1];
+        return '<tr class="sf-lh-row' + (r === cur ? ' sel' : '') + '" tabindex="0" data-n="' + esc(r.name) + '"><td>' + nm(r) + '</td><td>' + spark(r.wk.map(function (v) { return v || 0; })) + '</td><td class="num ' + cls(r.amt) + '">' + yi(r.amt) + '</td><td class="num ' + cls(last) + '">' + (last == null ? '—' : yi(last)) + '</td><td class="num">' + r.up + '</td><td class="num">' + r.down + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+      '<div class="card-label" style="margin:.8rem 0 .3rem">' + esc(cur.name) + ' 每週大戶估算金額</div>' + lhChart(cur) +
+      (cur.missing > 0 ? '<p class="hint" style="margin:.4rem 0 0">' + cur.missing + ' 檔有缺收盤價的週，未列入前 5 名</p>' : '') +
+      '<div class="sf-two" style="margin-top:.8rem">' + lhTable(cur.in || [], esc(cur.name) + ' 近 ' + lh.window + ' 日大戶增加前 5 名') + lhTable(cur.out || [], esc(cur.name) + ' 近 ' + lh.window + ' 日大戶減少前 5 名') + '</div>';
   }
 
   function render() {

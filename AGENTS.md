@@ -158,6 +158,10 @@ python3 -m app market sync-sector-flow --start-date 2026-09-24 --end-date 2026-1
 # 產業分類快照（FinMind TaiwanStockInfo，唯讀 GET）；內容與最新快照相同就不寫；寫在 data/raw/finmind/TaiwanStockInfo/{as_of}/
 python3 -m app market sync-sector-taxonomy [--as-of YYYY-MM-DD]
 
+# 回補過去的 TDCC 週快照（open data 只給最新一週）：TDCC 個股查詢頁 qryStock，一檔一週一次 POST，
+# 只查快取法人資料出現過的股票（約 2,000 檔，約 2 檔／秒）。整週全成功才寫，已存在的日期不覆蓋；另寫 backfill.json 記來源與查無資料的股票
+python3 -m app market backfill-tdcc-holdings --dates 2026-08-28,2026-09-04
+
 # 完全離線，由快取重播；報表 blocked 時 exit 1（degraded 仍 exit 0）
 python3 -m app report sector-flow --start-date 2026-09-24 --end-date 2026-10-01 --cache-dir data/raw \
   --output reports/2026-09-24_2026-10-01-sector-flow.json --report-output reports/2026-09-24_2026-10-01-sector-flow.md
@@ -180,7 +184,8 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 - 31 天上限只限制連網的 `market sync-sector-flow` 與 CLI `report sector-flow`；`build_sector_flow_report` 的 `max_days=None` 只給離線長區間（dashboard）用。不要改回分段計算再加總：分段會讓缺價股票只被部分計入，占比和子類檔數都會偏掉。
 - 視窗若因缺價改用 `net_shares` 排名，個股 `amt` 為 null，網頁顯示「—」。`stocks` 內的 f/t/dl 單位是股，`rows` 內是元。
 - 大類的 `subs[].in/out` 是該子類**在這個大類裡**的成員排名，不是同名頂層族群：FinMind 給上櫃股的分類幾乎沒有「電子工業」標籤，所以「電子工業 › 半導體業」幾乎只有上市股，頂層「半導體業」約一半是上櫃。
-- `large_holder`：TDCC 大戶（分級 12–15，400 張以上）最新兩期週快照的變化，依族群列估算金額（Σ 股數變化 × 收盤）、增加／減少檔數、增減前 5 名個股。來自 `build_sector_flow_report(..., large_holder_stocks=True)` 的個股明細；這個旗標預設關閉，所以報表輸出不變。不要用跨股票加總的張數當主指標：會被低價股主導。
+- `large_holder`：TDCC 大戶（分級 12–15，400 張以上）近 20 個交易日內每週的變化。視窗內每一期週快照各跑一次 `build_sector_flow_report(start=dates[0], end=該週, large_holder_stocks=True, taxonomy_date=end_date)`，所以每週數字等於該日期的 `report sector-flow`（只差產業分類固定用頁籤那份）；族群列有每週估算金額 `wk`、20 日累計 `amt`（排序依據）、20 日淨增減檔數、20 日增減前 5 名個股。`large_holder_stocks` 與 `taxonomy_date` 預設關閉，所以報表輸出不變。不要用跨股票加總的張數當主指標：會被低價股主導。
+  - 每週必須用同一份產業分類：報表預設用「≤ end_date 的最新 snapshot」，週報表若各自挑會用到 06-03 那份不完整的分類，多出「未分類」、數字也會偏（2026-10-04 實際踩到）。
 
 程式位置：`src/market_data/sector_flow_sources.py`（網路邊界 + raw cache）、`src/application/reporting/sector_flow.py`（彙整與狀態判定）、`src/application/reporting/sector_flow_report.py`（Markdown）；CLI 在 `src/cli/market.py` / `src/cli/report.py`；測試 `tests/unit/test_sector_flow*.py`，fixtures 在 `tests/fixtures/sector-flow/`。快取放 `data/raw/{twse,tpex,tdcc,finmind/TaiwanStockInfo}`（`data/` 已 gitignore）。
 
@@ -193,13 +198,13 @@ python3 -m app report sector-flow-dashboard [--end-date YYYY-MM-DD] [--cache-dir
 - **細看**：`--category NAME [--top N]` 加上 `category_detail`（流入／流出前 N 檔，含外資／投信／自營商拆分、佔該側比重、每日序列；大類先列子類小計，每個子類也有自己的流入／流出前 N 檔）。不帶 `--category` 時輸出必須與之前逐位元組相同（2026-10-04 加子類排名與大戶個股明細後仍以 09-24..10-01 報表的 sha256 核對過）。
 - **交易日判定**：一個日期只要至少一個來源 `ok` 即為交易日，該日任何非 `ok` 來源都會讓報告 `degraded`。**四個來源全部 `missing` / `no_data` 的日期**進 `dates_without_data`，**視為休市**（使用者 2026-10-03 決定；不另建假日曆）。抓取失敗仍會浮現，因為 `sync-sector-flow` 會 exit 1，所以只有「從沒抓過」的日子可能被誤判為休市。**`schema_error` 一律 degrade**。
 - **`source_status[*][*].cache_path` 是相對於 `--cache-dir` 的路徑**，不論 cache dir 怎麼寫，JSON 都逐位元組相同。不要把絕對路徑放回報告。
-- **TDCC 大戶要兩期**：levels 12-15 需要兩期週 snapshot；少於兩期時報告 `insufficient_data`，不可宣稱大戶增減。
+- **TDCC 大戶要兩期**：levels 12-15 需要兩期週 snapshot；少於兩期時報告 `insufficient_data`，不可宣稱大戶增減。過去的週快照可用 `market backfill-tdcc-holdings` 從 qryStock 回補（約保留一年）；2026-10-04 抽 42 檔 × 2 週與 open data 比對，人數、股數、比例 0 差異。qryStock 的「合計」列編號會是 16 或 17（看有沒有差異數調整列），回補一律存成 open data 的 17。
 - **TWSE 日期不符視為 `no_data`**：TWSE 在非交易日可能回前一交易日資料；payload 日期與請求日期不同就是 `no_data`。
 - **現況（2026-10-03）**：快取涵蓋 2026-05-15..10-02 共 97 個交易日，TWSE / TPEx 四個資料集日期完全對齊（5 秒間隔回補，0 失敗；先前的 HTTP 520 未再出現）。TDCC 已有 2026-09-24、10-02 兩期週 snapshot。產業分類 snapshot 已更新為 2026-10-03（4,329 筆），分類覆蓋率 100%，「未分類」族群消失（38 → 37 個），報告狀態 `ok`。產業分類是有日期的 snapshot：報表用「≤ end_date 的最新一份」，所以 end_date 早於 10-03 的報表仍用 06-03 那份。
 
 ### 後續維護（原 Track 3）
 
-- 「大戶持股」頁籤顯示大戶週變化（2026-10-04 起；同日從「族群資金」頁籤移出成獨立頁籤）。TDCC 公開資料只給最新一週、無法回補，週快照從 2026-09-24 起由 cron 累積；累積 4 週以上後可考慮加週走勢。
+- 「大戶持股」頁籤顯示近 20 日的大戶週走勢（2026-10-04 起；同日從「族群資金」頁籤移出成獨立頁籤）。2026-08-28..09-18 四週由 qryStock 回補，之後由 cron 每週從 open data 接續。cron 若漏掉某週，用 `market backfill-tdcc-holdings` 補；qryStock 只保留約一年。
 - 產業分類由 cron 每天檢查，內容有變才寫新 snapshot；FinMind 若出現新的分類名稱，要檢查是否需補 `CATEGORY_SYNONYMS`。
 - 維持唯讀公開資料：不碰 Shioaji、Telegram 或 GitHub 發佈。
 - 平日 22:00 cron 已安裝（2026-10-03）；網頁「族群資金」與「大戶持股」頁籤共用 `GET /api/sector-flow`，先打開哪個就由哪個抓，只抓一次。

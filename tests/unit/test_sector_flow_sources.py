@@ -6,6 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.market_data.sector_flow_sources import (
+    backfill_tdcc_holdings,
+    parse_tdcc_stock_page,
+    read_json,
     ProviderNoData,
     ProviderSchemaError,
     UrllibJsonHttpClient,
@@ -318,3 +321,54 @@ class TaxonomyIngestionTest(unittest.TestCase):
                 with self.assertRaises(ProviderSchemaError):
                     ingest_taxonomy(cache_dir=Path(tmp), as_of="2026-10-03", client=self.Client(rows))
             self.assertFalse((Path(tmp) / "finmind").exists())
+
+
+def _qry_stock_page(symbol, roc_date, total_level="17", big=1000):
+    """Minimal TDCC qryStock result page: the total row is 16 when TDCC hides 差異數調整."""
+    rows = "".join(f'<tr>\n <td align="center">{n}</td>\n <td align="center">x</td>\n <td align="right">1,0{n:02d}</td>\n <td align="right">{big * n:,}</td>\n <td align="right">0.{n:02d}</td>\n</tr>' for n in range(1, 16))
+    total = f'<tr><td align="center">{total_level}</td><td align="center">合　計</td><td align="right">9,999</td><td align="right">123,456</td><td align="right">100.00</td></tr>'
+    return f"<p>證券代號：{symbol}  <br>證券名稱：測試</p><span>資料日期：{roc_date}</span><table>{rows}{total}</table>"
+
+
+class TdccBackfillTest(unittest.TestCase):
+    def test_page_parses_to_open_data_rows_with_total_as_level_17(self):
+        for total_level in ("16", "17"):
+            rows = parse_tdcc_stock_page(_qry_stock_page("2330", "115年08月28日", total_level), "2330", "2026-08-28")
+            parsed = parse_tdcc_holdings(rows)
+            self.assertEqual([r.level for r in parsed], list(range(1, 16)) + [17])
+            self.assertEqual((parsed[11].shares, parsed[11].people, parsed[11].percent, parsed[0].as_of_date), (12000, 1012, 0.12, "2026-08-28"))
+        self.assertEqual(parse_tdcc_stock_page('<span>資料日期：</span><span>查無此資料</span>', "9999", "2026-08-28"), [])
+
+    def test_page_for_another_week_or_stock_or_layout_is_schema_error(self):
+        page = _qry_stock_page("2330", "115年08月28日")
+        for args in (("2330", "2026-09-04"), ("2303", "2026-08-28")):
+            with self.assertRaises(ProviderSchemaError):
+                parse_tdcc_stock_page(page, *args)
+        with self.assertRaises(ProviderSchemaError):
+            parse_tdcc_stock_page(page.replace('<td align="center">13</td>', '<td align="center">x</td>'), "2330", "2026-08-28")
+
+    def test_backfill_writes_all_or_nothing_and_never_overwrites(self):
+        pages = {"2330": _qry_stock_page("2330", "115年08月28日"), "1101": _qry_stock_page("1101", "115年08月28日"), "9999": "<span>資料日期：</span>查無此資料"}
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            calls = []
+
+            def flaky(symbol, as_of):
+                calls.append(symbol)
+                if symbol == "1101" and calls.count("1101") == 1:
+                    raise OSError("timeout")
+                return pages[symbol]
+
+            done = backfill_tdcc_holdings(cache_dir=cache, as_of="2026-08-28", symbols=["1101", "2330", "9999"], fetch=flaky)
+            self.assertEqual((done["state"], done["no_data"], done["row_count"]), ("ok", ["9999"], 32))
+            path = cache / "tdcc" / "holding_distribution" / "2026-08-28" / "market.json"
+            self.assertEqual({r.symbol for r in parse_tdcc_holdings(read_json(path))}, {"1101", "2330"})
+            self.assertEqual(json.loads(path.with_name("backfill.json").read_text(encoding="utf-8"))["failed"], [])
+            self.assertEqual(backfill_tdcc_holdings(cache_dir=cache, as_of="2026-08-28", symbols=["2330"], fetch=flaky)["state"], "exists")
+
+            def broken(symbol, as_of):
+                raise OSError("refused") if symbol == "1101" else None
+            failed = backfill_tdcc_holdings(cache_dir=cache, as_of="2026-09-04", symbols=["2330", "1101"],
+                                            fetch=lambda s, d: _qry_stock_page(s, "115年09月04日") if s == "2330" else broken(s, d))
+            self.assertEqual((failed["state"], [f["symbol"] for f in failed["failed"]]), ("error", ["1101"]))
+            self.assertFalse((cache / "tdcc" / "holding_distribution" / "2026-09-04").exists())

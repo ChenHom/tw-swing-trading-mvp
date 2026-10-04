@@ -27,7 +27,10 @@ from src.approval.store import load_active_manifests, activate_manifest, deactiv
 from src.strategy.canonicalizer import StrategyParameterCanonicalizer
 from src.strategy import registry as strategy_registry
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot, PositionSnapshot
-from src.market_data.sector_flow_sources import UrllibJsonHttpClient, ingest_sector_flow, ingest_taxonomy
+from src.market_data.sector_flow_sources import (
+    TdccStockQuery, UrllibJsonHttpClient, backfill_tdcc_holdings, ingest_sector_flow, ingest_taxonomy,
+    parse_tpex_institutional, parse_twse_institutional, read_json,
+)
 from src.trading.planner import OrderPlanner, PortfolioState
 from src.trading.allocator import GlobalLimits
 from src.broker.fake_broker import FakeBroker
@@ -333,6 +336,28 @@ def cmd_market_sync_sector_taxonomy(args):
         print(json.dumps({"state": "error", "error": str(exc)}, ensure_ascii=False))
         raise SystemExit(1)
     print(json.dumps(summary, ensure_ascii=False))
+
+
+def cmd_market_backfill_tdcc_holdings(args):
+    """Rebuild past TDCC weekly snapshots from qryStock, for every stock seen in the cached institutional flows."""
+    cache_dir = Path(args.cache_dir)
+    symbols: set[str] = set()
+    for dataset, parse in (("twse/T86", parse_twse_institutional), ("tpex/institutional", parse_tpex_institutional)):
+        for path in sorted((cache_dir / dataset).glob("*/market.json")):
+            try:
+                symbols |= {row.symbol for row in parse(read_json(path), path.parent.name)}
+            except ValueError:  # no-data or unreadable day: the report skips it too
+                continue
+    query, failed = TdccStockQuery(), False
+    for as_of in args.dates.split(","):
+        def progress(done, total, as_of=as_of):
+            if done % 200 == 0 or done == total:
+                print(f"{as_of} {done}/{total}", file=sys.stderr, flush=True)
+        summary = backfill_tdcc_holdings(cache_dir=cache_dir, as_of=as_of, symbols=sorted(symbols), fetch=query.fetch, progress=progress)
+        print(json.dumps({**summary, "no_data": summary.get("no_data", [])[:20]}, ensure_ascii=False), flush=True)
+        failed |= summary["state"] == "error"
+    if failed:
+        raise SystemExit(1)
 
 
 def cmd_market_validate(args):

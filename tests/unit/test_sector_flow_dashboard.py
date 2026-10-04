@@ -90,6 +90,47 @@ class SectorFlowDashboardTest(unittest.TestCase):
         self.assertEqual(([s["sym"] for s in row["in"]], [s["sym"] for s in row["out"]]), (["2330"], ["6488"]))
         self.assertEqual((row["in"][0]["shares"], row["in"][0]["pp"], row["out"][0]["shares"]), (200_000, 0.5, -50_000))
         self.assertEqual(row["amt"], row["in"][0]["amt"] + row["out"][0]["amt"])
+        self.assertEqual((lh["weeks"], row["wk"], lh["window"], lh["start"]), (["2026-09-24"], [row["amt"]], 20, D1))
+
+    def test_large_holder_sums_weeks_in_window(self):
+        self._tdcc("2026-09-10", [("2330", 400_000, 1.0), ("6488", 300_000, 2.0)])
+        self._tdcc("2026-09-18", [("2330", 500_000, 1.2), ("6488", 200_000, 1.5)])
+        self._tdcc("2026-09-24", [("2330", 450_000, 1.1), ("6488", 300_000, 2.0)])
+        lh = build_sector_flow_dashboard(cache_dir=self.cache, end_date=END)["large_holder"]
+        self.assertEqual((lh["status"], lh["weeks"], lh["snapshots"]), ("ok", ["2026-09-18", "2026-09-24"], 3))
+        row = next(r for r in lh["rows"] if r["name"] == "半導體業")
+        weeks = [build_sector_flow_report(cache_dir=self.cache, start_date=D1, end_date=d, max_days=None, taxonomy_date=END)["large_holder"] for d in lh["weeks"]]
+        direct = [round(next(c for c in w["categories"] if c["category"] == "半導體業")["estimated_change_twd"]) for w in weeks]
+        self.assertEqual((row["wk"], row["amt"]), (direct, sum(direct)))
+        # 2330 net +50,000 shares; 6488 falls then recovers to net 0, so it counts neither way
+        self.assertEqual((row["up"], row["down"], [s["sym"] for s in row["in"]], row["out"]), (1, 0, ["2330"], []))
+        self.assertEqual((row["in"][0]["shares"], row["in"][0]["pp"]), (50_000, 0.1))
+
+    def test_large_holder_weeks_use_the_tab_industry_snapshot(self):
+        tax = self.cache / "finmind" / "TaiwanStockInfo" / END / "market.jsonl"
+        tax.parent.mkdir(parents=True)
+        tax.write_text(json.dumps({"stock_id": "2330", "stock_name": "台積電", "industry_category": "光電業", "type": "twse"}, ensure_ascii=False) + "\n", encoding="utf-8")
+        self._tdcc("2026-09-10", [("2330", 400_000, 1.0)])
+        self._tdcc("2026-09-18", [("2330", 500_000, 1.2)])
+        self._tdcc("2026-09-24", [("2330", 450_000, 1.1)])
+        lh = build_sector_flow_dashboard(cache_dir=self.cache, end_date=END)["large_holder"]
+        row = next(r for r in lh["rows"] if r["name"] == "光電業")
+        self.assertEqual((lh["weeks"], [w is not None for w in row["wk"]]), (["2026-09-18", "2026-09-24"], [True, True]))
+        self.assertNotIn("半導體業", [r["name"] for r in lh["rows"]])
+
+    def test_large_holder_week_with_gap_is_null(self):
+        self._tdcc("2026-08-21", [("2330", 400_000, 1.0)])
+        self._tdcc("2026-09-18", [("2330", 500_000, 1.2)])
+        self._tdcc("2026-09-24", [("2330", 450_000, 1.1)])
+        lh = build_sector_flow_dashboard(cache_dir=self.cache, end_date=END)["large_holder"]
+        row = next(r for r in lh["rows"] if r["name"] == "半導體業")
+        self.assertEqual((lh["status"], lh["weeks"], row["wk"][0], row["amt"]), ("ok", ["2026-09-18", "2026-09-24"], None, row["wk"][1]))
+
+    def test_large_holder_without_week_in_window(self):
+        self._tdcc("2026-08-10", [("2330", 400_000, 1.0)])
+        self._tdcc("2026-08-14", [("2330", 500_000, 1.2)])
+        lh = build_sector_flow_dashboard(cache_dir=self.cache, end_date=END)["large_holder"]
+        self.assertEqual((lh["status"], lh["reason"], lh["weeks"], lh["rows"]), ("insufficient_data", "no_snapshot_in_window", [], []))
 
     def test_large_holder_needs_two_snapshots(self):
         self._tdcc("2026-09-24", [("2330", 600_000, 1.5)])
