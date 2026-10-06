@@ -27,3 +27,13 @@ def test_account_override_selects_subset():
     # 不給 account_id → 同樣回退全域
     entry_none, _ = common.build_pipeline(settings, ["2330"])
     assert _ids(entry_none) == settings.trading.pipeline.entry_strategies
+
+
+def test_real_config_retires_pullback_entries_for_every_account():
+    # pullback_rebound 已 PIT REJECTED，前向觀察也確認（2026-10-07）：真實設定下任何帳號都不得再產生新進場，
+    # 但出場定義仍要載入，既有 pullback 持倉才能照常由 risk_exit 出場。
+    settings = common.get_settings()
+    for account in ("國泰", "simulation-main"):
+        entry, exits = common.build_pipeline(settings, ["2330"], account)
+        assert "pullback_rebound" not in _ids(entry)
+        assert "pullback_rebound" in exits
