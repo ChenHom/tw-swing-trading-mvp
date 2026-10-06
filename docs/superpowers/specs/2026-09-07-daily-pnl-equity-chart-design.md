@@ -44,6 +44,20 @@ daily_pnl = 今日總權益 - 前一快照總權益 - 兩快照日期間的外�
 
 區間採 `(前一快照日期, 今日快照日期]`，避免同一筆資金異動重複扣除。若兩個快照不是相鄰日，柱狀值代表兩個快照之間的區間損益，Tooltip 仍落在後一個快照日期。
 
+### 已實現損益定義
+
+`read_equity_curve()` 每列另附 `realized_pnl`：
+
+```text
+realized_pnl = SUM(fifo_matches.net_realized_pnl)，matched_at 日期落在 (前一快照日期, 本快照日期]
+```
+
+- 歸日採 `substr(matched_at, 1, 10)`，與「交易紀錄」Tab 相同，兩頁同日數字一致。
+- 第一筆快照計入日期 ≤ 該日的所有 match；區間內沒有 match 為 `0`。
+- 區間內任一筆 `net_realized_pnl` 為 NULL（未知費稅）則整段為 `None`，不以毛損益冒充。
+- 與 `daily_pnl` 不同：`daily_pnl` 是總權益變化，含未實現損益（持倉市值漲跌）、股利與未平倉部位的盯市變動；`realized_pnl` 只含已平倉 FIFO 配對的淨損益。
+- 圖表以空心外框柱呈現，預設隱藏，點圖例「已實現損益」切換顯示。
+
 ### Tab 結構
 
 Tab 順序固定為：

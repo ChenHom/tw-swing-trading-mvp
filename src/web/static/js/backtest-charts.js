@@ -42,7 +42,7 @@
         tension: .1, pointRadius: 0, yAxisID: 'y', order: 1
       },
       {
-        type: 'bar', label: '每日損益（紅賺／綠賠）',
+        type: 'bar', label: '每日損益',
         data: rows.map(function (r) { return r.daily_pnl; }),
         backgroundColor: rows.map(function (r) {
           if (r.daily_pnl === null) return 'transparent';
@@ -53,6 +53,16 @@
           return r.daily_pnl >= 0 ? '#e53e3e' : '#38a169';
         }),
         borderWidth: 1, maxBarThickness: 18, yAxisID: 'yPnl', order: 2
+      },
+      {
+        type: 'bar', label: '已實現損益',
+        data: rows.map(function (r) { return r.realized_pnl === undefined ? null : r.realized_pnl; }),
+        backgroundColor: 'rgba(0,0,0,0)',
+        borderColor: rows.map(function (r) {
+          if (r.realized_pnl === null || r.realized_pnl === undefined) return 'transparent';
+          return r.realized_pnl >= 0 ? '#e53e3e' : '#38a169';
+        }),
+        borderWidth: 2, maxBarThickness: 18, yAxisID: 'yPnl', order: 2, hidden: true
       }
     ];
     scales.yPnl = {
@@ -101,4 +111,5 @@
       }
     }
   });
+
 })();

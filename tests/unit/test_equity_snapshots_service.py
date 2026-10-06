@@ -197,7 +197,7 @@ def test_read_equity_curve_field_mapping_and_order(tmp_path):
     assert [r["date"] for r in rows] == ["2026-06-10", "2026-06-11"]
     assert rows[0] == {
         "date": "2026-06-10", "cash": 10, "position_value": 20,
-        "equity": 30, "daily_pnl": None,
+        "equity": 30, "daily_pnl": None, "realized_pnl": 0,
     }
     assert rows[1]["daily_pnl"] == -27
     conn.close()
@@ -256,4 +256,52 @@ def test_read_equity_curve_returns_all_available_snapshots(tmp_path):
     assert len(rows) == 181
     assert rows[0]["date"] == "2025-01-01"
     assert rows[-1]["date"] == "2025-06-30"
+    conn.close()
+
+
+def _snap(conn, d, equity=100_000):
+    save_equity_snapshot(conn, "a", date.fromisoformat(d),
+                         {"cash": equity, "positions_value": 0, "total_equity": equity})
+
+
+def _match(conn, mid, matched_at, net, account_id="a"):
+    conn.execute(
+        "INSERT INTO fifo_matches (match_id, account_id, symbol, buy_fill_id, sell_fill_id, quantity, "
+        "buy_price, sell_price, matched_at, realized_pnl, created_at, strategy_id, net_realized_pnl) "
+        "VALUES (?, ?, '2330', 'b', 's', 1, 1, 1, ?, 999, datetime('now'), 's1', ?)",
+        (mid, account_id, matched_at, net),
+    )
+    conn.commit()
+
+
+def test_read_equity_curve_realized_pnl_sums_interval_and_defaults_to_zero(tmp_path):
+    conn = _conn(tmp_path)
+    for d in ("2026-06-10", "2026-06-11", "2026-06-12", "2026-06-15"):
+        _snap(conn, d)
+    _match(conn, "m1", "2026-06-10T10:00:00+08:00", 50)    # 第一個快照：<= 該日
+    _match(conn, "m2", "2026-06-09T10:00:00+08:00", 7)     # 第一個快照之前也計入
+    _match(conn, "m3", "2026-06-11T10:00:00+08:00", 300)
+    _match(conn, "m4", "2026-06-11T13:00:00+08:00", -100)
+    _match(conn, "m5", "2026-06-13T10:00:00+08:00", 40)    # 非相鄰：落在 06-15 區間
+    _match(conn, "m6", "2026-06-14T10:00:00+08:00", 2)
+    _match(conn, "other", "2026-06-11T10:00:00+08:00", 9999, account_id="b")
+
+    rows = read_equity_curve(conn, "a")
+
+    assert [r["realized_pnl"] for r in rows] == [57, 200, 0, 42]
+    conn.close()
+
+
+def test_read_equity_curve_realized_pnl_null_net_makes_interval_none(tmp_path):
+    conn = _conn(tmp_path)
+    for d in ("2026-06-10", "2026-06-11", "2026-06-12"):
+        _snap(conn, d)
+    _match(conn, "m1", "2026-06-11T10:00:00+08:00", 300)
+    _match(conn, "m2", "2026-06-11T11:00:00+08:00", None)
+    _match(conn, "m3", "2026-06-12T10:00:00+08:00", 5)
+
+    rows = read_equity_curve(conn, "a")
+
+    assert [r["realized_pnl"] for r in rows] == [0, None, 5]
+    assert [r["daily_pnl"] for r in rows] == [None, 0, 0]  # daily_pnl 不受影響
     conn.close()
