@@ -87,6 +87,20 @@ class TrendBreakoutParams(BaseModel):
     order_budget_twd: int = Field(default=20000, ge=1000)
 
 
+class BreakoutShadowFilterParams(BaseModel):
+    """研究 Challenger：trend_breakout 進場參數（欄位與 TrendBreakoutParams 相同）+ 影線濾網窗。
+    濾網：近 shadow_window_days 日（含訊號日）上影線總和 > 下影線總和 → 不進場。"""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    breakout_lookback_days: int = Field(default=20, ge=5)
+    volume_avg_days: int = Field(default=20, ge=5)
+    volume_multiple_pct: int = Field(default=150, ge=100, le=1000)
+    ma_trend_period: int = Field(default=60, ge=5)
+    index_ma_period: int = Field(default=60, ge=5)
+    order_budget_twd: int = Field(default=20000, ge=1000)
+    shadow_window_days: int = Field(default=7, ge=1)
+
+
 class PullbackReboundParams(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

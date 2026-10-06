@@ -30,6 +30,11 @@ STRATEGY_LABELS: dict[str, dict[str, str]] = {
         "desc": "進場：週 K 定方向（MACD DIF>0）＋ 日 K 觸發（MACD 金叉、零軸上），多框共振才放行。"
                 "出場：交由 risk_exit 以寬移動停利『讓贏家跑』管理。",
     },
+    "breakout_shadow_filter": {
+        "name": "突破影線濾網",
+        "desc": "研究 Challenger：趨勢帶量突破的進場條件，再剔除近 7 日上影線總和大於下影線總和者（上方賣壓重）。"
+                "出場與趨勢帶量突破相同，交由 risk_exit 管理。",
+    },
     "risk_exit": {
         "name": "風險出場",
         "desc": "固定停損／移動停利／均線失效／時間停損，依各策略 exit 參數對持倉部位產生 SELL。",

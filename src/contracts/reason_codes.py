@@ -12,6 +12,7 @@ REASON_CODE_LABELS: dict[str, str] = {
     # 進場（ENTRY）
     "TREND_BREAKOUT_ENTRY": "趨勢帶量突破：站上 20 日新高且帶量、符合多頭結構",
     "PULLBACK_REBOUND_ENTRY": "回檔轉強：均線回踩後 K 線轉強，低接進場",
+    "BREAKOUT_SHADOW_FILTER_ENTRY": "突破影線濾網：帶量突破 20 日新高，且近 7 日下影線不少於上影線",
     "TREND_PULLBACK_ENTRY": "趨勢回檔進場（trend_pullback，已退役）",
     # 風險出場（RISK_EXIT）
     "FIXED_STOP_EXIT": "固定停損：收盤跌破停損價",
