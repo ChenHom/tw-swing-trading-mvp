@@ -9,6 +9,30 @@
 
 ---
 
+## 2026-10-06 ｜ 研究 Challenger：breakout_shadow_filter（突破 + 影線濾網）thesis、對抗審查、實作
+
+**背景／觸發**：社群貼文提出「N 日下影線占比」XScript 指標（Σ下影線 / Σ全距，N=7），反駁者指出它看不到上影線的賣壓。使用者要求評估能否用在本專案。結論：不適合直接改 live 策略（trend_breakout 是唯一 RESEARCH_PASS、pullback 改了就是過擬合），改為 trend_breakout 家族的研究 Challenger：基準候選中「近 7 日上影線總和 > 下影線總和」者不進場。
+
+**變更內容**：
+- Thesis `docs/strategies/breakout_shadow_filter.md`：看結果前寫死。草稿經一輪對抗式審查（4 BLOCKER / 8 MAJOR / 7 MINOR）後全面改寫，修訂對照見文末附錄。
+- 策略 `src/strategy/breakout_shadow_filter.py`：組合呼叫原封不動的 `TrendBreakoutStrategy` 再過濾，live 程式碼零改動。參數 `BreakoutShadowFilterParams` 繼承 `TrendBreakoutParams`；YAML 的進出場參數與 trend_breakout 逐字相同，有測試保證。**不在任何帳號的 `entry_strategies`**。
+- 主檢定 `src/application/research/shadow_filter_study.py` + `scripts/shadow_filter_study.py`：列出 PIT universe 上全部基準候選，逐筆用與回測同源的成交與出場規則獨立模擬。比較保留組與剔除組：P1 差異的 cluster bootstrap 下界 > 0、P2 同筆數隨機濾網置換 p < 0.05、P3 剔除率 5～60%、P4 保留組平均 > 0。出場判斷與 `RiskExitEngine.explain_exit` 在 200 條隨機路徑上逐日一致（測試）。
+- 治理：`research_ledger.STRATEGY_FAMILIES` 讓新 id 的試驗次數計入 trend_breakout 家族（換 id 不得重置 DSR num_trials），回測與主檢定都在 ledger notes 寫 `family=`；`register_regime_gates.py` 加入本策略 gate（與 trend_breakout 1.0.0 相同）；`UniversePolicy.all_symbols` 抽出共用。
+- 一鍵執行 `scripts/run_breakout_shadow_filter_research.sh`：依凍結條件依序做 gate → 授權（限額取 trend_breakout 有效授權）→ 快照 sha256 → 主檢定 → 基準與 challenger 組合回測。
+
+**為什麼這樣動 / 考慮過的替代**：
+- 組合回測受容量（每日 2 檔、同時 5 檔）、替補與持倉路徑影響，濾掉一筆會讓出名額給別筆，量到的是合成效果。所以主檢定改在訊號層級，組合回測降為可實作性檢查。
+- 審查發現回測的 `ranking_score` 沒有持久化，實際依代號排序（基準 RESEARCH_PASS 也在此排序下得到）。本研究兩邊都不修，照實揭露；修了就要重新裁決基準。
+- 「U > L」並非無參數：等價於實體中點平均低於全距中點，N=7 等選擇已列表，改任一項都算新試驗。
+
+**實作後 code review（10 項，全修）**：停牌期間 stale bar 重發造成同一筆交易重複計入（改記 `STALE_SIGNAL` 並排除）；D+1 停牌原本延後到復牌日買（改為不成交，同 FakeBroker）；賣單被鎖跌停後原本硬賣（改為逐日重新評估）；剔除率分母改含未成交候選；主檢定寫入 ledger；參數改繼承；移除無用計數器；改用輕量 bar 降低記憶體。
+
+**驗證**：`pytest tests` 509 passed（需 `SHIOAJI_API_KEY/SECRET_KEY` 假值；雲端容器缺這兩個環境變數時有 4 個既有測試失敗，與本變更無關）。合成隨機資料的煙霧測試：主檢定判 `NO_INCREMENT`（符合預期），組合回測兩支都能跑完並產出裁決，ledger 家族計數正確。
+
+**未完成**：**PIT 正式研究尚未執行**。開發環境（雲端容器）沒有 `data/research.db`，網路政策也擋 FinMind／TWSE，無法回補。需在有 research.db 的機器上跑 `scripts/run_breakout_shadow_filter_research.sh`，結果依 thesis §D 判定並補記本檔。
+
+---
+
 ## 2026-09-07 ｜ 每日損益混合圖補回現金／持倉市值線
 
 **背景／觸發**：每日損益柱初版依當時規格取代了現金與持倉市值線；使用者看到 mock 後釐清真正需求是「在原本三線圖上新增每日損益」，不是移除原有線條。

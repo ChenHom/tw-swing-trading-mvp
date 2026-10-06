@@ -155,7 +155,78 @@ def test_enumerate_outcomes_end_to_end_on_sqlite(tmp_path):
     store = InMemoryBars(conn, ["AAA", "BBB", "TSE"])
     params = TrendBreakoutParams(breakout_lookback_days=5, volume_avg_days=5, volume_multiple_pct=150,
                                  ma_trend_period=5, index_ma_period=5, order_budget_twd=20000)
-    outcomes = enumerate_outcomes(store, ListUniverse(["AAA", "BBB"]), d, d, "TSE", params, EXIT, 7, 10, d[-1])
+    outcomes = enumerate_outcomes(store, ListUniverse(["AAA", "BBB"]), d, "TSE", params, EXIT, 7, 10, d[-1])
     assert {(o.symbol, o.signal_date, o.filtered) for o in outcomes} == {
         ("AAA", d[15].isoformat(), False), ("BBB", d[15].isoformat(), True)}
     assert all(o.status == "OPEN_AT_END" for o in outcomes)
+
+
+def test_entry_session_without_bar_is_unfilled_not_deferred():
+    """D+1 停牌：回測 UNFILLED_NO_BAR 且不重試，模擬不可改在復牌日買進。"""
+    d = days(5)
+    bars = [bar(d[0], 1000000), bar(d[3], 1000000), bar(d[4], 1000000)]  # d[1], d[2] 停牌
+    assert simulate_candidate(bars, 0, EXIT, 10, d, d[-1], 20000)["status"] == "UNFILLED_NO_BAR"
+
+
+def test_voided_sell_is_reevaluated_and_not_forced():
+    """t 收盤觸發停損；t+1 零量（賣單作廢）且收盤回到停損線上 → t+2 不得硬賣。"""
+    d = days(8)
+    bars = [bar(d[0], 1000000), bar(d[1], 1000000),
+            bar(d[2], 920000),                    # 停損觸發（≤ 100.3×0.93）
+            bar(d[3], 1000000, volume=0),         # 零量：賣單作廢；收盤回到 100，條件不再成立
+            bar(d[4], 1000000), bar(d[5], 1000000), bar(d[6], 1000000), bar(d[7], 1000000)]
+    r = simulate_candidate(bars, 0, EXIT, 10, d, d[-1], 20000)
+    assert r["status"] == "OPEN_AT_END"
+
+
+def test_time_stop_during_suspension_sells_at_resume_open():
+    """停牌期間回測仍以 stale close 逐日評估：持有滿 20 交易日落在停牌中 → 復牌日開盤賣。"""
+    d = days(40)
+    p = ExitParams(**{**EXIT.model_dump(), "ma_break_period": 5})
+    bars = [bar(x, 1000000) for x in d[:20]] + [bar(x, 1000000, open_=990000) for x in d[25:]]
+    r = simulate_candidate(bars, 0, p, 10, d, d[-1], 20000)
+    assert r["status"] == "CLOSED" and r["exit_reason"] == "TIME_STOP_EXIT"
+    assert r["exit_date"] == d[25].isoformat()
+
+
+def test_stale_resignals_during_suspension_counted_once(tmp_path):
+    db = str(tmp_path / "r.db")
+    init_db(db)
+    conn = get_db_connection(db)
+    d = days(20)
+    rows = [bar(x, 2000000 + i * 10000, symbol="TSE", instrument="INDEX") for i, x in enumerate(d)]
+    for i, x in enumerate(d):
+        if i < 15:
+            rows.append(bar(x, 1000000, symbol="AAA"))
+        elif i == 15:
+            rows.append(bar(x, 1100000, open_=1010000, high=1105000, low=900000, volume=9000, symbol="AAA"))
+        elif i >= 18:  # d[16], d[17] 停牌 → 策略在這兩天會以 stale bar 重發
+            rows.append(bar(x, 1100000, symbol="AAA"))
+    _insert(conn, rows)
+    store = InMemoryBars(conn, ["AAA", "TSE"])
+    params = TrendBreakoutParams(breakout_lookback_days=5, volume_avg_days=5, volume_multiple_pct=150,
+                                 ma_trend_period=5, index_ma_period=5, order_budget_twd=20000)
+    outcomes = enumerate_outcomes(store, ListUniverse(["AAA"]), d, "TSE", params, EXIT, 7, 10, d[-1])
+    statuses = sorted(o.status for o in outcomes)
+    assert statuses == ["STALE_SIGNAL", "STALE_SIGNAL", "UNFILLED_NO_BAR"]
+    s = summarize(outcomes)
+    assert s["candidates_total"] == 1 and s["stale_signals_skipped"] == 2
+
+
+def test_rejection_rate_uses_all_candidates_not_only_filled():
+    out = [TradeOutcome("A", "2020-01-02", True, False, "UNFILLED_ENTRY"),
+           TradeOutcome("B", "2020-01-02", False, False, "CLOSED", net_return=0.01),
+           TradeOutcome("C", "2020-01-03", False, False, "CLOSED", net_return=0.02),
+           TradeOutcome("D", "2020-01-03", False, False, "STALE_SIGNAL")]
+    assert summarize(out)["rejection_rate"] == 1 / 3
+
+
+def _insert(conn, rows):
+    for b in rows:
+        conn.execute(
+            "INSERT INTO market_bars (symbol, exchange, instrument_type, trade_date, open, high, low, close, volume,"
+            " amount, source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum, price_basis,"
+            " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'raw',datetime('now'),datetime('now'))",
+            (b.symbol, b.exchange, b.instrument_type, b.trade_date.isoformat(), b.open, b.high, b.low, b.close,
+             b.volume, 0, "t", "Asia/Taipei", 1, "now", "chk"))
+    conn.commit()

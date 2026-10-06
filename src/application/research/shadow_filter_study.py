@@ -8,7 +8,7 @@
    （同 RiskExitEngine.explain_exit 的定義與優先序）判斷、出場訊號隔日開盤賣；
 3. 依 D 當日的 7 日影線（U > L）分組，比較淨報酬，cluster bootstrap（以進場訊號日為群）＋隨機濾網置換檢定。
 
-純讀取、不寫 DB；所有隨機性固定 seed，同資料重跑結果逐位元相同。
+所有隨機性固定 seed，同資料重跑結果逐位元相同。本模組不寫 DB（腳本另記 research_ledger）。
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from dataclasses import dataclass, asdict
 from datetime import date
 from typing import Optional, Sequence
 
-from src.contracts.models import ExitParams, MarketBar, TrendBreakoutParams
+from src.contracts.models import ExitParams, TrendBreakoutParams
 from src.strategy.base import PortfolioSnapshot, SignalGenerationContext
 from src.strategy.breakout_shadow_filter import shadow_sums
 from src.strategy.trend_breakout import TrendBreakoutStrategy
@@ -41,39 +41,43 @@ PLACEBO_ITERATIONS = 2000
 
 # ---------------------------------------------------------------- 資料存取
 
+@dataclass(frozen=True, slots=True)
+class LiteBar:
+    """策略與模擬只讀這幾個欄位；不建完整 pydantic LiteBar，避免 ~90 萬根 bar 的驗證與記憶體成本。"""
+    symbol: str
+    trade_date: date
+    open: int
+    high: int
+    low: int
+    close: int
+    volume: int
+
+
 class InMemoryBars:
     """一次載入 market_bars（單一 price_basis、is_complete=1），提供與 SqlitePointInTimeMarketData
     同語意的 history(symbol, limit)（trade_date <= as_of、時間升冪、取最後 limit 根）。"""
 
     def __init__(self, conn: sqlite3.Connection, symbols: Sequence[str], price_basis: str = "raw"):
-        self._bars: dict[str, list[MarketBar]] = {}
+        self._bars: dict[str, list[LiteBar]] = {}
         self._dates: dict[str, list[date]] = {}
         cursor = conn.cursor()
         for symbol in symbols:
             cursor.execute(
                 """
-                SELECT symbol, exchange, instrument_type, trade_date, open, high, low, close, volume, amount,
-                       source, source_timezone, is_complete, source_fetched_at, raw_payload_checksum
-                FROM market_bars
+                SELECT trade_date, open, high, low, close, volume FROM market_bars
                 WHERE symbol = ? AND is_complete = 1 AND price_basis = ?
                 ORDER BY trade_date ASC
                 """,
                 (symbol, price_basis),
             )
             bars = [
-                MarketBar(
-                    symbol=r["symbol"], exchange=r["exchange"], instrument_type=r["instrument_type"],
-                    trade_date=date.fromisoformat(r["trade_date"]), open=r["open"], high=r["high"],
-                    low=r["low"], close=r["close"], volume=r["volume"], amount=r["amount"] or 0,
-                    source=r["source"], source_timezone=r["source_timezone"], is_complete=r["is_complete"],
-                    source_fetched_at=r["source_fetched_at"], raw_payload_checksum=r["raw_payload_checksum"],
-                )
+                LiteBar(symbol, date.fromisoformat(r[0]), r[1], r[2], r[3], r[4], r[5])
                 for r in cursor.fetchall()
             ]
             self._bars[symbol] = bars
             self._dates[symbol] = [b.trade_date for b in bars]
 
-    def bars(self, symbol: str) -> list[MarketBar]:
+    def bars(self, symbol: str) -> list[LiteBar]:
         return self._bars.get(symbol, [])
 
     def index_through(self, symbol: str, as_of: date) -> int:
@@ -93,18 +97,18 @@ class InMemoryPIT:
     def as_of_date(self) -> date:
         return self._as_of
 
-    def history(self, symbol: str, limit: int) -> list[MarketBar]:
+    def history(self, symbol: str, limit: int) -> list[LiteBar]:
         n = self._store.index_through(symbol, self._as_of)
         return self._store.bars(symbol)[max(0, n - limit):n]
 
-    def latest(self, symbol: str) -> Optional[MarketBar]:
+    def latest(self, symbol: str) -> Optional[LiteBar]:
         h = self.history(symbol, 1)
         return h[0] if h else None
 
 
 # ---------------------------------------------------------------- 單筆模擬
 
-def _locked(bar: MarketBar, prev_close: Optional[int], side: str) -> bool:
+def _locked(bar: LiteBar, prev_close: Optional[int], side: str) -> bool:
     """同 FakeBroker._unfilled_reason：零量、或一價到底且收在漲（買）／跌（賣）停附近 → 無法成交。"""
     if bar.volume == 0:
         return True
@@ -117,7 +121,7 @@ def _locked(bar: MarketBar, prev_close: Optional[int], side: str) -> bool:
 
 
 def exit_reason(
-    bars: list[MarketBar], t: int, wavg: int, high_close: int, holding_days: int, p: ExitParams,
+    bars: list[LiteBar], t: int, wavg: int, high_close: int, holding_days: int, p: ExitParams,
 ) -> Optional[str]:
     """第 t 根收盤時的出場判斷，定義與優先序同 RiskExitEngine.explain_exit。
     high_close＝自建倉日起（含）至 t 的最高收盤：回測在評估出場前先寫 watermark，
@@ -152,7 +156,8 @@ class TradeOutcome:
     signal_date: str
     filtered: bool          # U > L（被濾網剔除）
     tie: bool               # U == L
-    status: str             # CLOSED / OPEN_AT_END / UNFILLED_ENTRY / NO_NEXT_BAR / BUDGET_TOO_SMALL
+    status: str             # CLOSED / OPEN_AT_END / UNFILLED_ENTRY / UNFILLED_NO_BAR /
+                            # NO_NEXT_SESSION / BUDGET_TOO_SMALL / STALE_SIGNAL
     entry_date: Optional[str] = None
     exit_date: Optional[str] = None
     exit_reason: Optional[str] = None
@@ -179,20 +184,31 @@ def _fee(value: int) -> int:
     return max(MIN_FEE, int(round(value * FEE_RATE)))
 
 
+def _next_session(sessions: Sequence[date], d: date) -> Optional[date]:
+    i = bisect.bisect_right(sessions, d)
+    return sessions[i] if i < len(sessions) else None
+
+
 def simulate_candidate(
-    bars: list[MarketBar], signal_idx: int, p: ExitParams, slippage_bps: int,
+    bars: list[LiteBar], signal_idx: int, p: ExitParams, slippage_bps: int,
     sessions: Sequence[date], end_date: date, order_budget_twd: int,
 ) -> dict:
-    """從訊號日 bars[signal_idx] 起模擬單筆交易，回 status/entry/exit/net_return。
-    股數＝order_budget_twd // 訊號日收盤（同 allocator）；wavg＝成交股數加權價（同 projection）；
-    holding_days 以交易所日曆計（同 explain_exit：sessions_between(建倉日, as_of) − 1）。"""
+    """從訊號日 bars[signal_idx] 起模擬單筆交易，回 status/entry/exit/net_return。與回測同源之處：
+    - 股數＝order_budget_twd // 訊號日收盤（同 allocator）；wavg＝成交股數加權價（同 projection）。
+    - 委託只在「下一個交易所交易日」撮合；該日無 bar（停牌）→ 不成交（FakeBroker UNFILLED_NO_BAR，不重試）。
+    - 每個交易日收盤重新評估出場；賣單只在隔一交易日有效，鎖跌停／零量／無 bar 則作廢，下一收盤再評估
+      （條件不再成立就不賣）。停牌日以最後已知 bar（stale close、watermark 不更新）評估，同回測。
+    - holding_days 以交易所日曆計（同 explain_exit：sessions_between(建倉日, as_of) − 1）。"""
     ref_price = bars[signal_idx].close / 10000.0
     quantity = int(order_budget_twd // ref_price) if ref_price > 0 else 0
     if quantity <= 0:
         return {"status": "BUDGET_TOO_SMALL"}
+    entry_date = _next_session(sessions, bars[signal_idx].trade_date)
+    if entry_date is None or entry_date > end_date:
+        return {"status": "NO_NEXT_SESSION"}
     entry_idx = signal_idx + 1
-    if entry_idx >= len(bars) or bars[entry_idx].trade_date > end_date:
-        return {"status": "NO_NEXT_BAR"}
+    if entry_idx >= len(bars) or bars[entry_idx].trade_date != entry_date:
+        return {"status": "UNFILLED_NO_BAR"}
     entry_bar = bars[entry_idx]
     if _locked(entry_bar, bars[signal_idx].close, "BUY"):
         return {"status": "UNFILLED_ENTRY"}
@@ -200,44 +216,59 @@ def simulate_candidate(
     wavg = int(sum(q * px for q, px in buys) / quantity)
     buy_cost = sum(_value(q, px) + _fee(_value(q, px)) for q, px in buys)
 
-    def result(status: str, exit_bar: MarketBar, sells: list[tuple[int, int]], reason: Optional[str]) -> dict:
+    def holding(as_of: date) -> int:
+        return bisect.bisect_right(sessions, as_of) - bisect.bisect_right(sessions, entry_date)
+
+    def result(status: str, exit_bar: LiteBar, sells: list[tuple[int, int]], reason: Optional[str]) -> dict:
         proceeds = 0
         for q, px in sells:
             v = _value(q, px)
             proceeds += v - _fee(v) - int(round(v * TAX_RATE))
         return {
-            "status": status, "entry_date": entry_bar.trade_date.isoformat(),
+            "status": status, "entry_date": entry_date.isoformat(),
             "exit_date": exit_bar.trade_date.isoformat(), "exit_reason": reason,
             "net_return": proceeds / buy_cost - 1.0,
         }
 
-    high_close = None
-    pending_exit: Optional[str] = None
+    high_close: Optional[int] = None
+    reason: Optional[str] = None      # 最近一次收盤評估的出場原因
+    sell_on: Optional[date] = None    # 該評估產生的賣單撮合日
     last = entry_idx
     for t in range(entry_idx, len(bars)):
         bar = bars[t]
         if bar.trade_date > end_date:
             break
+        if t > entry_idx:
+            # 前一根 bar 與本根之間的停牌交易日：回測仍以 stale close 逐日評估，最後一個停牌日的評估決定本日是否賣
+            prev = bars[t - 1]
+            gap_last = None
+            i = bisect.bisect_right(sessions, prev.trade_date)
+            while i < len(sessions) and sessions[i] < bar.trade_date:
+                gap_last = sessions[i]
+                i += 1
+            if gap_last is not None:
+                reason = exit_reason(bars, t - 1, wavg, high_close, holding(gap_last), p)
+                sell_on = _next_session(sessions, gap_last) if reason else None
+            if sell_on == bar.trade_date and not _locked(bar, prev.close, "SELL"):
+                return result("CLOSED", bar, _fills(bar.open, quantity, "SELL", slippage_bps), reason)
         last = t
-        if pending_exit is not None and not _locked(bar, bars[t - 1].close, "SELL"):
-            return result("CLOSED", bar, _fills(bar.open, quantity, "SELL", slippage_bps), pending_exit)
         high_close = bar.close if high_close is None else max(high_close, bar.close)
-        # = len(sessions_between(建倉日, as_of)) − 1；建倉日必為有 bar 的交易日
-        holding = bisect.bisect_right(sessions, bar.trade_date) - bisect.bisect_right(sessions, entry_bar.trade_date)
-        reason = exit_reason(bars, t, wavg, high_close, holding, p)
-        if reason is not None and pending_exit is None:
-            pending_exit = reason
+        reason = exit_reason(bars, t, wavg, high_close, holding(bar.trade_date), p)
+        sell_on = _next_session(sessions, bar.trade_date) if reason else None
     # 窗末仍持有：以最後可見收盤、無滑價扣賣出費稅設算（thesis 預先規定）
-    return result("OPEN_AT_END", bars[last], [(quantity, bars[last].close)], pending_exit)
+    return result("OPEN_AT_END", bars[last], [(quantity, bars[last].close)], reason)
 
 
 # ---------------------------------------------------------------- 候選列舉
 
 def enumerate_outcomes(
-    store: InMemoryBars, universe, sessions: Sequence[date], all_sessions: Sequence[date], index_symbol: str,
+    store: InMemoryBars, universe, sessions: Sequence[date], index_symbol: str,
     entry_params: TrendBreakoutParams, exit_params: ExitParams, shadow_window_days: int,
     slippage_bps: int, end_date: date,
 ) -> list[TradeOutcome]:
+    """sessions：研究窗內全部交易所交易日（訊號日與撮合日都以此為準）。
+    最新 bar 不是 D 的訊號（停牌中 stale 重發）記為 STALE_SIGNAL：同一筆突破在停牌期間會每天重發，
+    回測靠「已持有不再進場」壓掉，獨立模擬沒有持倉，若不排除會把同一筆交易重複計入。"""
     empty = PortfolioSnapshot(available_cash=0, positions={})
     outcomes: list[TradeOutcome] = []
     for D in sessions:
@@ -256,10 +287,13 @@ def enumerate_outcomes(
             filtered = len(window) == shadow_window_days and upper > lower
             bars = store.bars(signal.symbol)
             signal_idx = store.index_through(signal.symbol, D) - 1
-            sim = simulate_candidate(
-                bars, signal_idx, exit_params, slippage_bps, all_sessions, end_date,
-                entry_params.order_budget_twd,
-            )
+            if bars[signal_idx].trade_date != D:
+                sim = {"status": "STALE_SIGNAL"}
+            else:
+                sim = simulate_candidate(
+                    bars, signal_idx, exit_params, slippage_bps, sessions, end_date,
+                    entry_params.order_budget_twd,
+                )
             outcomes.append(TradeOutcome(
                 symbol=signal.symbol, signal_date=D.isoformat(), filtered=filtered,
                 tie=upper == lower, **sim,
@@ -336,7 +370,9 @@ def summarize(outcomes: list[TradeOutcome]) -> dict:
         placebo_p_value(all_returns, len(removed), _mean(kept), PLACEBO_ITERATIONS, rng)
         if kept else None
     )
-    rejection_rate = len(removed) / len(evaluated) if evaluated else None
+    # P3 剔除率：候選集合（排除 stale 重發）中 U > L 的比例，與能否成交無關（thesis §B P3）
+    candidates = [o for o in outcomes if o.status != "STALE_SIGNAL"]
+    rejection_rate = (sum(1 for o in candidates if o.filtered) / len(candidates)) if candidates else None
 
     # 最小可偵測差異（只用合併樣本標準差，不看分組結果）：雙樣本、單尾 5%、檢定力 80% 近似。
     mde = None
@@ -353,9 +389,10 @@ def summarize(outcomes: list[TradeOutcome]) -> dict:
     verdict = "FILTER_EFFECTIVE" if all(checks.values()) else "NO_INCREMENT"
 
     def exit_mix(group: list[TradeOutcome]) -> dict:
+        """只有實際平倉者以出場原因歸類；窗末未平倉一律記 OPEN_AT_END（即使最後一日已觸發條件）。"""
         mix: dict[str, int] = {}
         for o in group:
-            key = o.exit_reason or o.status
+            key = o.exit_reason if o.status == "CLOSED" else o.status
             mix[key] = mix.get(key, 0) + 1
         return dict(sorted(mix.items()))
 
@@ -364,12 +401,13 @@ def summarize(outcomes: list[TradeOutcome]) -> dict:
         status_counts[o.status] = status_counts.get(o.status, 0) + 1
 
     return {
-        "candidates_total": len(outcomes),
+        "candidates_total": len(candidates),
+        "stale_signals_skipped": len(outcomes) - len(candidates),
         "status_counts": dict(sorted(status_counts.items())),
         "evaluated": len(evaluated),
         "kept_n": len(kept),
         "removed_n": len(removed),
-        "tie_share": (sum(1 for o in evaluated if o.tie) / len(evaluated)) if evaluated else None,
+        "tie_share": (sum(1 for o in candidates if o.tie) / len(candidates)) if candidates else None,
         "rejection_rate": rejection_rate,
         "mean_net_return_all": _mean(all_returns),
         "mean_net_return_kept": _mean(kept),

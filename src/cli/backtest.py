@@ -79,11 +79,8 @@ def cmd_backtest_run(args):
     if policy_version:
         from src.strategy.universe import PolicyUniverseProvider
         universe_arg = PolicyUniverseProvider(conn, policy_version)
-        rows = conn.execute(
-            "SELECT DISTINCT symbol FROM universe_policy WHERE policy_version = ? ORDER BY symbol",
-            (policy_version,),
-        ).fetchall()
-        symbols = [r["symbol"] for r in rows]
+        from src.market_data.universe_policy import UniversePolicy
+        symbols = UniversePolicy(conn).all_symbols(policy_version)
         if not symbols:
             print(f"Error: universe_policy '{policy_version}' 無成分股，請先執行 'market build-universe'。")
             sys.exit(1)

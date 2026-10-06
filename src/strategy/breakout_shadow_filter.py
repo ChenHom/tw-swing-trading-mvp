@@ -1,10 +1,10 @@
-from src.contracts.models import DailySignalBundle, BreakoutShadowFilterParams, MarketBar, TrendBreakoutParams
+from src.contracts.models import DailySignalBundle, BreakoutShadowFilterParams
 from src.market_data.repository import PointInTimeMarketData
 from src.strategy.base import SignalGenerationContext, PortfolioSnapshot
 from src.strategy.trend_breakout import TrendBreakoutStrategy
 
 
-def shadow_sums(bars: list[MarketBar]) -> tuple[int, int, int]:
+def shadow_sums(bars) -> tuple[int, int, int]:
     """回 (上影線總和, 下影線總和, 高低振幅總和)，價格單位同 MarketBar（元×10000），全程整數。"""
     upper = sum(b.high - max(b.open, b.close) for b in bars)
     lower = sum(min(b.open, b.close) - b.low for b in bars)
@@ -23,13 +23,7 @@ class BreakoutShadowFilterStrategy:
 
     def __init__(self, params: BreakoutShadowFilterParams, universe_symbols: list[str], index_symbol: str):
         self.params = params
-        base_params = TrendBreakoutParams(
-            **params.model_dump(exclude={"shadow_window_days"})
-        )
-        self._base = TrendBreakoutStrategy(base_params, universe_symbols, index_symbol)
-        # 研究診斷計數（不影響訊號）：基礎條件成立的候選數 / 被影線濾網剔除數。
-        self.candidate_count = 0
-        self.filtered_count = 0
+        self._base = TrendBreakoutStrategy(params.base_params(), universe_symbols, index_symbol)
 
     def generate(
         self,
@@ -41,11 +35,9 @@ class BreakoutShadowFilterStrategy:
         window = self.params.shadow_window_days
         kept = []
         for signal in bundle.signals:
-            self.candidate_count += 1
             bars = market_data.history(signal.symbol, limit=window)
             upper, lower, _span = shadow_sums(bars)
             if len(bars) == window and upper > lower:
-                self.filtered_count += 1
                 continue
             kept.append(signal.model_copy(update={"reason_code": self.REASON_CODE}))
         return bundle.model_copy(update={"signals": kept})

@@ -86,7 +86,6 @@ def test_breakout_with_dominant_upper_shadows_is_filtered():
     base = TrendBreakoutStrategy(TrendBreakoutParams(**BASE_KW), ["2330"], "TSE")
     assert len(base.generate(CTX, data, EMPTY).signals) == 1
     assert strat.generate(CTX, data, EMPTY).signals == []
-    assert (strat.candidate_count, strat.filtered_count) == (1, 1)
 
 
 def test_equal_shadows_are_kept_and_zero_range_bars_do_not_filter():

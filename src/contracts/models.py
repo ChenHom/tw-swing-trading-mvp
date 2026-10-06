@@ -87,20 +87,6 @@ class TrendBreakoutParams(BaseModel):
     order_budget_twd: int = Field(default=20000, ge=1000)
 
 
-class BreakoutShadowFilterParams(BaseModel):
-    """研究 Challenger：trend_breakout 進場參數（欄位與 TrendBreakoutParams 相同）+ 影線濾網窗。
-    濾網：近 shadow_window_days 日（含訊號日）上影線總和 > 下影線總和 → 不進場。"""
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    breakout_lookback_days: int = Field(default=20, ge=5)
-    volume_avg_days: int = Field(default=20, ge=5)
-    volume_multiple_pct: int = Field(default=150, ge=100, le=1000)
-    ma_trend_period: int = Field(default=60, ge=5)
-    index_ma_period: int = Field(default=60, ge=5)
-    order_budget_twd: int = Field(default=20000, ge=1000)
-    shadow_window_days: int = Field(default=7, ge=1)
-
-
 class PullbackReboundParams(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -109,6 +95,15 @@ class PullbackReboundParams(BaseModel):
     pullback_touch_buffer_bps: int = Field(default=200, ge=0, le=1000)  # low <= sma_short * 1.02
     index_ma_period: int = Field(default=60, ge=5)
     order_budget_twd: int = Field(default=20000, ge=1000)
+
+
+class BreakoutShadowFilterParams(TrendBreakoutParams):
+    """研究 Challenger：trend_breakout 進場參數（繼承，欄位/預設/驗證逐字相同）+ 影線濾網窗。
+    濾網：近 shadow_window_days 根 K 棒（含訊號日）上影線總和 > 下影線總和 → 不進場。"""
+    shadow_window_days: int = Field(default=7, ge=1)
+
+    def base_params(self) -> TrendBreakoutParams:
+        return TrendBreakoutParams(**self.model_dump(exclude={"shadow_window_days"}))
 
 
 class TrendRiderParams(BaseModel):

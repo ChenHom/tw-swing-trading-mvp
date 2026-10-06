@@ -90,16 +90,24 @@ RESEARCH_PASS 也是在這個排序下得到的。本研究的組合回測**兩�
 組合回測受容量、替補與持倉路徑影響：濾掉一筆會讓出名額給原本被擠掉的訊號，量到的是「濾網＋替補＋路徑」的合成效果。
 主檢定因此改在訊號層級，與容量無關。
 
-**程式**：`scripts/shadow_filter_study.py` → `src/application/research/shadow_filter_study.py`，純讀、固定 seed 1337。
+**程式**：`scripts/shadow_filter_study.py` → `src/application/research/shadow_filter_study.py`，固定 seed 1337。
+只讀行情；唯一寫入是 research_ledger 一列（`status=SIGNAL_STUDY`，notes 含 `family=trend_breakout` 與 verdict）。
+正式執行一律用 `scripts/run_breakout_shadow_filter_research.sh`，它依凍結條件排好順序：gate → 授權 → 快照 → 主檢定 → 兩支組合回測。
 
 1. **候選集合**：PIT universe 每個交易日 D，以原封不動的 `TrendBreakoutStrategy`（空持倉）列出全部基準候選 (symbol, D)。
    不管是否已持有，也不管容量。
 2. **逐筆模擬**：每筆獨立模擬，規則與回測同源：
    - 股數 = 20,000 // D 收盤；整張＋零股拆單；滑價 10 bps、零股 ×3；手續費 0.1425%（最低 20 元）、賣出稅 0.3%。
-   - 出場判斷與 `RiskExitEngine.explain_exit` 同定義、同優先序（有隨機路徑一致性測試保證）；出場訊號隔日開盤賣，遇鎖跌停／零量順延。
+   - 委託只在下一個交易所交易日撮合。該日停牌（無 bar）→ 不成交、不重試（同 FakeBroker `UNFILLED_NO_BAR`）。
+   - 出場判斷與 `RiskExitEngine.explain_exit` 同定義、同優先序（有隨機路徑一致性測試保證）。每個交易日收盤重新評估；
+     賣單只對隔一交易日有效，遇鎖跌停／零量／停牌即作廢，下一個收盤再評估，條件不再成立就不賣。
+     停牌日以最後已知 bar 評估（watermark 不更新），同回測。
    - 窗末仍持有者，以最後收盤扣賣出費稅設算。
    - 報酬單位＝淨報酬率（淨損益 / 買進成本）。
-   - 狀態為 `UNFILLED_ENTRY`（D+1 鎖漲停）、`NO_NEXT_BAR`、`BUDGET_TOO_SMALL`（股價 > 2 萬）的候選不計入兩組，只報告筆數。
+   - 下列狀態不計入兩組報酬，只報告筆數：`UNFILLED_ENTRY`（D+1 鎖漲停／零量）、`UNFILLED_NO_BAR`（D+1 停牌）、
+     `NO_NEXT_SESSION`（D 是窗內最後交易日）、`BUDGET_TOO_SMALL`（股價 > 2 萬）。
+   - `STALE_SIGNAL`：D 當天停牌、策略以舊 bar 重發的同一筆突破。回測靠「已持有不再進場」壓掉重發，獨立模擬沒有持倉，
+     所以把它排除在候選集合之外，避免同一筆交易重複計入。
 3. **分組**：剔除組＝U > L；保留組＝其餘。Δ = 保留組平均淨報酬 − 剔除組平均淨報酬。
 
 **濾網有效（`FILTER_EFFECTIVE`）須 P1–P4 全部成立**：
@@ -108,7 +116,7 @@ RESEARCH_PASS 也是在這個排序下得到的。本研究的組合回測**兩�
 |---|---|---|
 | P1 | Δ 的 cluster bootstrap 單尾 5% 下界 > 0 | 以訊號日 D 為群重抽，2,000 次 |
 | P2 | 安慰劑置換檢定 p < 0.05 | 隨機剔除與實際**同筆數**的候選 2,000 次；p = (1 + #{安慰劑保留組平均 ≥ 實際保留組平均}) / 2,001 |
-| P3 | 剔除率介於 5%～60% | 剔除組 / (保留組 + 剔除組)，即 §B-1 候選集合中的比例，與持倉路徑無關。< 5%＝差異屬雜訊；> 60%＝已是另一支策略 |
+| P3 | 剔除率介於 5%～60% | 候選集合（排除 `STALE_SIGNAL`，**含**未成交者）中 U > L 的比例，與持倉路徑、能否成交都無關。< 5%＝差異屬雜訊；> 60%＝已是另一支策略 |
 | P4 | 保留組平均淨報酬 > 0 | 濾網不能只是「少虧一點」 |
 
 任一不成立 → `NO_INCREMENT`，結論「影線濾網對 trend_breakout 無增量價值」。
@@ -188,9 +196,9 @@ simulation-main 的 `entry_strategies`。這會改到 cron 實際執行的設定
 - **鎖漲停放行偏誤**：漲停收在最高時 D 的上影線為 0，強勢漲停突破天生傾向通過濾網。隔日鎖漲停無法成交，這點和基準相同。
 - **跳空開高走低**：跳空後開高走低收紅不會產生上影線，但「開高走低」本身就是賣壓，本濾網看不到。
 - **訊號層模擬的近似**（相對完整回測）：
-  - 每筆獨立、不受現金與容量限制。
-  - 停牌日不評估出場，完整回測會用 stale close 評估。
-  - 窗末未平倉以收盤設算。
+  - 每筆獨立、不受現金與容量限制（這正是主檢定要的）。
+  - 窗末未平倉以收盤設算（不扣滑價）。
+  - 出場原因分布只把實際平倉者歸到出場原因，窗末未平倉一律記 `OPEN_AT_END`。
 - **live 側連帶影響**：本策略已登錄於 `PARAMS_MODELS`，live run-daily 的 `load_exit_managed_definitions` 會載入它的 YAML。
   因為沒有這個 id 的持倉，不會出場任何東西；但 YAML 一旦寫壞，會讓 15:10 cron 載入失敗。已有測試會載入此 YAML。
 
@@ -218,3 +226,4 @@ simulation-main 的 `entry_strategies`。這會改到 cron 實際執行的設定
 | M7 基準重跑未凍結 | §C 凍結條件與停止規則 |
 | M8 「逐字相同」只靠文字 | 前置條件測試 |
 | m1–m7 | 預先登錄聲明、stale bar、出場原因分布、鎖漲停偏誤、樣本內偏誤措辭、live 載入、MDE |
+| code review（實作後） | 停牌重發去重（STALE_SIGNAL）、D+1 停牌不成交、賣單作廢後重新評估、剔除率分母含未成交、主檢定寫入 ledger、參數模型改繼承 TrendBreakoutParams |

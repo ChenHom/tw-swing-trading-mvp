@@ -1,4 +1,7 @@
-"""breakout_shadow_filter 主檢定（訊號層級配對分析，thesis §B）。純讀 research.db，不寫 DB。
+"""breakout_shadow_filter 主檢定（訊號層級配對分析，thesis §B）。
+
+只讀行情與 universe；唯一寫入是 research_ledger 一列（status=SIGNAL_STUDY，notes 含家族與 verdict），
+讓主檢定計入 trend_breakout 家族的試驗紀錄。
 
 執行（在有 research.db 與 PIT universe 的機器上）：
   python3 -m scripts.shadow_filter_study --db data/research.db \
@@ -20,7 +23,8 @@ from src.application.research.shadow_filter_study import (
 )
 from src.calendar.calendar import ExchangeCalendarsTradingCalendar
 from src.cli import common
-from src.contracts.models import TrendBreakoutParams
+from src.application.runners.research_ledger import record_research_attempt, strategy_family
+from src.market_data.universe_policy import UniversePolicy
 from src.portfolio.db import get_db_connection
 from src.strategy import registry
 from src.strategy.universe import PolicyUniverseProvider
@@ -48,28 +52,28 @@ def main():
 
     settings = common.get_settings()
     defn = registry.load_strategy_definition(settings, STRATEGY_ID)
-    entry_params = TrendBreakoutParams(**defn.params.model_dump(exclude={"shadow_window_days"}))
+    entry_params = defn.params.base_params()
     index_symbol = settings.trading.pipeline.index_symbol
     start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
 
+    if not Path(args.db).is_file():
+        sys.exit(f"找不到資料庫 {args.db}")
+    db_sha256 = _sha256(args.db)
     conn = get_db_connection(args.db)
-    symbols = [r["symbol"] for r in conn.execute(
-        "SELECT DISTINCT symbol FROM universe_policy WHERE policy_version = ? ORDER BY symbol",
-        (args.universe_policy,),
-    )]
+    symbols = UniversePolicy(conn).all_symbols(args.universe_policy)
     if not symbols:
         sys.exit(f"universe_policy '{args.universe_policy}' 無成分股")
     store = InMemoryBars(conn, symbols + [index_symbol], price_basis=args.price_basis)
     sessions = list(ExchangeCalendarsTradingCalendar().sessions_between(start, end))
 
     outcomes = enumerate_outcomes(
-        store, PolicyUniverseProvider(conn, args.universe_policy), sessions, sessions, index_symbol,
+        store, PolicyUniverseProvider(conn, args.universe_policy), sessions, index_symbol,
         entry_params, defn.exit_params, defn.params.shadow_window_days,
         settings.backtest.slippage_bps, end,
     )
     summary = summarize(outcomes)
     summary["inputs"] = {
-        "db_sha256": _sha256(args.db), "universe_policy": args.universe_policy,
+        "db_sha256": db_sha256, "universe_policy": args.universe_policy,
         "start": args.start, "end": args.end, "price_basis": args.price_basis,
         "strategy_version": defn.strategy_version, "params_hash": defn.params_hash,
         "slippage_bps": settings.backtest.slippage_bps, "index_symbol": index_symbol,
@@ -77,6 +81,11 @@ def main():
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump({"summary": summary, "outcomes": outcomes_as_dicts(outcomes)}, f, ensure_ascii=False, indent=2)
+    record_research_attempt(
+        conn, strategy_id=STRATEGY_ID, strategy_version=defn.strategy_version, params_hash=defn.params_hash,
+        run_id=f"signal-study:{db_sha256[:12]}:{args.start}:{args.end}", status="SIGNAL_STUDY",
+        notes=f"family={strategy_family(STRATEGY_ID)}; verdict={summary['verdict']}",
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 

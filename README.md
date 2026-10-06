@@ -407,5 +407,6 @@ python3 app.py backtest run --db data/_run.db --from 2018-01-01 --to 2026-06-22 
 | `trend_breakout` | 趨勢帶量突破 | live | risk_exit 四層（緊停損 -7%、時間停損 20 日） |
 | `pullback_rebound` | 回檔轉強 | live | risk_exit 四層（緊停損 -5%） |
 | `trend_rider` | 順勢交易者 | **研究 Challenger（未上線交易）** | 「讓贏家跑」：寬移動停利 -25%、長均線跌破、**停用時間停損** |
+| `breakout_shadow_filter` | 突破影線濾網 | **研究 Challenger（trend_breakout 家族，未上線）** | 與 trend_breakout 相同；進場多一條「近 7 日上影線總和 > 下影線總和則不進場」。正式研究：`scripts/run_breakout_shadow_filter_research.sh` |
 
 > ⚠️ 回測在 diagnostic universe 上的報酬數字（含 trend_rider 亮眼的 +122%）**受後見之明/survivorship bias 污染**，不可當賺錢證據。可信的是「不受標的池影響」的結構面（崩盤防守、成本占比）。正式裁決待 PIT universe（見 plan `2455-cosmic-fountain.md` R-T4b）。

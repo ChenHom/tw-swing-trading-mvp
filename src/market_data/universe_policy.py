@@ -28,6 +28,14 @@ class UniversePolicy:
         )
         return [row["symbol"] for row in cursor.fetchall()]
 
+    def all_symbols(self, policy_version: str) -> list:
+        """policy 全期成分股聯集（回測缺檔統計／資料載入用；逐日成分仍以 constituents_as_of 為準）。"""
+        rows = self.conn.execute(
+            "SELECT DISTINCT symbol FROM universe_policy WHERE policy_version = ? ORDER BY symbol",
+            (policy_version,),
+        ).fetchall()
+        return [row["symbol"] for row in rows]
+
     def is_diagnostic_only(self, policy_version: str) -> bool:
         return "diagnostic" in policy_version.lower()
 
