@@ -115,3 +115,36 @@ def test_yaml_matches_trend_breakout_entry_and_exit():
     assert mine.params.shadow_window_days == 7
     assert mine.exit_params == base.exit_params
     assert mine.strategy_version == "1.0.0"
+
+
+def test_signals_equal_base_minus_upper_dominant_on_random_data():
+    """等價性：新策略訊號 ＝ trend_breakout 訊號 − {近 N 日 U > L}，逐日逐檔比對。"""
+    import random
+    rng = random.Random(11)
+    symbols = [f"S{i}" for i in range(12)]
+    n = 120
+    ds = [date(2025, 1, 1) + timedelta(days=i) for i in range(n)]
+    bars = {"TSE": [bar("TSE", d, 2000000 + i * 5000, instrument="INDEX") for i, d in enumerate(ds)]}
+    for s in symbols:
+        p, seq = 1000000, []
+        for d in ds:
+            o = p
+            p = max(10000, int(p * (1 + rng.gauss(0.002, 0.03))))
+            seq.append(bar(s, d, p, open_=o, high=max(o, p) + rng.randrange(0, 30000),
+                           low=min(o, p) - rng.randrange(0, 30000), volume=int(rng.lognormvariate(7, 0.7))))
+        bars[s] = seq
+    base = TrendBreakoutStrategy(TrendBreakoutParams(**BASE_KW), symbols, "TSE")
+    mine = BreakoutShadowFilterStrategy(BreakoutShadowFilterParams(**BASE_KW, shadow_window_days=7), symbols, "TSE")
+    total_base = total_filtered = 0
+    for i in range(10, n):
+        view = MockPIT({k: v[:i + 1] for k, v in bars.items()})
+        expected = []
+        for s in base.generate(CTX, view, EMPTY).signals:
+            total_base += 1
+            u, l, _ = shadow_sums(view.history(s.symbol, 7))
+            if u > l:
+                total_filtered += 1
+            else:
+                expected.append(s.symbol)
+        assert [s.symbol for s in mine.generate(CTX, view, EMPTY).signals] == expected
+    assert total_base > 20 and 0 < total_filtered < total_base  # 兩種分支都有覆蓋到

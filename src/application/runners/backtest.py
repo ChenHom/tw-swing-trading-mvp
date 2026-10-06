@@ -19,7 +19,9 @@ from src.application.execution.engine import TradeExecutionEngine
 from src.application.runners.simulation import EntryStrategySpec, _normalize_symbol_spec
 from src.application.runners.fingerprint import compute_fingerprint, persist_fingerprint
 from src.application.runners.verdict import evaluate_verdict, get_regime_gate_thresholds
-from src.application.runners.research_ledger import record_research_attempt, count_research_trials
+from src.application.runners.research_ledger import (
+    record_research_attempt, count_research_trials, strategy_family,
+)
 from src.trading.allocator import GlobalLimits
 
 # 對 0050（市值型 ETF，買進持有 benchmark）算 Beta/Alpha（P1-T1）；非 settings.universe.indices
@@ -343,6 +345,7 @@ class BacktestRunner:
         record_research_attempt(
             self.db_conn, strategy_id=strategy_id, strategy_version=entry_spec.definition.strategy_version,
             params_hash=entry_spec.definition.params_hash, run_id=run_id,
+            notes=f"family={strategy_family(strategy_id)}",
         )
         num_trials = count_research_trials(self.db_conn, strategy_id)
         robustness = self._calculate_robustness_stats(account_id, equity_curve, num_trials=num_trials)

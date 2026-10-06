@@ -1,4 +1,4 @@
-"""註冊三支策略的 regime_gate_thresholds（R-T4b B4b）。
+"""註冊各策略的 regime_gate_thresholds（R-T4b B4b）。
 
 門檻數值＝各策略 docs/strategies/<id>.md「regime gate 提議數值」表，**看任何回測結果前**
 即已寫死於 git 版控文件，本 script 只忠實轉錄進 DB（write-once，set 端 ON CONFLICT DO NOTHING）。
@@ -23,6 +23,8 @@ GATES = [
     ("trend_breakout", "1.0.0", 0.30, 0.0, 0.15, 30, 0.40),
     ("pullback_rebound", "1.0.0", 0.25, 0.0, 0.15, 30, 0.40),
     ("trend_rider", "1.0.0", 0.35, 0.0, 0.20, 20, 0.50),
+    # 研究 Challenger（trend_breakout 家族）：thesis §A 規定與 trend_breakout 1.0.0 完全相同
+    ("breakout_shadow_filter", "1.0.0", 0.30, 0.0, 0.15, 30, 0.40),
 ]
 
 

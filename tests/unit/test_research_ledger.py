@@ -52,3 +52,14 @@ def test_different_strategies_counted_independently(tmp_path):
     assert count_research_trials(conn, "s1") == 1
     assert count_research_trials(conn, "s2") == 1
     conn.close()
+
+
+def test_family_member_trials_count_toward_parent_family(tmp_path):
+    """breakout_shadow_filter 屬 trend_breakout 家族：換 strategy_id 不得重置試驗次數。"""
+    conn = _conn(tmp_path)
+    record_research_attempt(conn, strategy_id="trend_breakout", strategy_version="1.0.0", params_hash="h1", run_id="r1")
+    record_research_attempt(conn, strategy_id="breakout_shadow_filter", strategy_version="1.0.0", params_hash="h2", run_id="r2")
+    record_research_attempt(conn, strategy_id="pullback_rebound", strategy_version="1.0.0", params_hash="h3", run_id="r3")
+    assert count_research_trials(conn, "breakout_shadow_filter") == 2
+    assert count_research_trials(conn, "trend_breakout") == 2
+    assert count_research_trials(conn, "pullback_rebound") == 1
