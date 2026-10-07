@@ -20,7 +20,7 @@ STAMP=$(date +%Y%m%d%H%M%S)
 if [ -n "$(git status --porcelain -- src config scripts docs/strategies)" ]; then
   echo "工作區有未提交的程式／設定變更；thesis 要求以 commit 凍結後才跑正式研究。"; exit 1
 fi
-mkdir -p "$OUT"
+mkdir -p "$OUT" data
 echo "commit=$(git rev-parse HEAD)" | tee "$OUT/breakout_shadow_filter-$STAMP.meta"
 
 # 1. 回測前寫入 regime gate（write-once；thesis §C）
