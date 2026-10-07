@@ -549,6 +549,22 @@ def test_load_bundle_drops_retired_entry_keeps_exit_per_account(temp_db):
     sim_entry = {b.bundle_id: b for b in sim_runner._find_bundles_for_execution(tgt, "sim")}
     assert [s.signal_id for s in sim_entry["bundle-20260624-pullback_rebound"].signals] == ["sig-pb-entry"]
 
+    # 國泰進場策略全數退役（account_overrides 給空清單）→ 全域 ENTRY 一律擋、RISK_EXIT 照留。
+    # 空管線不可被當成「沒設管線」而跳過閘門，否則所有全域進場訊號都會流進真實帳號。
+    empty_runner = _runner([])
+    retired = {b.bundle_id: b for b in empty_runner._find_bundles_for_execution(tgt, "國泰")}
+    assert retired["bundle-20260624-pullback_rebound"].signals == []
+    assert [s.signal_id for s in retired["bundle-20260624-pullback_rebound-國泰-exit"].signals] == ["sig-pb-exit"]
+
+    # 沒給管線的 loader（preview / execute-pending）維持不設閘
+    loader = DailySimulationRunner(
+        db_conn=temp_db, calendar=calendar, market_provider=MagicMock(),
+        market_repo=repo, projection=projection,
+        allowed_issuers=["manual-research-review"], revoked_approvals=[],
+    )
+    loaded = {b.bundle_id: b for b in loader._find_bundles_for_execution(tgt, "國泰")}
+    assert [s.signal_id for s in loaded["bundle-20260624-pullback_rebound"].signals] == ["sig-pb-entry"]
+
 
 def _fixture_provider_with(symbols):
     from src.market_data.provider import FixtureMarketDataProvider

@@ -27,3 +27,12 @@ def test_account_override_selects_subset():
     # 不給 account_id → 同樣回退全域
     entry_none, _ = common.build_pipeline(settings, ["2330"])
     assert _ids(entry_none) == settings.trading.pipeline.entry_strategies
+
+
+def test_account_override_empty_list_retires_all_entries():
+    """帳號進場策略全數退役：空清單不得回退到全域 entry_strategies；exit 照常全載入。"""
+    settings = common.get_settings()
+    settings.trading.pipeline.account_overrides = {"國泰": []}
+    entry_real, exit_real = common.build_pipeline(settings, ["2330"], "國泰")
+    assert entry_real == []
+    assert {"trend_breakout", "pullback_rebound"} <= set(exit_real)

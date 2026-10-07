@@ -96,6 +96,10 @@ class DailySimulationRunner:
         self.revoked_approvals = revoked_approvals
         self.manifests = manifests or {}
         self.entry_specs = entry_specs or []
+        # 進場閘門只看「有沒有給管線」，不看管線是否為空：帳號的進場策略全數退役時
+        # （account_overrides 給空清單）entry_specs=[]，仍須擋掉全部全域 ENTRY 訊號；
+        # 只有沒給管線的 loader（preview / execute-pending / backfill）才不設閘。
+        self._entry_gate_enabled = entry_specs is not None
         self.exit_definitions = exit_definitions or {}
         self.global_limits = global_limits or GlobalLimits()
         self.index_symbols = [_normalize_symbol_spec(s) for s in (index_symbols or [])]
@@ -715,13 +719,14 @@ class DailySimulationRunner:
             # the shared global entry bundle). RISK_EXIT always survives — a retired
             # strategy's existing positions still need their stops (S5: SELL never blocked).
             # self.pipeline_order is already account-filtered by build_pipeline(account_id);
-            # empty => preview / execute-pending loader with no pipeline configured, so skip the gate.
+            # an empty pipeline (every entry strategy retired for this account) blocks all ENTRY.
+            # No pipeline given (entry_specs=None) => preview / execute-pending loader, skip the gate.
             # ponytail: execute-pending's loader (cli/simulation.py) passes no entry_specs,
-            # so its pipeline_order is empty and this gate no-ops there; that manual recovery
-            # path stays ungated until it forwards the account's entry_specs.
+            # so this gate no-ops there; that manual recovery path stays ungated until it
+            # forwards the account's entry_specs.
             if (
                 signal_source == "ENTRY"
-                and self.pipeline_order
+                and self._entry_gate_enabled
                 and r["strategy_id"] not in self.pipeline_order
             ):
                 continue

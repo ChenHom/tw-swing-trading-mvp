@@ -55,7 +55,12 @@
 - **已確認（報告 `trend_breakout_bt-db011732.json`）**：唯一不過的門檻是期望值 bootstrap 5% CI 下界 **−108.53**（06-24：+1.35）。其餘幾乎不變：有效樣本 364（366）、maxDD 27.73%（27.67%）、HHI 0.026（0.023）；成本占毛利 74.0%（68.7%）；毛已實現 81,573、費稅 60,365。
   - 樣本與回撤都對得上，差異集中在逐筆期望值的口徑：5e49389 A3 讓 gate 統計改吃 `net_realized_pnl`（買賣兩腳費稅分攤），扣完費稅後逐筆期望值的下界轉負。總報酬由 +8.75% 降到 +6.66%，則來自 A2/B5/C11 等撮合修正。
   - **結論：在現行（已修正的）程式碼下，trend_breakout 1.0.0 = REJECTED；專案目前沒有任何 RESEARCH_PASS 策略。** 06-24 的 PASS 是被毛損益口徑高估的結果。
-  - 國泰的 `account_overrides: [trend_breakout]` 依據的是已失效的裁決；是否比照 06-24「REJECTED 不在真錢帳號產生進場建議」的原則退役，待使用者決定。
+  - 國泰的 `account_overrides: [trend_breakout]` 依據的是已失效的裁決。
+
+**國泰退役 trend_breakout（2026-10-07，使用者決定比照 06-24 原則）**：
+- `config/trading.yaml`：`account_overrides.國泰: []`，國泰不再產生任何新 BUY 建議；既有持倉由 risk_exit 照常出場；simulation-main 不變。
+- **連帶修一個會反向出事的 bug**：執行端進場閘門原本以「`pipeline_order` 非空」判斷要不要設閘。空清單會被當成「沒設管線」而跳過閘門，結果全域 ENTRY 訊號（simulation-main 跑出來的）會全部流進國泰。改為以「有沒有給 `entry_specs`」判斷：給了空清單一律擋 ENTRY、保留 RISK_EXIT；只有沒給管線的 loader（preview / execute-pending）不設閘，行為不變。測試覆蓋空管線與無管線兩種情況。
+- 部署：這次改到 `src/contracts/`（web 會 import）與 simulation runner，合併進 live checkout 後須 `sudo systemctl restart trading-web.service` 並確認 `/healthz` 與 `/trading/` 回 200。
 
 ---
 

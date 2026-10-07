@@ -85,6 +85,8 @@ MVP 流程閉環的不變式：
 
 ## Next Development Priority (下一步開發優先順序)
 
+> **2026-10-07 更新**：以現行程式碼（2026-07-03 錯估稽核修復後，gate 統計改吃淨損益）重跑，**trend_breakout = REJECTED**（期望值 CI 下界 −108.53）。**專案目前沒有任何 RESEARCH_PASS 策略**；國泰 `account_overrides` 已設為空清單（不產生任何新 BUY 建議，既有持倉 risk_exit 照常出場），simulation-main 續跑兩支做 forward 觀察。研究 Challenger `breakout_shadow_filter` 主檢定 NO_INCREMENT（剔除率 61.3% > 60%）。下方 2026-06-24 敘述保留為歷史。詳見 engineering-log 2026-10-06。
+
 當前處於「**Track 2 PIT 公平裁決完成、專案首批非 INVALID 裁決已出**」的里程碑之後（2026-06-24）。三支 PIT 重跑（liquidity-top150-v1、451 檔）：**trend_breakout = RESEARCH_PASS（唯一）**，pullback_rebound / trend_rider = **REJECTED**（後兩支逐筆期望值 bootstrap CI 下界為負；trend_rider diagnostic +122% 幾乎全是後見之明）。詳見 engineering-log 2026-06-24。下一段：
 
 1. ✅ **Track 1 / account_overrides + 治理退役（2026-06-24 完成）**：per-account 進場策略 override 已實作；pullback_rebound（REJECTED）從國泰退役、trend_breakout（RESEARCH_PASS）兩帳號續留、simulation-main 續觀察 pullback。既有持倉由 risk_exit 照常出場。
@@ -119,6 +121,7 @@ MVP 流程閉環的不變式：
 3. **進場策略相關性高 + 上升趨勢低捕獲**:
    - `trend_breakout` 與 `pullback_rebound` 皆為 long-only 順勢策略，大盤 60MA 濾網可規避空頭但無法規避高檔盤整鈍刀。真實回測（2018-2026）另證實：兩支在持續上升趨勢中**嚴重低捕獲**（緊出場太早砍贏家，2024 AI 年幾乎零捕獲）。研究 Challenger `trend_rider`（讓贏家跑）即針對此缺口，但尚未上線/未證實 edge。
 4. **尚無策略證明「會賺大錢」（PIT 公平裁決後更新，2026-06-24）**:
+   - **2026-10-07：現行程式碼下 trend_breakout 亦 REJECTED（淨損益口徑期望值 CI 下界 −108.53），目前無任何 RESEARCH_PASS 策略；以下為 2026-06-24 舊口徑紀錄。**
    - 已用 PIT 流動性 universe（liquidity-top150-v1、451 檔、無後見之明）對三支正式裁決：**僅 trend_breakout = RESEARCH_PASS**（逐筆期望值 bootstrap CI 下界 +1.35、366 有效筆），pullback_rebound / trend_rider **REJECTED**。trend_breakout 的 PASS 是**統計穩健但經濟邊際**（PIT 僅 +8.75%/8.5 年、成本吃毛利 68.7%、去最佳5筆轉負、輸 0050 buy-hold +34.6%）＝「可進影子驗證」非「會賺大錢」。diagnostic（固定 21 檔）回測數字受後見之明污染，僅結構面（崩盤防守、成本占比）可信。
 5. **舊 `trend_pullback` 授權檔 digest 不一致（升級前即存在）**:
    - `artifacts/approvals/approval-trend_pullback-20260610202219.json` 的 digest 與其內容不符（preflight 顯示 INVALID）。該策略已退役且 SELL 不受授權閘門影響，無實際風險；存量倉位出清後可清理。
