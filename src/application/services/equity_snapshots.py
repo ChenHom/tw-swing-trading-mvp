@@ -85,7 +85,7 @@ def backfill_equity_snapshots(conn: sqlite3.Connection, market_repo, account_id:
 
 
 def read_equity_curve(conn: sqlite3.Connection, account_id: str) -> list[dict]:
-    """供 Web 混合圖：回傳全部每日權益，並附資金流校正後的每日損益。"""
+    """供 Web 混合圖：回傳全部每日權益，並附資金流校正後的每日損益與區間已實現淨損益（realized_pnl）。"""
     rows = conn.execute(
         """
         SELECT snapshot_date, cash, positions_value, total_equity
@@ -110,8 +110,23 @@ def read_equity_curve(conn: sqlite3.Connection, account_id: str) -> list[dict]:
         (account_id,),
     ).fetchall()
 
+    # 已實現損益：與交易紀錄頁同樣以 substr(matched_at,1,10) 歸日；單次掃描、依日期排序
+    matches = conn.execute(
+        """
+        SELECT substr(matched_at, 1, 10) AS match_date,
+               SUM(net_realized_pnl) AS net,
+               COUNT(*) - COUNT(net_realized_pnl) AS null_count
+        FROM fifo_matches
+        WHERE account_id = ?
+        GROUP BY substr(matched_at, 1, 10)
+        ORDER BY match_date
+        """,
+        (account_id,),
+    ).fetchall()
+
     out = []
     flow_index = 0
+    match_index = 0
     previous_date = None
     previous_equity = None
     for r in rows:
@@ -123,6 +138,16 @@ def read_equity_curve(conn: sqlite3.Connection, account_id: str) -> list[dict]:
                 interval_flow += flow["amount"]
             flow_index += 1
 
+        interval_realized = 0
+        while match_index < len(matches) and matches[match_index]["match_date"] <= current_date:
+            m = matches[match_index]
+            if previous_date is None or m["match_date"] > previous_date:
+                if m["null_count"] or interval_realized is None:
+                    interval_realized = None
+                else:
+                    interval_realized += m["net"]
+            match_index += 1
+
         out.append({
             "date": r["snapshot_date"],
             "cash": r["cash"],
@@ -132,6 +157,7 @@ def read_equity_curve(conn: sqlite3.Connection, account_id: str) -> list[dict]:
                 None if previous_equity is None
                 else r["total_equity"] - previous_equity - interval_flow
             ),
+            "realized_pnl": interval_realized,
         })
         previous_date = current_date
         previous_equity = r["total_equity"]

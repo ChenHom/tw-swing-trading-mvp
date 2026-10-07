@@ -58,7 +58,7 @@
   - 國泰的 `account_overrides: [trend_breakout]` 依據的是已失效的裁決。
 
 **國泰退役 trend_breakout（2026-10-07，使用者決定比照 06-24 原則）**：
-- `config/trading.yaml`：`account_overrides.國泰: []`，國泰不再產生任何新 BUY 建議；既有持倉由 risk_exit 照常出場；simulation-main 不變。
+- `config/trading.yaml`：`account_overrides.國泰: []`，國泰不再產生任何新 BUY 建議；既有持倉由 risk_exit 照常出場；simulation-main 只留 trend_breakout（同日 8268e90 另依前向結果停止 pullback 新進場，合併時兩邊設定都保留）。
 - **連帶修一個會反向出事的 bug**：執行端進場閘門原本以「`pipeline_order` 非空」判斷要不要設閘。空清單會被當成「沒設管線」而跳過閘門，結果全域 ENTRY 訊號（simulation-main 跑出來的）會全部流進國泰。改為以「有沒有給 `entry_specs`」判斷：給了空清單一律擋 ENTRY、保留 RISK_EXIT；只有沒給管線的 loader（preview / execute-pending）不設閘，行為不變。測試覆蓋空管線與無管線兩種情況。
 - 部署：這次改到 `src/contracts/`（web 會 import）與 simulation runner，合併進 live checkout 後須 `sudo systemctl restart trading-web.service` 並確認 `/healthz` 與 `/trading/` 回 200。
 

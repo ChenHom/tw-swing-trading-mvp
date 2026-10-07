@@ -36,3 +36,23 @@ def test_account_override_empty_list_retires_all_entries():
     entry_real, exit_real = common.build_pipeline(settings, ["2330"], "國泰")
     assert entry_real == []
     assert {"trend_breakout", "pullback_rebound"} <= set(exit_real)
+
+
+def test_real_config_retires_pullback_entries_for_every_account():
+    # pullback_rebound 已 PIT REJECTED，前向觀察也確認（2026-10-07）：真實設定下任何帳號都不得再產生新進場，
+    # 但出場定義仍要載入，既有 pullback 持倉才能照常由 risk_exit 出場。
+    settings = common.get_settings()
+    for account in ("國泰", "simulation-main"):
+        entry, exits = common.build_pipeline(settings, ["2330"], account)
+        assert "pullback_rebound" not in _ids(entry)
+        assert "pullback_rebound" in exits
+
+
+def test_real_config_cathay_has_no_entries_and_sim_keeps_trend_breakout():
+    # 2026-10-07：trend_breakout 現行程式碼下 REJECTED → 國泰全數退役；simulation-main 留 trend_breakout 前向觀察。
+    settings = common.get_settings()
+    cathay, exits = common.build_pipeline(settings, ["2330"], "國泰")
+    assert cathay == []
+    assert {"trend_breakout", "pullback_rebound"} <= set(exits)
+    sim, _ = common.build_pipeline(settings, ["2330"], "simulation-main")
+    assert _ids(sim) == ["trend_breakout"]

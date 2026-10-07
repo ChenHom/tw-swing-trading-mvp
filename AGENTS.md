@@ -85,7 +85,7 @@ MVP 流程閉環的不變式：
 
 ## Next Development Priority (下一步開發優先順序)
 
-> **2026-10-07 更新**：以現行程式碼（2026-07-03 錯估稽核修復後，gate 統計改吃淨損益）重跑，**trend_breakout = REJECTED**（期望值 CI 下界 −108.53）。**專案目前沒有任何 RESEARCH_PASS 策略**；國泰 `account_overrides` 已設為空清單（不產生任何新 BUY 建議，既有持倉 risk_exit 照常出場），simulation-main 續跑兩支做 forward 觀察。研究 Challenger `breakout_shadow_filter` 主檢定 NO_INCREMENT（剔除率 61.3% > 60%）。下方 2026-06-24 敘述保留為歷史。詳見 engineering-log 2026-10-06。
+> **2026-10-07 更新**：以現行程式碼（2026-07-03 錯估稽核修復後，gate 統計改吃淨損益）重跑，**trend_breakout = REJECTED**（期望值 CI 下界 −108.53）。**專案目前沒有任何 RESEARCH_PASS 策略**；國泰 `account_overrides` 已設為空清單（不產生任何新 BUY 建議，既有持倉 risk_exit 照常出場），simulation-main 只留 trend_breakout 做 forward 觀察（pullback 前向確認 REJECTED，同日停止新進場）。研究 Challenger `breakout_shadow_filter` 主檢定 NO_INCREMENT（剔除率 61.3% > 60%）。下方 2026-06-24 敘述保留為歷史。詳見 engineering-log 2026-10-06。
 
 當前處於「**Track 2 PIT 公平裁決完成、專案首批非 INVALID 裁決已出**」的里程碑之後（2026-06-24）。三支 PIT 重跑（liquidity-top150-v1、451 檔）：**trend_breakout = RESEARCH_PASS（唯一）**，pullback_rebound / trend_rider = **REJECTED**（後兩支逐筆期望值 bootstrap CI 下界為負；trend_rider diagnostic +122% 幾乎全是後見之明）。詳見 engineering-log 2026-06-24。下一段：
 

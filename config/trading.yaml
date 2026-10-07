@@ -15,13 +15,17 @@ pipeline:
   index_symbol: "TSE"
   # Per-account 進場策略 override（PIT 公平裁決後的治理）：
   # 2026-06-24 pullback_rebound PIT REJECTED → 從真實帳號（國泰）退役。
+  # 2026-10-07 simulation-main 也停止 pullback 新進場：前向 2026-06-10~10-06 確認 REJECTED
+  #   （勝率 15.7%、每筆均 -2.52%，見 docs/research/sim-forward-test-review-2026-07.md 九.1）。
   # 2026-10-07 trend_breakout 以現行（2026-07-03 修正後、gate 改吃淨損益）程式碼重新裁決
-  # 為 REJECTED（期望值 CI 下界 −108.53）→ 國泰也退役，國泰不再產生任何新 BUY 建議。
+  #   為 REJECTED（期望值 CI 下界 −108.53）→ 國泰也退役，國泰不再產生任何新 BUY 建議；
+  #   simulation-main 保留 trend_breakout 作 forward 觀察。
   # 空清單＝全部進場策略退役（不會回退全域清單；執行端閘門也會擋掉全域 ENTRY 訊號）。
-  # simulation-main（影子）未列入＝回退全域兩支，繼續 forward 觀察。
   # 既有持倉不受影響：risk_exit 全策略載入、照常出場。
   account_overrides:
     國泰: []
+    simulation-main:
+      - trend_breakout
   # Per-account 選股宇宙 override（account_id -> universe_policy.policy_version）：
   # 影子帳號（simulation-main）改吃 PIT 流動性 top-150 廣度池，讓進場策略在約 150 檔
   # 趨勢股裡選，而非固定 24 檔；真實帳號（國泰）未列入＝維持固定 universe.yaml 清單。
