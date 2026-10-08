@@ -345,3 +345,36 @@ def test_odd_lot_tick_cannot_use_board_lot_quote_for_support():
     result = replay_observations(ticks=[odd_tick], books=[canonical_book()], plan=plan)
     assert "NO_BOOK" in result[-1].reason_codes
     assert result[-1].status == "INCONCLUSIVE"
+
+
+def test_offline_book_cli_writes_report_without_broker_or_account_db(tmp_path):
+    # Import the lightweight CLI file directly: src.cli.__init__ eagerly imports
+    # full application dependencies irrelevant to this isolated offline test.
+    import importlib.util
+    cli_file = Path(__file__).resolve().parents[2] / "src" / "cli" / "intraday_book.py"
+    spec = importlib.util.spec_from_file_location("isolated_book_cli", cli_file)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    books = RawBookStore(tmp_path).append(book_record())
+    output = tmp_path / "out" / "report.json"
+    mod.cmd_intraday_book_replay(SimpleNamespace(
+        books=str(books), ticks=None, plan=None, data_health="HEALTHY",
+        output=str(output),
+    ))
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["mode"] == "OFFLINE_ONLY"
+    assert payload["book_count"] == 1
+    assert payload["tick_count"] == 0
+    assert {e["kind"] for e in payload["observations"]} == {
+        "SPREAD_OBSERVED", "BOOK_IMBALANCE_OBSERVED",
+    }
+    with pytest.raises(ValueError, match="requires --ticks"):
+        planfile = tmp_path / "plan.json"
+        planfile.write_text(json.dumps({
+            "plan_id": "example", "symbol": "2327", "exchange": "TSE",
+            "lot_type": "BOARD", "known_at": (BASE - timedelta(days=1)).isoformat(),
+        }))
+        mod.cmd_intraday_book_replay(SimpleNamespace(
+            books=str(books), ticks=None, plan=str(planfile),
+            data_health="HEALTHY", output=str(output),
+        ))
