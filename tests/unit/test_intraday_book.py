@@ -292,3 +292,56 @@ def test_book_raw_write_failure_degrades_health(tmp_path):
     assert coll.process_book("TSE", sdk_book(), received_at=BASE) is None
     assert coll.health()["state"] == "DEGRADED"
     assert coll.health()["counters"]["book_raw_write_error"] == 1
+
+
+def test_book_metrics_degrade_together_with_collector_health():
+    b = canonical_book()
+    result = replay_observations(ticks=[], books=[b], data_health="DEGRADED")
+    assert len(result) == 2
+    assert all(x.status == "INCONCLUSIVE" and x.data_health == "DEGRADED" for x in result)
+    assert all("DATA_HEALTH_NOT_HEALTHY" in x.reason_codes for x in result)
+
+
+def test_trade_predating_plan_is_not_evaluated_even_if_received_later():
+    locked_at = BASE + timedelta(seconds=4)
+    plan = ObservationPlan(
+        "late-plan", "2327", "TSE", "BOARD", locked_at.isoformat(),
+        support_low_x10000=6350000, support_high_x10000=6360000,
+    )
+    early = canonical_tick(
+        at=BASE + timedelta(seconds=2), close=635.5,
+        received=BASE + timedelta(seconds=8),
+    )
+    result = replay_observations(ticks=[early], books=[canonical_book()], plan=plan)
+    assert not any(x.kind.startswith("SUPPORT") or x.kind == "PRICE_LEVEL_CHECK" for x in result)
+
+
+def test_support_can_break_after_it_was_held():
+    plan = ObservationPlan(
+        "support", "2327", "TSE", "BOARD", (BASE - timedelta(days=1)).isoformat(),
+        support_low_x10000=6350000, support_high_x10000=6360000,
+    )
+    ticks = [canonical_tick(at=BASE + timedelta(seconds=sec), close=price, seq=idx)
+             for idx, (sec, price) in enumerate(
+                 [(2, 635.5), (12, 636), (22, 638), (25, 634)], 1)]
+    kinds = [x.kind for x in replay_observations(
+        ticks=ticks, books=[canonical_book()], plan=plan
+    )]
+    assert kinds.count("SUPPORT_BROKEN") == 1
+    assert kinds.index("SUPPORT_HELD") < kinds.index("SUPPORT_BROKEN")
+
+
+def test_odd_lot_tick_cannot_use_board_lot_quote_for_support():
+    plan = ObservationPlan(
+        "odd", "2327", "TSE", "ODD", (BASE - timedelta(days=1)).isoformat(),
+        support_low_x10000=6350000, support_high_x10000=6360000,
+    )
+    raw = raw_event(
+        "TSE", sdk_tick(odd=True, at=BASE + timedelta(seconds=2), close=635.5),
+        seq=1, session_id="session1", received_at=BASE + timedelta(seconds=2),
+    )
+    odd_tick, reason = normalize_raw_tick(raw)
+    assert reason == ""
+    result = replay_observations(ticks=[odd_tick], books=[canonical_book()], plan=plan)
+    assert "NO_BOOK" in result[-1].reason_codes
+    assert result[-1].status == "INCONCLUSIVE"
