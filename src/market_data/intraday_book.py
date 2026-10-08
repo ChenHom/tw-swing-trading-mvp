@@ -182,10 +182,15 @@ def book_metrics(book: MarketBook) -> dict[str, Any]:
               if book.bid_prices_x10000[0] is not None and book.ask_prices_x10000[0] is not None
               else None)
     volume_total = bid_volume + ask_volume
+    # A missing *side* is unknown liquidity, not a zero-volume promise.
+    # Never report 100% bid/ask imbalance on an incomplete one-sided book.
+    both_sides_present = (book.bid_prices_x10000[0] is not None and
+                          book.ask_prices_x10000[0] is not None)
     return {
         "bid_visible_shares": bid_volume, "ask_visible_shares": ask_volume,
         "spread_x10000": spread,
-        "imbalance_bps": (bid_volume * 10000 // volume_total if volume_total else None),
+        "imbalance_bps": (bid_volume * 10000 // volume_total
+                          if volume_total and both_sides_present else None),
         "coverage_bid_levels": sum(x is not None for x in book.bid_prices_x10000),
         "coverage_ask_levels": sum(x is not None for x in book.ask_prices_x10000),
     }
