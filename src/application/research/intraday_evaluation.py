@@ -90,14 +90,15 @@ class Opportunity:
 
 def _indicative_ask(
     books: list[MarketBook], *, candidate: Opportunity, decision_at: datetime,
-    manifest: StudyManifest,
-) -> tuple[int | None, str]:
+    manifest: StudyManifest, required_session: str | None = None,
+) -> tuple[int | None, str, str | None]:
     """Earliest observable ask after decision; reject delayed, crossed and absent books."""
     cutoff = decision_at + timedelta(seconds=manifest.max_entry_wait_seconds)
     matched = sorted((b for b in books
                       if (b.symbol, b.exchange, b.lot_type) ==
                          (candidate.symbol, candidate.exchange, candidate.lot_type)
-                      and decision_at <= _datetime(b.received_at) <= cutoff),
+                      and decision_at <= _datetime(b.received_at) <= cutoff
+                      and (required_session is None or b.collector_session_id == required_session)),
                      key=lambda b: (_datetime(b.received_at), b.collection_seq))
     for book in matched:
         event_at = _datetime(book.event_time)
@@ -108,8 +109,8 @@ def _indicative_ask(
         bid = book.bid_prices_x10000[0]
         if ask is None or bid is None or ask <= bid or ask <= 0:
             continue
-        return ask, "QUOTE_ONLY_NOT_FILL"
-    return None, "NO_FRESH_EXECUTABLE_QUOTE"
+        return ask, "QUOTE_ONLY_NOT_FILL", book.collector_session_id
+    return None, "NO_FRESH_EXECUTABLE_QUOTE", None
 
 
 def _row(candidate: Opportunity, books: list[MarketBook], events: list[ObservationEvent],
@@ -134,7 +135,7 @@ def _row(candidate: Opportunity, books: list[MarketBook], events: list[Observati
         result["reason_codes"].append("MANIFEST_NOT_PREREGISTERED")
         return result
 
-    baseline, base_reason = _indicative_ask(
+    baseline, base_reason, base_session = _indicative_ask(
         books, candidate=candidate, decision_at=baseline_at, manifest=manifest,
     )
     if baseline is None:
@@ -151,15 +152,17 @@ def _row(candidate: Opportunity, books: list[MarketBook], events: list[Observati
         and e.kind in ALLOWED_EVENTS and e.status == "OBSERVED"
         and e.data_health == "HEALTHY"
         and baseline_at <= _datetime(e.observed_at)
-        and _datetime(e.event_time) <= _datetime(e.observed_at)
+        and baseline_at <= _datetime(e.event_time) <= _datetime(e.observed_at)
+        and e.collector_session_id == base_session
     ), key=lambda e: (_datetime(e.observed_at), e.collection_seq))
     if not valid_events:
         result["status"] = "MISSED"
         result["challenger_status"] = "NO_CONFIRMATION"
         return result
     earliest = _datetime(valid_events[0].observed_at)
-    challenger, chall_reason = _indicative_ask(
+    challenger, chall_reason, _challenger_session = _indicative_ask(
         books, candidate=candidate, decision_at=earliest, manifest=manifest,
+        required_session=base_session,
     )
     if challenger is None:
         result["status"] = "MISSED"
