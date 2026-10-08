@@ -16,6 +16,9 @@ from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Sequence
 from uuid import uuid4
 
+from .intraday_book import (
+    BOOK_FIELDS, MarketBook, RawBookStore, normalize_raw_book, raw_book_event,
+)
 from .intraday_tick import (
     FIELDS, LOT_TYPES, MarketTick, RawTickStore, normalize_raw_tick, raw_event,
 )
@@ -71,6 +74,9 @@ class ShioajiTickCollector:
         sink: Callable[[MarketTick], None] | None = None,
         queue_capacity: int = 5000,
         session_id: str | None = None,
+        book_quote_type: Any | None = None,
+        book_store: RawBookStore | None = None,
+        book_sink: Callable[[MarketBook], None] | None = None,
     ) -> None:
         if queue_capacity < 1:
             raise ValueError("queue_capacity must be positive")
@@ -83,11 +89,16 @@ class ShioajiTickCollector:
         self.quote_type = quote_type
         self.store = store
         self.sink = sink
+        self.book_quote_type = book_quote_type
+        self.book_store = book_store
+        self.book_sink = book_sink
+        if (book_quote_type is None) != (book_store is None):
+            raise ValueError("BidAsk quote type and raw store must both be provided")
         self.session_id = session_id or str(uuid4())
-        self.queue: Queue[tuple[Any, Any, datetime]] = Queue(maxsize=queue_capacity)
+        self.queue: Queue[tuple[str, Any, Any, datetime]] = Queue(maxsize=queue_capacity)
         self.stop_requested = threading.Event()
         self.worker: threading.Thread | None = None
-        self.active: list[tuple[Any, Subscription]] = []
+        self.active: list[tuple[Any, Subscription, Any]] = []
         self.seq = 0
         self.state = "DISABLED"
         self.counters: Counter[str] = Counter()
@@ -106,9 +117,28 @@ class ShioajiTickCollector:
         # just the fields required for raw audit, then enqueue without blocking.
         snapshot = SimpleNamespace(**{key: getattr(tick, key, None) for key in FIELDS})
         try:
-            self.queue.put_nowait((exchange, snapshot, received_at))
+            self.queue.put_nowait(("tick", exchange, snapshot, received_at))
         except Full:
             self.counters["queue_dropped"] += 1
+
+    def _on_bidask(self, exchange: Any, book: Any) -> None:
+        """Same bounded worker and SDK session as Tick; freeze provider level arrays."""
+        if self.stop_requested.is_set() or self.state in ("CLOSED", "FAILED"):
+            self.counters["late_callback"] += 1
+            return
+        stamp = datetime.now(timezone.utc)
+        snapshot = {}
+        for field in BOOK_FIELDS:
+            value = getattr(book, field, None)
+            if field in ("bid_price", "bid_volume", "ask_price", "ask_volume",
+                         "diff_bid_vol", "diff_ask_vol") and value is not None:
+                value = tuple(value)
+            snapshot[field] = value
+        try:
+            self.queue.put_nowait(("bidask", exchange, SimpleNamespace(**snapshot), stamp))
+        except Full:
+            self.counters["queue_dropped"] += 1
+            self.counters["book_queue_dropped"] += 1
 
     def _contract(self, symbol: str) -> Any:
         contracts = getattr(self.api, "contracts", None)
@@ -128,16 +158,26 @@ class ShioajiTickCollector:
             raise ValueError("empty subscriptions")
         if not callable(getattr(self.api, "on_tick_stk_v1", None)):
             raise TypeError("Tick callback API unavailable")
+        if self.book_quote_type is not None and not callable(getattr(self.api, "on_bidask_stk_v1", None)):
+            raise TypeError("BidAsk callback API unavailable")
         self.state = "CONNECTING"
         try:
             self.api.on_tick_stk_v1()(self._on_tick)
+            if self.book_quote_type is not None:
+                self.api.on_bidask_stk_v1()(self._on_bidask)
             for sub in self.subscriptions:
                 contract = self._contract(sub.symbol)
                 self.api.subscribe(
                     contract, quote_type=self.quote_type,
                     intraday_odd=(sub.lot_type == "ODD"),
                 )
-                self.active.append((contract, sub))
+                self.active.append((contract, sub, self.quote_type))
+                if self.book_quote_type is not None:
+                    self.api.subscribe(
+                        contract, quote_type=self.book_quote_type,
+                        intraday_odd=(sub.lot_type == "ODD"),
+                    )
+                    self.active.append((contract, sub, self.book_quote_type))
             self.stop_requested.clear()
             self.state = "HEALTHY"
             self.worker = threading.Thread(target=self._worker_loop, name="intraday-tick-collector", daemon=True)
@@ -148,10 +188,10 @@ class ShioajiTickCollector:
             raise
 
     def _unsubscribe_all(self) -> None:
-        for contract, sub in reversed(self.active):
+        for contract, sub, quote_type in reversed(self.active):
             try:
                 self.api.unsubscribe(
-                    contract, quote_type=self.quote_type,
+                    contract, quote_type=quote_type,
                     intraday_odd=(sub.lot_type == "ODD"),
                 )
             except Exception as exc:
@@ -163,11 +203,14 @@ class ShioajiTickCollector:
         try:
             while not self.stop_requested.is_set() or not self.queue.empty():
                 try:
-                    exchange, tick, received_at = self.queue.get(timeout=0.15)
+                    stream, exchange, payload, received_at = self.queue.get(timeout=0.15)
                 except Empty:
                     continue
                 try:
-                    self.process(exchange, tick, received_at=received_at)
+                    if stream == "tick":
+                        self.process(exchange, payload, received_at=received_at)
+                    else:
+                        self.process_book(exchange, payload, received_at=received_at)
                 finally:
                     self.queue.task_done()
         except BaseException as exc:
@@ -215,18 +258,57 @@ class ShioajiTickCollector:
                 self.state = "DEGRADED"
         return normalized
 
+    def process_book(self, exchange: Any, bidask: Any, *, received_at: datetime) -> MarketBook | None:
+        """Handle one captured book; raw-first, no book inference or order actions."""
+        if self.book_store is None:
+            raise RuntimeError("BidAsk collection not configured")
+        symbol = str(getattr(bidask, "code", "") or "")
+        lot = "ODD" if getattr(bidask, "intraday_odd", False) is True else "BOARD"
+        if symbol and symbol.isascii() and symbol.isalnum() and len(symbol) <= 12:
+            if (symbol, lot) not in self.scope_keys:
+                self.counters["book_outside_scope"] += 1
+                return None
+        try:
+            record = raw_book_event(exchange, bidask, session_id=self.session_id,
+                                    seq=self.seq, received_at=received_at)
+            self.book_store.append(record)
+        except Exception as exc:
+            self.counters["book_raw_write_error"] += 1
+            self.last_error = f"book_raw: {type(exc).__name__}"
+            self.state = "DEGRADED"
+            return None
+        self.seq += 1
+        self.counters["book_raw_written"] += 1
+        self.last_received_at = record["received_at"]
+        book, reason = normalize_raw_book(record)
+        if book is None:
+            self.counters[f"book_rejected_{reason}"] += 1
+            return None
+        self.last_event_at = book.event_time
+        self.counters["book_accepted"] += 1
+        if self.book_sink is not None:
+            try:
+                self.book_sink(book)
+            except Exception as exc:
+                self.counters["book_sink_error"] += 1
+                self.last_error = f"book_sink: {type(exc).__name__}"
+                self.state = "DEGRADED"
+        return book
+
     def health(self) -> dict[str, Any]:
         state = self.state
         if self._fatal:
             state = "FAILED"
         elif state == "HEALTHY" and any(self.counters[k] for k in (
-            "queue_dropped", "raw_write_error", "sink_error", "unsubscribe_error"
+            "queue_dropped", "raw_write_error", "sink_error", "unsubscribe_error",
+            "book_raw_write_error", "book_sink_error", "book_queue_dropped"
         )):
             state = "DEGRADED"
         return {
             "state": state,
             "session_id": self.session_id,
-            "subscriptions": len(self.subscriptions),
+            "subscriptions": len(self.subscriptions) * (2 if self.book_quote_type is not None else 1),
+            "bidask_enabled": self.book_quote_type is not None,
             "queue_depth": self.queue.qsize(),
             "counters": dict(self.counters),
             "last_error": self.last_error,
