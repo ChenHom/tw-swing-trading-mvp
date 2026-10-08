@@ -63,4 +63,6 @@ PR-1 的 \`market intraday-smoke\` 新增可選 \`--with-bidask\`，表示在**�
 python3 -m pytest tests/unit/test_intraday_tick_collector.py tests/unit/test_intraday_book.py -q
 \`\`\`
 
+**離線驗證完成：**[GitHub Actions #37742795824](https://github.com/ChenHom/tw-swing-trading-mvp/actions/runs/37742795824) 使用 Python 3.10 執行 PR-1 + PR-2 的 **47 項 pytest 全數通過**，並通過 compileall。此結果不代表在真實 Shioaji 1.7.x 行情測試或長時間斷線驗證已完成。觀察事件 ID 已包含事前 plan 的 SHA-256 digest，避免變更支持／突破門檻卻重用相同識別碼。
+
 PR-2 不新增下單功能，不寫 \`order_intents\`、\`approval\`、\`fills\`、\`cash_ledger\`、真實交易 DB；不改 \`config/trading.yaml\` REJECTED 策略。僅建立供 PR-3 再研究、PR-4 畫面展示的可驗證資料契約。五檔初次 smoke 未完成前，功能狀態為 LIVE_NOT_VERIFIED。
