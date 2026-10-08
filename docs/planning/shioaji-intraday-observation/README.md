@@ -1,6 +1,6 @@
 # Shioaji 盤中觀察整合 — 四個實作 PR 規劃
 
-狀態：DRAFT / GRILLING_REQUIRED（待使用者裁決，**未核准實作或上線**）
+狀態：**SPEC_CONFIRMED / IMPLEMENTATION_PENDING**（D1–D10 設計裁決已完成；**未授權真實行情連線、每日自動蒐集或正式部署**）
 編寫日：2026-10-08
 對應 repo：ChenHom/tw-swing-trading-mvp（master）
 主目標：驗證盤中成交與五檔資訊能否改善波段進場執行品質，而不是重造當沖機器人。
@@ -54,12 +54,12 @@ Shioaji（僅 quote） → 獨立 Collector（同一個登入與訂閱管理） 
 - 宣稱可用沒有歷史五檔的日 K 回測驗證五檔訊號。
 - 手動持倉的即時監控取代原本 risk_exit 的日線規則或越權執行交易。
 
-## 5. Grill-me / grilling 決策紀錄（進行中）
+## 5. Grill-me / grilling 決策紀錄（設計確認完成）
 
 官方原始參考：https://github.com/mattpocock/skills/blob/main/skills/productivity/grill-me/SKILL.md
 其實際流程：https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md
 
-此表保留使用者已裁決與待裁決項目；**D1–D7 皆已由使用者於 2026-10-08 同意建議方向**。D8–D10 尚待第三輪確認；未完成確認前，不得將規劃視為已授權上線。
+使用者已於 2026-10-08 同意全部 D1–D10 的**設計建議**。已完成 grilling，以下事項從待決改為已核准規格，但仍須按四個實作 PR 驗收；特別是 D10 只確認雙重授權流程，**這次同意並不是任一真實連線或日常排程的授權**。
 
 | ID | 首輪可裁決的問題 | 建議的預設答案 | 狀態 |
 | --- | --- | --- | --- |
@@ -70,9 +70,9 @@ Shioaji（僅 quote） → 獨立 Collector（同一個登入與訂閱管理） 
 | D5 | 盤中事件僅在 Web 顯示，第一版不主動 Discord/Telegram 推播？ | 是；保留原系統既有排程失敗告警 | AGREED 2026-10-08 |
 | D6 | raw Tick/BidAsk 至少保留 180 交易日，盤後 gzip，磁碟使用率達警戒值停收？ | 是；首週量測、專用分割區 80% 告警 / 90% 停收、保留研究原始來源 | AGREED 2026-10-08 |
 | D7 | 60 交易日 + 100 獨立候選機會 + 後段 20 交易日樣本外？ | 是；不足 EVIDENCE_PENDING；只評估執行品質、不解禁 REJECTED 策略 | AGREED 2026-10-08 |
-| D8 | Collector 使用獨立且預設 disabled 的 systemd service？ | 是，不干擾既有 Web / cron | PENDING（第三輪） |
-| D9 | 依交易日曆啟停，固定去重清單，盤中手動 reload？ | 是，上限以 SDK 測試為準 | PENDING（第三輪） |
-| D10 | 真實行情 smoke 與每日啟用分別取得明確授權？ | 是，兩道授權閘門 | PENDING（第三輪） |
+| D8 | Collector 使用獨立且預設 disabled 的 systemd service？ | 是，不干擾既有 Web / cron | AGREED 2026-10-08 |
+| D9 | 依交易日曆啟停，固定去重清單，盤中手動 reload？ | 是，上限以 SDK 測試為準 | AGREED 2026-10-08 |
+| D10 | 真實行情 smoke 與每日啟用分別取得明確授權？ | 是，兩道授權閘門 | AGREED 2026-10-08（僅流程規格；連線與啟用尚未授權） |
 
 ## 5A. 第二輪提問 — 已同意（2026-10-08）
 
@@ -96,15 +96,15 @@ Shioaji（僅 quote） → 獨立 Collector（同一個登入與訂閱管理） 
 
 建議 YES。統計單位是「獨立候選進場機會」，不是同一股票每分鐘的重複 Tick 或五檔快照。指標、成本、排除規則及假設鎖定於蒐集前，避免根據結果調整門檻。
 
-## 5B. 第三輪確認 — D8–D10 待決（2026-10-08）
+## 5B. 第三輪確認 — D8–D10 已同意（2026-10-08）
 
-本輪只處理部署與實際連線權限。以下均是**提案，尚非同意事項**。
+使用者已同意以下**執行邊界設計**。此同意不包含實際啟動 systemd、安裝排程、登入 Shioaji 或訂閱真實行情。
 
-- **D8 — Collector 啟動方式**：建議波段 repo 使用獨立、最小權限的 systemd service（例如 `trading-quote-collector.service`），安裝預設 disabled；不修改現有 `trading-web.service`、盤後 cron，Collector 故障不得影響交易資料庫。
-- **D9 — 訂閱清單／時間**：建議依交易日曆在開盤前啟動、收盤後結束；以持倉 + 明確 watchlist + 前一盤後影子候選為去重清單，來源可稽核。盤中修改清單僅允許明確 reload；不自動掃 top-150。每檔 2 種成交規格（BOARD/ODD）及 Tick/BidAsk 配額須透過 isolated smoke 驗證後設定上限。
-- **D10 — 連線授權雙閘門**：建議先用 fake SDK / replay 驗證，不連真實行情；其後須獲一次性明確核准才能做真實唯讀 Shioaji smoke（不載 CA、不下單），通過後仍須再次明確核准才啟用每日收集。Q8/Q9 的設計同意不代表已授權登入或新增排程。
+- **D8 — Collector 啟動方式（AGREED）**：波段 repo 使用獨立、最小權限的 systemd service（例如 `trading-quote-collector.service`），安裝預設 disabled；不修改現有 `trading-web.service`、盤後 cron，Collector 故障不得影響交易資料庫。
+- **D9 — 訂閱清單／時間（AGREED）**：依交易日曆在開盤前啟動、收盤後結束；以持倉 + 明確 watchlist + 前一盤後影子候選為去重清單，來源可稽核。盤中修改清單僅允許明確 reload；不自動掃 top-150。BOARD/ODD 與 Tick/BidAsk 配額須透過 isolated smoke 驗證後設定上限。
+- **D10 — 連線授權雙閘門（AGREED）**：先用 fake SDK / replay 驗證，不連真實行情；其後須另獲一次性明確核准才能做真實唯讀 Shioaji smoke（不載 CA、不下單），通過後仍須再次另獲明確核准才啟用每日收集。此輪 Q8–Q10 同意**不代表已授權登入或新增排程**。
 
-待 D8–D10 已決定後，才可標示 SPEC_CONFIRMED / IMPLEMENTATION_PENDING；本次文件 PR 仍然只是規劃，不是四個實作 PR。
+**Grilling 已結束。** 四份規劃文件統一為 SPEC_CONFIRMED / IMPLEMENTATION_PENDING；下一步是依順序建立實作 PR-1、PR-2、PR-3、PR-4。對尚無充分行情樣本的 PR-3，可先實作研究框架，待前向資料累積再判定 EVIDENCE_PENDING / 結果。**本文件 PR 不代表任何實作、實測或部署完成。**
 
 ## 6. 施工檢查
 
