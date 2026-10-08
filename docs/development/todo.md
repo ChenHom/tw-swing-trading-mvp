@@ -9,7 +9,7 @@
 
 ## H. Shioaji 盤中行情觀察（規格 D1–D10 已確認；2026-10-08）
 
-- 🔄 **H1 / PR-1 — Tick Collector + Raw + Replay**：`feat/shioaji-tick-collector-pr1` 開發中；已加入唯讀 Collector、原始資料、離線 replay、手動 gzip、gated live smoke 入口與 fake SDK 單元測試。待 CI/實機隔離環境驗證（僅在獨立授權後允許真行情 smoke）；無每日排程。
+- 🔄 **H1 / PR-1 — Tick Collector + Raw + Replay**：`feat/shioaji-tick-collector-pr1` 開發中；已加入唯讀 Collector、原始資料、離線 replay、手動 gzip、gated live smoke 入口與 fake SDK 單元測試。離線 CI #37739061093：19 passed + compileall 成功；仍待實機相容、斷線重連與獨立授權後的行情 smoke；無每日排程。
 - ⬜ **H2 / PR-2 — BidAsk 五檔 + ObservationEvent**：依 docs PR #1，僅在 H1 資料契約確立後開始。
 - ⬜ **H3 / PR-3 — 前向執行品質驗證**：至少 60 交易日、100 獨立候選機會，最後 20 交易日樣本外。證據不足 `EVIDENCE_PENDING`。
 - ⬜ **H4 / PR-4 — Web 唯讀盤中觀察**：沿用 FastAPI / Jinja，不另開交易入口、不做 Discord/Telegram 市場推播。
