@@ -398,3 +398,51 @@ def test_observation_identity_changes_when_plan_threshold_changes():
     assert first.plan_id == second.plan_id == "same-name"
     assert first.plan_digest != second.plan_digest
     assert first.event_id != second.event_id
+
+
+def test_sdk_reconnect_resubscribes_both_tick_and_bidask_and_rotates_epoch(tmp_path):
+    sdk = FakeAPI()
+    quote_events = []
+    sdk.quote = SimpleNamespace(set_event_callback=lambda fn: quote_events.append(fn))
+    coll = ShioajiTickCollector(
+        sdk, subscriptions=[Subscription("2327", "BOARD")],
+        quote_type="Tick", store=RawTickStore(tmp_path),
+        book_quote_type="BidAsk", book_store=RawBookStore(tmp_path),
+        session_id="original",
+    )
+    coll.start()
+    assert coll.health()["quote_event_callback_registered"]
+    assert [x[2] for x in sdk.calls] == ["Tick", "BidAsk"]
+    quote_events[0](200, 1, "ignored", "down")
+    quote_events[0](200, 13, "ignored", "reconnected")
+    coll.queue.join()
+    assert [x[2] for x in sdk.calls] == ["Tick", "BidAsk", "Tick", "BidAsk"]
+    h = coll.health()
+    assert h["gap_unresolved"] is True
+    assert h["state"] == "DEGRADED"
+    assert coll.session_id == "original-e1"
+    book = coll.process_book("TSE", sdk_book(), received_at=BASE)
+    assert book.collector_session_id == "original-e1"
+    coll.stop()
+
+
+def test_bidask_archive_is_blocked_while_collector_running(tmp_path):
+    sdk = FakeAPI()
+    from src.market_data.intraday_storage import archive_closed_sessions, ArchiveBusyError
+    from datetime import date
+    book_path = RawBookStore(tmp_path).append(book_record())
+    coll = ShioajiTickCollector(
+        sdk, subscriptions=[Subscription("2327")],
+        quote_type="Tick", store=RawTickStore(tmp_path),
+        book_quote_type="BidAsk", book_store=RawBookStore(tmp_path),
+    )
+    coll.start()
+    with pytest.raises(ArchiveBusyError):
+        archive_closed_sessions(tmp_path, before_date=date(2026, 10, 9),
+                                is_trading_day=lambda d: True)
+    assert book_path.exists()
+    coll.stop()
+    res = archive_closed_sessions(tmp_path, before_date=date(2026, 10, 9),
+                                  is_trading_day=lambda d: True)
+    assert len(res["archived"]) == 1
+    assert book_path.with_suffix(".jsonl.gz").exists()
