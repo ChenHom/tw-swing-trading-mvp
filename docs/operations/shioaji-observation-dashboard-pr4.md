@@ -7,7 +7,7 @@
 - `INTRADAY_DASHBOARD_ENABLED=1` 只允許讀本地 `data/intraday/dashboard.json`，**不會啟動 Collector、Shioaji 登入或交易委託**。
 - 透過 `src/application/services/intraday_dashboard.py` 讀取 versioned snapshot。無檔案／損壞／過期／錯誤 lot／不可信 session／未驗證 heartbeat 都不得呈現可誤認為即時的價格。
 - Web 每 30 秒重新讀本地快照，供內網研究觀察；訂閱整股 / 零股分開，五檔只顯示可見五層掛單，不等於已成交。
-- 測試可透過 `scripts/build_intraday_dashboard.py --ticks ... --books ... --health ... --output data/intraday/dashboard.json` 明確手動產生**離線**快照。腳本拒絕正規化失敗的 raw 資料，不會連永豐，也不會設定 systemd 或 cron。
+- 測試可透過 `python3 -m scripts.build_intraday_dashboard --ticks ... --books ... --health ... --output data/intraday/dashboard.json` 明確手動產生**離線**快照。腳本拒絕正規化失敗的 raw 資料，不會連永豐，也不會設定 systemd 或 cron。
 
 ## 未完成的即時整合（正式部署阻擋）
 - 現有 PR-1 Collector 尚無經驗證的 SDK heartbeat／`trading_session_verified` 訊息，也沒有長時間穩定的 read-only snapshot publisher。現有 smoke 的 health 檔只會在結束時寫出 CLOSED，**不可能因為離線檔更新就宣稱正在提供經核實的即時行情**。
