@@ -154,7 +154,7 @@ class ShioajiTickCollector:
         try:
             code = int(event_code)
             response = int(response_code)
-            if code not in (0, 1, 12, 13):
+            if code not in (0, 1, 2, 4, 5, 12, 13, 17, 19):
                 return
             self._enqueue_transport_event(response, code, datetime.now(timezone.utc))
         except (ValueError, TypeError):
@@ -176,7 +176,7 @@ class ShioajiTickCollector:
             self.last_error = f"transport_audit: {type(exc).__name__}"
             self.state = "DEGRADED"
             return
-        if code in (1, 12):
+        if code in (1, 2, 4, 5, 12, 17, 19):
             self.state = "DEGRADED"
             self.counters["transport_gap_events"] += 1
         if should_recover and not self.stop_requested.is_set():
