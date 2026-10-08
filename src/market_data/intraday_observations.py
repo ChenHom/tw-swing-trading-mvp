@@ -128,8 +128,11 @@ def observe_book(book: MarketBook, *, max_age_seconds: int = 30) -> list[Observa
         events[0] = _event(book, plan_id=None, kind="SPREAD_OBSERVED", status="INCONCLUSIVE",
                            reasons=reason + ("MISSING_TOP_LEVEL",), metrics=metrics)
     if metrics["imbalance_bps"] is None:
+        both_empty = (metrics["coverage_bid_levels"] == 0 and
+                      metrics["coverage_ask_levels"] == 0)
+        problem = "EMPTY_VISIBLE_BOOK" if both_empty else "MISSING_SIDE"
         events[1] = _event(book, plan_id=None, kind="BOOK_IMBALANCE_OBSERVED",
-                           status="INCONCLUSIVE", reasons=reason + ("EMPTY_VISIBLE_BOOK",),
+                           status="INCONCLUSIVE", reasons=reason + (problem,),
                            metrics=metrics)
     return events
 
@@ -146,7 +149,7 @@ def replay_observations(
     A plan must have been created before receipt time. Confirmations never use
     future quotes, next day's price action, or gap/stale market data.
     """
-    if data_health not in ("HEALTHY", "DEGRADED", "FAILED"):
+    if data_health not in ("UNKNOWN", "HEALTHY", "DEGRADED", "FAILED"):
         raise ValueError("unknown data health")
     incoming: list[tuple[datetime, int, int, MarketBook | MarketTick]] = []
     for b in books:
