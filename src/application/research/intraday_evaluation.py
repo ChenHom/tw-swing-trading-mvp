@@ -188,23 +188,27 @@ def evaluate(
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate opportunity_id; no double counting")
     ordered = sorted(cohort, key=lambda c: (c.trading_date, c.opportunity_id))
-    book_list = list(books)
-    event_list = list(events)
+    book_list = sorted(books, key=lambda b: (b.received_at, b.collection_seq, b.symbol, b.lot_type))
+    event_list = sorted(events, key=lambda e: (e.observed_at, e.collection_seq, e.event_id))
     rows = [_row(c, book_list, event_list, manifest, data_health=data_health) for c in ordered]
     dates = sorted(set(c.trading_date for c in ordered))
     oos_dates = set(dates[-OOS_DAYS:]) if len(dates) >= REQUIRED_DAYS else set()
     for row in rows:
         row["split"] = ("OOS" if row["trading_date"] in oos_dates else
                         "EXPLORATORY" if len(dates) < REQUIRED_DAYS else "TRAIN")
+    qualifying = [r for r in rows if r["baseline_ask_x10000"] is not None and r["status"] in ("MISSED", "PAIRED_INDICATIVE")]
+    qualified_dates = {r["trading_date"] for r in qualifying}
+    qualified_oos_dates = qualified_dates & oos_dates
     # Split is declared by time, not by positive results. This gate alone
     # is NOT a scientific efficacy approval; a human must review uncertainty.
     gates = {
         "trading_days": len(dates), "unique_opportunities": len(rows),
-        "oos_days": len(oos_dates),
+        "evaluable_opportunities": len(qualifying), "evaluable_days": len(qualified_dates),
+        "oos_days": len(oos_dates), "evaluable_oos_days": len(qualified_oos_dates),
         "min_trading_days": REQUIRED_DAYS, "min_opportunities": REQUIRED_OPPORTUNITIES,
         "min_oos_days": OOS_DAYS,
-        "met": (len(dates) >= REQUIRED_DAYS and len(rows) >= REQUIRED_OPPORTUNITIES
-                and len(oos_dates) >= OOS_DAYS and
+        "met": (len(qualified_dates) >= REQUIRED_DAYS and len(qualifying) >= REQUIRED_OPPORTUNITIES
+                and len(qualified_oos_dates) >= OOS_DAYS and
                 all(row["data_health"] == "HEALTHY" for row in rows)),
     }
     statuses = {key: sum(row["status"] == key for row in rows)
