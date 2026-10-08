@@ -59,17 +59,17 @@ Shioaji（僅 quote） → 獨立 Collector（同一個登入與訂閱管理） 
 官方原始參考：https://github.com/mattpocock/skills/blob/main/skills/productivity/grill-me/SKILL.md
 其實際流程：https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md
 
-此檔只紀錄「待裁決點與建議」，**不是使用者已答覆**。每輪詢問只提出不依賴尚未確定答案的問題；程式庫能確認的事不問。等待回覆後，更新本區與四份 PR 文件，再進入下一輪。使用者未確認共同理解前，不進入程式實作。
+此表保留使用者已裁決與待裁決項目；**D1–D4 已由使用者在 2026-10-08 同意建議方向，D5–D7 仍待回覆**。每輪只問目前先決條件已解決的問題；答覆寫回各 PR 文件。全數確認前不進入程式實作。使用者未確認共同理解前，不進入程式實作。
 
 | ID | 首輪可裁決的問題 | 建議的預設答案 | 狀態 |
 | --- | --- | --- | --- |
-| D1 | Collector 由波段 repo 自己持有，複用 lab 的純邏輯，避免共享 runtime/登入？ | 是；不建新共用服務 | PENDING |
-| D2 | 訂閱僅限持倉 + 手動 watchlist + simulation-main 候選股，而非整個 top-150 / 全市場？ | 是；加可配置上限 | PENDING |
-| D3 | 整股與盤中零股都收集，但獨立保存/計算，不相互推算成交深度？ | 是 | PENDING |
-| D4 | PR-3 第一個研究目標以「實際可執行性、滑價與錯失交易」為主，原 REJECTED 策略不復活？ | 是 | PENDING |
-| D5 | 盤中事件僅在 Web 顯示，第一版不主動 Discord/Telegram 推播？ | 建議是；待 D1-D4 後確認實際需求 | BLOCKED |
-| D6 | raw Tick/BidAsk 存多久、磁碟用量上限與是否壓縮？ | 先蒐集一天測量大小，訂配額；不得先刪可驗證樣本 | BLOCKED |
-| D7 | 前向樣本期與正式研究裁決門檻？ | 先固定主次指標、樣本最小量、封存樣本外；不可事後挑門檻 | BLOCKED |
+| D1 | Collector 由波段 repo 自己持有，複用 lab 的純邏輯，避免共享 runtime/登入？ | 是；不建新共用服務 | AGREED 2026-10-08 |
+| D2 | 訂閱僅限持倉 + 手動 watchlist + simulation-main 候選股，而非整個 top-150 / 全市場？ | 是；加可配置上限 | AGREED 2026-10-08 |
+| D3 | 整股與盤中零股都收集，但獨立保存/計算，不相互推算成交深度？ | 是 | AGREED 2026-10-08 |
+| D4 | PR-3 第一個研究目標以「實際可執行性、滑價與錯失交易」為主，原 REJECTED 策略不復活？ | 是 | AGREED 2026-10-08 |
+| D5 | 盤中事件僅在 Web 顯示，第一版不主動 Discord/Telegram 推播？ | 是；保留原系統既有排程失敗告警 | PENDING（第二輪） |
+| D6 | raw Tick/BidAsk 存多久、磁碟用量上限與是否壓縮？ | 原始資料研究期保留、每日壓縮、先觀測占用再設配額；不默默刪除 | PENDING（第二輪） |
+| D7 | 前向樣本期與正式研究裁決門檻？ | 先固定主次指標與樣本外區間，證據不足標 PENDING；不恢復策略 | PENDING（第二輪） |
 
 ## 6. 施工檢查
 
