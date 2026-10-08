@@ -13,6 +13,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .intraday_storage import append_raw
+
 from .intraday_tick import (
     EXCHANGES, LOT_TYPES, TAIPEI, VERSION, _iso_timestamp, _price, _volume,
     iter_raw, tick_path,
@@ -208,14 +210,7 @@ class RawBookStore:
             self.root, str(record["trading_date"]), str(record["lot_type"]),
             str(record["payload"].get("code") or "_invalid"),
         )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        disk = shutil.disk_usage(path.parent)
-        if disk.used / disk.total * 100 >= self.stop_at_disk_pct:
-            raise OSError("collector disk watermark exceeded")
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n")
-            stream.flush()
-        return path
+        return append_raw(path, record, stop_at_disk_pct=self.stop_at_disk_pct)
 
 
 def replay_books(path: Path) -> tuple[list[MarketBook], dict[str, int]]:
