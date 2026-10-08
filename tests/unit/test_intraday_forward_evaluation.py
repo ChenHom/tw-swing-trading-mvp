@@ -138,7 +138,7 @@ def test_minimum_60_100_20_forward_gate_is_not_strategy_approval():
     for day, trading_day in enumerate(sessions):
         for n in range(2 if day < 40 else 1):
             cohort.append(opportunity(
-                opportunity_id=f"opp-{day}-{n}", trading_date=trading_day.isoformat(),
+                opportunity_id=f"opp-{day}-{n}", plan_id=f"plan-{day}-{n}", trading_date=trading_day.isoformat(),
                 known_at=FREEZE.isoformat(),
                 baseline_decision_at=datetime(trading_day.year, trading_day.month,
                                               trading_day.day, 9, tzinfo=TAIPEI).isoformat(),
@@ -198,3 +198,10 @@ def test_quote_from_new_session_is_not_used_to_price_old_confirmation():
     result = evaluate(m, [opportunity()], [book(), book_after_reconnect],
                       [event(when)], data_health="HEALTHY")
     assert result["cohort"][0]["status"] == "MISSED"
+
+
+def test_renaming_same_economic_opportunity_cannot_inflate_sample():
+    a = opportunity()
+    b = opportunity(opportunity_id="different-name")
+    with pytest.raises(ValueError, match="duplicate economic opportunity"):
+        evaluate(manifest(), [a, b], [book()], [], data_health="HEALTHY")
