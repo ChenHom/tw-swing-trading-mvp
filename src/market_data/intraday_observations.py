@@ -74,6 +74,7 @@ class ObservationEvent:
     reason_codes: tuple[str, ...]
     metrics: dict[str, Any]
     data_health: str = "HEALTHY"
+    plan_digest: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -86,9 +87,10 @@ def _event(
     kind: str, status: str, reasons: Sequence[str] = (),
     metrics: dict[str, Any] | None = None,
     data_health: str = "HEALTHY",
+    plan_digest: str | None = None,
 ) -> ObservationEvent:
     identifier = {
-        "rule": RULE_VERSION, "plan": plan_id, "symbol": source.symbol,
+        "rule": RULE_VERSION, "plan": plan_id, "plan_digest": plan_digest, "symbol": source.symbol,
         "exchange": source.exchange, "lot": source.lot_type,
         "kind": kind, "session": source.collector_session_id,
         "seq": source.collection_seq, "source": source.source,
@@ -102,6 +104,7 @@ def _event(
         collector_session_id=source.collector_session_id,
         collection_seq=source.collection_seq,
         reason_codes=tuple(reasons), metrics=metrics or {}, data_health=data_health,
+        plan_digest=plan_digest,
     )
 
 
@@ -161,6 +164,8 @@ def replay_observations(
     out: list[ObservationEvent] = []
     books_by_symbol: dict[tuple[str, str, str], MarketBook] = {}
     last_tick_time: dict[tuple[str, str, str], datetime] = {}
+    plan_digest = (hashlib.sha256(json.dumps(asdict(plan), sort_keys=True).encode()).hexdigest()
+                   if plan is not None else None)
     support_test: datetime | None = None
     support_confirm_count = 0
     support_state = "NOT_TESTED"
@@ -234,7 +239,7 @@ def replay_observations(
                 support_state = "NOT_TESTED"
             if breakout_state == "TESTING":
                 breakout_state = "NOT_OBSERVED"
-            out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, kind="PRICE_LEVEL_CHECK",
+            out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, plan_digest=plan_digest, kind="PRICE_LEVEL_CHECK",
                               status="INCONCLUSIVE", reasons=reasons,
                               metrics={"price_x10000": tick.price_x10000}))
             continue
@@ -247,23 +252,23 @@ def replay_observations(
                 support_state = "TESTING"
                 support_test = event_at
                 support_confirm_count = 0
-                out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, kind="SUPPORT_TESTED",
+                out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, plan_digest=plan_digest, kind="SUPPORT_TESTED",
                                   status="OBSERVED", metrics={**context, "low": low, "high": high}))
             elif support_state == "TESTING":
                 if px < low:
                     support_state = "BROKEN"
-                    out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, kind="SUPPORT_BROKEN",
+                    out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, plan_digest=plan_digest, kind="SUPPORT_BROKEN",
                                       status="OBSERVED", metrics={**context, "low": low}))
                 elif px >= high:
                     support_confirm_count += 1
                     if (support_confirm_count >= plan.min_confirmation_ticks and
                             (event_at - support_test).total_seconds() >= plan.min_confirmation_seconds):
                         support_state = "HELD"
-                        out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, kind="SUPPORT_HELD",
+                        out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, plan_digest=plan_digest, kind="SUPPORT_HELD",
                                           status="OBSERVED", metrics={**context, "confirm_ticks": support_confirm_count}))
             elif support_state == "HELD" and px < low:
                 support_state = "BROKEN"
-                out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health,
+                out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, plan_digest=plan_digest,
                                   kind="SUPPORT_BROKEN", status="OBSERVED",
                                   metrics={**context, "low": low, "after_held": True}))
         if plan.resistance_x10000 is not None:
@@ -282,11 +287,11 @@ def replay_observations(
                     if (breakout_count >= plan.min_confirmation_ticks and
                             (event_at - breakout_start).total_seconds() >= plan.min_confirmation_seconds):
                         breakout_state = "OBSERVED"
-                        out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, kind="BREAKOUT_OBSERVED",
+                        out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, plan_digest=plan_digest, kind="BREAKOUT_OBSERVED",
                                           status="OBSERVED", metrics={**context, "resistance": resistance,
                                                                        "confirm_ticks": breakout_count}))
             elif breakout_state == "OBSERVED" and px <= resistance:
                 breakout_state = "RETESTED"
-                out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, kind="BREAKOUT_RETESTED",
+                out.append(_event(tick, plan_id=plan.plan_id, data_health=data_health, plan_digest=plan_digest, kind="BREAKOUT_RETESTED",
                                   status="OBSERVED", metrics={**context, "resistance": resistance}))
     return out
