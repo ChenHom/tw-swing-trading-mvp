@@ -12,11 +12,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty, Full, Queue
+from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Sequence
 from uuid import uuid4
 
 from .intraday_tick import (
-    LOT_TYPES, MarketTick, RawTickStore, normalize_raw_tick, raw_event,
+    FIELDS, LOT_TYPES, MarketTick, RawTickStore, normalize_raw_tick, raw_event,
 )
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class ShioajiTickCollector:
         if len(set(self.subscriptions)) != len(self.subscriptions):
             raise ValueError("duplicate subscriptions")
         self.scope = set(self.subscriptions)
+        self.scope_keys = {(sub.symbol, sub.lot_type) for sub in self.subscriptions}
         self.quote_type = quote_type
         self.store = store
         self.sink = sink
@@ -96,9 +98,15 @@ class ShioajiTickCollector:
 
     def _on_tick(self, exchange: Any, tick: Any) -> None:
         """SDK callback: bounded, nonblocking, no disk writes."""
+        if self.stop_requested.is_set() or self.state in ("CLOSED", "FAILED"):
+            self.counters["late_callback"] += 1
+            return
         received_at = datetime.now(timezone.utc)
+        # Provider memory can be reused after returning from a callback; snapshot
+        # just the fields required for raw audit, then enqueue without blocking.
+        snapshot = SimpleNamespace(**{key: getattr(tick, key, None) for key in FIELDS})
         try:
-            self.queue.put_nowait((exchange, tick, received_at))
+            self.queue.put_nowait((exchange, snapshot, received_at))
         except Full:
             self.counters["queue_dropped"] += 1
 
@@ -175,7 +183,7 @@ class ShioajiTickCollector:
         # Unparseable SDK events still go to a raw audit bucket; ignore only
         # well-formed but unsubscribed symbols (another listener can share the callback).
         if symbol and symbol.isascii() and symbol.isalnum() and len(symbol) <= 12:
-            if (symbol, lot) not in {(s.symbol, s.lot_type) for s in self.scope}:
+            if (symbol, lot) not in self.scope_keys:
                 self.counters["outside_scope"] += 1
                 return None
         try:
