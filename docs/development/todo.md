@@ -11,7 +11,7 @@
 
 - 🔄 **H1 / PR-1 — Tick Collector + Raw + Replay**：`feat/shioaji-tick-collector-pr1` 開發中；已加入唯讀 Collector、原始資料、離線 replay、手動 gzip、gated live smoke 入口與 fake SDK 單元測試。離線 CI #37739061093：19 passed + compileall 成功；仍待實機相容、斷線重連與獨立授權後的行情 smoke；無每日排程。
 - 🔄 **H2 / PR-2 — BidAsk 五檔 + ObservationEvent**（stacked [PR #3](https://github.com/ChenHom/tw-swing-trading-mvp/pull/3)）：在 PR-1 分支上實作同一 Collector 的 BidAsk 訂閱、整股/零股五檔 raw、JSONL/.gz replay、spread / visible imbalance、事前定義的支撐突破事件。離線測試與 CLI 已加入；GitHub Actions #37742795824 47 passed + compileall 通過，仍待 SDK 1.7.x 實際行情**另行授權**測試與長時間斷線品質驗證。**未連實際行情、未變更交易排程或策略。**
-- ⬜ **H3 / PR-3 — 前向執行品質驗證**：至少 60 交易日、100 獨立候選機會，最後 20 交易日樣本外。證據不足 `EVIDENCE_PENDING`。
+- 🔄 **H3 / PR-3 — 前向執行品質驗證**（[PR #4](https://github.com/ChenHom/tw-swing-trading-mvp/pull/4)）：離線 preregistered manifest、PIT 配對、錯失/缺資料分母、60/100/20 有效樣本門檻及完整 manifest/cohort/exclusions/lineage 報告已實作並通過專項 CI；研究實際樣本尚未收集，維持 `EVIDENCE_PENDING`，待前向資料與統計檢定。
 - ⬜ **H4 / PR-4 — Web 唯讀盤中觀察**：沿用 FastAPI / Jinja，不另開交易入口、不做 Discord/Telegram 市場推播。
 - 不變邊界：國泰全手動；策略 REJECTED 不解禁；真實唯讀 smoke 與每日蒐集各自另需明確核准。
 
