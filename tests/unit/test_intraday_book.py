@@ -114,7 +114,9 @@ def test_missing_top_is_inconclusive_not_a_fake_bid():
     assert result[0].kind == "SPREAD_OBSERVED"
     assert result[0].status == "INCONCLUSIVE"
     assert "MISSING_TOP_LEVEL" in result[0].reason_codes
-    assert book_metrics(book)["imbalance_bps"] == 0
+    assert book_metrics(book)["imbalance_bps"] is None
+    assert result[1].status == "INCONCLUSIVE"
+    assert "MISSING_SIDE" in result[1].reason_codes
 
 
 def test_empty_both_sides_not_100_percent_buying():
