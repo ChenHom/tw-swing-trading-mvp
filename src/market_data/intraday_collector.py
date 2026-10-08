@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterable, Sequence
 from uuid import uuid4
 
 from .intraday_connection import QuoteTransportAudit, register_quote_events
+from .intraday_storage import collector_lease
 
 from .intraday_tick import (
     FIELDS, LOT_TYPES, MarketTick, RawTickStore, normalize_raw_tick, raw_event,
@@ -99,6 +100,7 @@ class ShioajiTickCollector:
         self._fatal = False
         self.transport = QuoteTransportAudit(self.store.root, self.session_id)
         self.quote_event_callback_registered = False
+        self._lease_context = None
 
     def _on_tick(self, exchange: Any, tick: Any) -> None:
         """SDK callback: bounded, nonblocking, no disk writes."""
@@ -190,6 +192,8 @@ class ShioajiTickCollector:
             raise TypeError("Tick callback API unavailable")
         self.state = "CONNECTING"
         try:
+            self._lease_context = collector_lease(self.store.root)
+            self._lease_context.__enter__()
             self.quote_event_callback_registered = register_quote_events(self.api, self._on_quote_event)
             self.api.on_tick_stk_v1()(self._on_tick)
             for sub in self.subscriptions:
@@ -205,6 +209,7 @@ class ShioajiTickCollector:
             self.worker.start()
         except Exception:
             self._unsubscribe_all()
+            self._release_lease()
             self.state = "FAILED"
             raise
 
@@ -213,6 +218,11 @@ class ShioajiTickCollector:
 
     def _transport_queue_item(self, response: int, code: int, received: datetime):
         return ("__transport__", (response, code), received)
+
+    def _release_lease(self) -> None:
+        if self._lease_context is not None:
+            self._lease_context.__exit__(None, None, None)
+            self._lease_context = None
 
     def _unsubscribe_all(self) -> None:
         for contract, sub in reversed(self.active):
@@ -322,6 +332,10 @@ class ShioajiTickCollector:
                 self.last_error = "worker_stop_timeout"
             else:
                 self.worker = None
+        # Keep lease held if shutdown timed out: rotating raw while its worker
+        # is still active could silently truncate a tail.
+        if self.worker is None:
+            self._release_lease()
         result = self.health()
         if result["state"] not in ("FAILED", "DEGRADED"):
             self.state = "CLOSED"
