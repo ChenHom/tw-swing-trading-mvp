@@ -6,7 +6,7 @@
 - 研究核心：`src/application/research/intraday_evaluation.py`
 - CLI：`scripts/intraday_forward_eval.py`
 - 輸入 JSON：`manifest`（預先凍結，包含 frozen_at / experiment_id / cost 假設）、`opportunities`（事前已知的獨立候選及 plan digest）、`books`（PR-2 MarketBook.as_dict）、`observations`（PR-2 ObservationEvent.as_dict）、`data_health`（UNKNOWN/HEALTHY/DEGRADED/FAILED）。
-- 命令：`python3 scripts/intraday_forward_eval.py --input <offline-study-input.json> --output-dir artifacts/reports/intraday-evaluation`
+- 命令：`python3 -m scripts.intraday_forward_eval --input <offline-study-input.json> --output-dir artifacts/reports/intraday-evaluation`
 - 每次產生 `<experiment_id>/comparison.json`、`comparison.md`、`manifest.json`、`cohort.csv`、`exclusions.jsonl`、`lineage.json`。同 experiment_id 禁止默默改寫不同輸入內容。
 
 ## 評估與證據
