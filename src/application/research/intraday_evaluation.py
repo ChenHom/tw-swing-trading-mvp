@@ -190,6 +190,9 @@ def evaluate(
     ids = [c.opportunity_id for c in cohort]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate opportunity_id; no double counting")
+    economic_keys = [(x.symbol, x.exchange, x.lot_type, x.trading_date, x.plan_id) for x in cohort]
+    if len(economic_keys) != len(set(economic_keys)):
+        raise ValueError("duplicate economic opportunity under different identifiers")
     ordered = sorted(cohort, key=lambda c: (c.trading_date, c.opportunity_id))
     book_list = sorted(books, key=lambda b: (b.received_at, b.collection_seq, b.symbol, b.lot_type))
     event_list = sorted(events, key=lambda e: (e.observed_at, e.collection_seq, e.event_id))
