@@ -105,7 +105,7 @@ def main():
     parser_book_replay.add_argument("--books", required=True, help="BidAsk .jsonl 或 .jsonl.gz")
     parser_book_replay.add_argument("--ticks", help="搭配觀察的 Tick .jsonl 或 .jsonl.gz")
     parser_book_replay.add_argument("--plan", help="事先固定的 ObservationPlan JSON")
-    parser_book_replay.add_argument("--data-health", default="HEALTHY", choices=("HEALTHY", "DEGRADED", "FAILED"))
+    parser_book_replay.add_argument("--data-health", default="UNKNOWN", choices=("UNKNOWN", "HEALTHY", "DEGRADED", "FAILED"), help="預設 UNKNOWN、只輸出無結論觀察；HEALTHY 必須有人工確認的 session 品質證據")
     parser_book_replay.add_argument("--output", help="離線報告輸出 JSON")
 
     parser_tick_compress = market_subs.add_parser("intraday-compress", help="收盤後安全壓縮單一 raw JSONL")
