@@ -1,3 +1,10 @@
+## 2026-10-08 — PR-4：既有 Web 盤中唯讀觀察（Draft #5）與跨 PR Review
+
+- `src/application/services/intraday_dashboard.py` + `src/web/server.py`：從版本化本機快照唯讀取資料，掛 `/trading/intraday`、status/symbol/snapshot API，feature flag 預設 OFF。
+- Jinja `intraday.html` 顯示 Tick、五檔、整股/零股、觀察事件及健康；預設假日、快照過期、資料健康未知、未驗證連線皆**隱藏即時價**，不產生下單入口；離線手動 publisher 不能替代正式 session。
+- 專項 CI：Web/service/API 18 passed（1 warning）、PR-1～3 研究回歸 63 passed。未操作正式主機，不宣稱實時服務已運作。
+- 跨 PR Review：`docs/reviews/shioaji-pr1-pr4-code-review-20261008.md` 區分已修與 BLOCKER，並留言於實作 PR #2～5；目前 NO-GO 正式合併／上線，仍需可靠 SDK reconnect、180 日儲存生命週期、研究統計及持續 heartbeat/snapshot publisher。
+
 ## 2026-10-08 — Shioaji PR-2：BidAsk 與 ObservationEvent（stacked PR #3，尚未實盤啟用）
 
 - 以 `feat/shioaji-tick-collector-pr1` 為 base 建立 `feat/shioaji-bidask-observations-pr2`；[PR #3](https://github.com/ChenHom/tw-swing-trading-mvp/pull/3) 僅顯示相對 PR-1 的新增內容。
