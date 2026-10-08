@@ -4,7 +4,7 @@
 - Quote callback bounded queue、整股/零股分流、append-only raw JSONL、canonical price x10000 / 成交量股、離線 JSONL/.gz replay、1m K、不補零量缺口，並提供一次性 smoke **雙閘門（預設封鎖）**。
 - 原始資料磁碟保護預設更保守 75%， gzip 手動壓縮，最少 180 交易日與前向研究 60/100/20 為已確認規格。此 PR 不設每日服務與排程；後續日常收集仍需獨立授權。
 - 單元測試：`tests/unit/test_intraday_tick_collector.py`；運作文件：`docs/operations/shioaji-intraday-tick-pr1.md`。
-- 注意：目前僅提交測試程式碼；GitHub connector 無法直接在真實交易主機執行 pytest / quote smoke，測試結果尚待 CI 或有 runtime 的環境驗證。
+- 離線 GitHub Actions 驗證：2026-10-08 [run #37739061093](https://github.com/ChenHom/tw-swing-trading-mvp/actions/runs/37739061093) 的 Python 3.10 compileall 與單檔 pytest 19 passed；**尚未在實際交易主機執行整套回歸或真實行情 smoke**。
 - 不修改國泰 / simulation-main 策略裁決，不載交易 CA、不下單、不異動 `fills`、`cash_ledger`，亦未修改 systemd 或既有 cron。
 
 # 施工記錄 (Engineering Log)
