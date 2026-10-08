@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -179,18 +180,25 @@ class ShioajiTickCollector:
             self.state = "DEGRADED"
             self.counters["transport_gap_events"] += 1
         if should_recover and not self.stop_requested.is_set():
-            ok = True
-            for contract, sub, quote_type in list(self._active_topics()):
-                try:
-                    # No login/CA/order. SDK already handles transport reconnect;
-                    # we refresh subscriptions ONLY after event 13.
-                    self.api.subscribe(contract, quote_type=quote_type,
-                                       intraday_odd=(sub.lot_type == "ODD"))
-                except Exception as exc:
-                    ok = False
-                    self.counters["resubscribe_error"] += 1
-                    self.last_error = f"resubscribe: {type(exc).__name__}"
+            # Retry only failed topics with bounded exponential backoff on the
+            # worker thread (never the SDK callback); do not relogin or trade.
+            remaining = list(self._active_topics())
+            for attempt in range(3):
+                failed = []
+                for contract, sub, quote_type in remaining:
+                    try:
+                        self.api.subscribe(contract, quote_type=quote_type,
+                                           intraday_odd=(sub.lot_type == "ODD"))
+                    except Exception as exc:
+                        failed.append((contract, sub, quote_type))
+                        self.counters["resubscribe_error"] += 1
+                        self.last_error = f"resubscribe: {type(exc).__name__}"
+                remaining = failed
+                if not remaining or self.stop_requested.is_set():
                     break
+                if attempt < 2:
+                    time.sleep(0.1 * (2 ** attempt))
+            ok = not remaining and not self.stop_requested.is_set()
             self.transport.recovered(ok)
             if ok:
                 # A new quote epoch must not be matched to pre-disconnect facts
