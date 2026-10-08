@@ -7,6 +7,14 @@
 
 ---
 
+## H. Shioaji 盤中行情觀察（規格 D1–D10 已確認；2026-10-08）
+
+- 🔄 **H1 / PR-1 — Tick Collector + Raw + Replay**：`feat/shioaji-tick-collector-pr1` 開發中；已加入唯讀 Collector、原始資料、離線 replay、手動 gzip、gated live smoke 入口與 fake SDK 單元測試。待 CI/實機隔離環境驗證（僅在獨立授權後允許真行情 smoke）；無每日排程。
+- ⬜ **H2 / PR-2 — BidAsk 五檔 + ObservationEvent**：依 docs PR #1，僅在 H1 資料契約確立後開始。
+- ⬜ **H3 / PR-3 — 前向執行品質驗證**：至少 60 交易日、100 獨立候選機會，最後 20 交易日樣本外。證據不足 `EVIDENCE_PENDING`。
+- ⬜ **H4 / PR-4 — Web 唯讀盤中觀察**：沿用 FastAPI / Jinja，不另開交易入口、不做 Discord/Telegram 市場推播。
+- 不變邊界：國泰全手動；策略 REJECTED 不解禁；真實唯讀 smoke 與每日蒐集各自另需明確核准。
+
 ## A. 立即（本週）
 
 - ✅ **A1 record-fill 可歸策略**（2026-06-14）。`record-fill` 新增 `--strategy-id`（預設仍 `MANUAL` 向後相容、結構性排除於監控）；指定具 exit 區塊的策略後，部位自當日起由 daily run 的 `update_high_watermarks` 納入、risk_exit 監控、策略別損益歸因。未知 strategy_id 拒絕。下游 FIFO/PnL/watermark 機制原即以 strategy bucket 運作，故僅改 record-fill 一處。詳見 engineering-log 2026-06-14、記憶 `record-fill-strategy-attribution`。後續 C1 Web 寫入 UI 可沿用此參數。
