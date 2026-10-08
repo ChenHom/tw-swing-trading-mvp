@@ -6,7 +6,9 @@ assumption is made. All decisions use the time data reached the collector.
 """
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
@@ -242,16 +244,81 @@ def evaluate(
     }
 
 
+
 def write_report(result: Mapping[str, Any], output_root: Path) -> Path:
+    """Write a small immutable, audit-friendly report bundle.
+
+    Files are never allowed to rewrite different evidence under one experiment
+    id. The caller can publish only after inputs and manifest are frozen.
+    """
     experiment_id = str(result["experiment_id"])
     if not experiment_id.replace("-", "").replace("_", "").isalnum():
         raise ValueError("unsafe experiment id")
     directory = Path(output_root) / experiment_id
     directory.mkdir(parents=True, exist_ok=True)
-    # No direct writes to data/app.db or any existing brokerage ledger.
-    output = directory / "comparison.json"
-    content = json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
-    if output.exists() and output.read_text(encoding="utf-8") != content:
-        raise FileExistsError("immutable experiment result already exists with different data")
-    output.write_text(content, encoding="utf-8")
-    return output
+
+    def json_text(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2,
+                          allow_nan=False) + "\n"
+
+    cohort = list(result["cohort"])
+    csv_out = io.StringIO()
+    headers = [
+        "opportunity_id", "symbol", "exchange", "lot_type", "trading_date",
+        "plan_id", "plan_digest", "signal_source", "split", "status",
+        "baseline_status", "challenger_status", "baseline_ask_x10000",
+        "challenger_ask_x10000", "indicative_delta_bps", "data_health",
+        "fills_assumed", "reason_codes",
+    ]
+    writer = csv.DictWriter(csv_out, fieldnames=headers, extrasaction="ignore")
+    writer.writeheader()
+    for row in cohort:
+        writer.writerow({**row, "reason_codes": "|".join(row["reason_codes"])})
+
+    reasons = [{k: row[k] for k in (
+        "opportunity_id", "symbol", "trading_date", "status", "reason_codes"
+    )} for row in cohort if row["status"] != "PAIRED_INDICATIVE"]
+
+    proof = {
+        "protocol": PROTOCOL, "experiment_id": experiment_id,
+        "manifest_sha256": result["manifest_sha256"],
+        "input_sha256": result["input_sha256"],
+        "count": len(cohort),
+        "disclaimer": result["scope_note"],
+    }
+    summary = (
+        f"# {experiment_id} — Intraday Execution Quality (shadow only)\n\n"
+        f"Verdict: **{result['verdict']}**; no live strategy approval.\n\n"
+        f"Unique opportunities: {result['gate']['unique_opportunities']}; "
+        f"evaluable: {result['gate']['evaluable_opportunities']}; "
+        f"evaluable sessions: {result['gate']['evaluable_days']}; "
+        f"OOS evaluable sessions: {result['gate']['evaluable_oos_days']}.\n\n"
+        f"Paired indicative mean delta (bps): "
+        f"{result['paired_indicative_mean_delta_bps']}.\n\n"
+        f"Status counts: {json.dumps(result['status_counts'], sort_keys=True)}.\n\n"
+        "These are **not actual fills**, net strategy returns, or proof of positive "
+        "expectancy. Include all MISSED / INVALID / INSUFFICIENT_DATA in denominator.\n"
+    )
+
+    content = {
+        "comparison.json": json_text(result),
+        "manifest.json": json_text(result["manifest"]),
+        "cohort.csv": csv_out.getvalue(),
+        "exclusions.jsonl": "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n"
+                                   for row in reasons),
+        "lineage.json": json_text(proof),
+        "comparison.md": summary,
+    }
+    # Check every existing artifact before changing *any* content.
+    for name, text in content.items():
+        path = directory / name
+        if path.exists() and path.read_text(encoding="utf-8") != text:
+            raise FileExistsError(f"immutable experiment artifact mismatch: {name}")
+    for name, text in content.items():
+        path = directory / name
+        if path.exists():
+            continue
+        temp = path.with_suffix(path.suffix + ".tmp")
+        temp.write_text(text, encoding="utf-8")
+        temp.replace(path)
+    return directory / "comparison.json"
