@@ -323,6 +323,10 @@ class ShioajiTickCollector:
         if self.transport.gap_unresolved or self.counters["transport_event_dropped"]:
             if state == "HEALTHY":
                 state = "DEGRADED"
+        elif state == "HEALTHY" and not self.transport.connection_verified:
+            # A successful API subscribe call without a verified quote transport
+            # event is not evidence of a connected market feed.
+            state = "UNVERIFIED"
         return {
             "state": state,
             "quote_event_callback_registered": self.quote_event_callback_registered,
