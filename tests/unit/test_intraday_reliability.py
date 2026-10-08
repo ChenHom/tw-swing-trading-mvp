@@ -202,3 +202,25 @@ def test_unsupported_quote_event_sdk_never_claims_transport_verified(tmp_path):
     assert h["connection_verified"] is False
     assert h["trading_session_verified"] is False
     c.stop()
+
+
+@pytest.mark.parametrize("event_code", [2, 4, 5, 17, 19])
+def test_sdk_error_codes_preserve_auditable_gap(tmp_path, event_code):
+    from src.market_data.intraday_connection import QuoteTransportAudit
+    audit = QuoteTransportAudit(tmp_path, "errors")
+    audit.apply(500, event_code, AT)
+    state = audit.health()
+    assert state["gap_unresolved"] is True
+    assert state["connection_verified"] is False
+    files = list((tmp_path/"shioaji"/"session-events").rglob("*.jsonl"))
+    assert len(files) == 1
+    assert json.loads(files[0].read_text())["event_code"] == event_code
+
+
+def test_locked_raw_journal_refuses_competing_writer(tmp_path):
+    from src.market_data.intraday_storage import raw_file_lock
+    path = tmp_path/"shioaji"/"ticks"/"2026-10-08"/"BOARD"/"2327.jsonl"
+    with raw_file_lock(path):
+        with pytest.raises(ArchiveBusyError):
+            RawTickStore(tmp_path).append(raw_tick())
+    assert not path.exists()
