@@ -91,7 +91,11 @@ def test_broken_timestamp_is_retained_in_unknown_audit_bucket(tmp_path):
     assert next(iter_raw(path))["payload"]["datetime"] == "bogus-date"
     ticks, rejected = replay_ticks(path)
     assert ticks == []
-    assert rejected == {"needs_review": 1}
+    assert rejected == {"symbol_invalid": 1}
+    # When the code itself is valid, a corrupted timestamp gets its own review reason.
+    good_code_bad_time = record(timestamp="bogus-date")
+    separate_path = RawTickStore(tmp_path).append(good_code_bad_time)
+    assert replay_ticks(separate_path)[1] == {"needs_review": 1}
 
 
 def test_exact_timestamp_is_not_an_identity_and_replay_matches(tmp_path):
