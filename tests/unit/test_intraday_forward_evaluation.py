@@ -173,3 +173,28 @@ def test_input_order_deterministic_when_books_have_distinct_received_times():
     a = evaluate(m, [op], [first, later], [event(OPEN+timedelta(seconds=20))], data_health="HEALTHY")
     b = evaluate(m, [op], [later, first], [event(OPEN+timedelta(seconds=20))], data_health="HEALTHY")
     assert a["cohort"] == b["cohort"]
+
+
+def test_foreign_session_confirmations_are_not_accepted():
+    m = manifest()
+    when = OPEN + timedelta(seconds=15)
+    foreign = replace(event(when), collector_session_id="reconnected-session")
+    result = evaluate(m, [opportunity()], [book(), book(when)], [foreign], data_health="HEALTHY")
+    assert result["cohort"][0]["status"] == "MISSED"
+
+
+def test_confirmation_event_occurring_before_entry_decision_is_not_pit_safe():
+    m = manifest()
+    early = event(OPEN - timedelta(seconds=20),
+                  received=OPEN + timedelta(seconds=10))
+    result = evaluate(m, [opportunity()], [book()], [early], data_health="HEALTHY")
+    assert result["cohort"][0]["status"] == "MISSED"
+
+
+def test_quote_from_new_session_is_not_used_to_price_old_confirmation():
+    m = manifest()
+    when = OPEN + timedelta(seconds=20)
+    book_after_reconnect = replace(book(when), collector_session_id="new-session")
+    result = evaluate(m, [opportunity()], [book(), book_after_reconnect],
+                      [event(when)], data_health="HEALTHY")
+    assert result["cohort"][0]["status"] == "MISSED"
