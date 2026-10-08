@@ -1,10 +1,12 @@
 # PR-1 — Tick 即時行情 Collector / Raw / Replay
 
-狀態：DRAFT（D1 / D2 / D3 待確認）
+狀態：DRAFT（D1 / D2 / D3 已確認；其餘全域決策仍待完成）
 依賴：僅依賴既有 repo；PR-2 / PR-3 / PR-4 的前置資料契約
 成功意義：**確實知道盤中成交了什麼、什麼時候知道，以及哪段資料不可靠**；不是增加獲利能力的宣稱。
 
 ## 問題與範圍
+
+**2026-10-08 已確認設計：**Collector 歸屬波段 repo，複用 lab 純函式邏輯，不跨 repo runtime import；訂閱持倉、手動 watchlist、影子候選股，不掃 top-150；整股與零股分開儲存與計算。
 
 現有 src/market_data/provider.py 的 ShioajiMarketDataProvider 以歷史 fetch_kbars 為主，缺少 streaming 事件收集、持續健康狀態、可重播的盤中證據。當沖 lab 的 market_data.py 已有大部分 pure logic，但它的 runtime / command 專屬 lab；先逐項測試後複用算法與 fixtures，不直接 import 另一個 repo 的 src package。
 
