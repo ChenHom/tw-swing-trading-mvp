@@ -7,6 +7,7 @@ on:
       - "src/cli/intraday.py"
       - "src/cli/main.py"
       - "tests/unit/test_intraday_tick_collector.py"
+      - "tests/unit/test_intraday_reliability.py"
       - ".github/workflows/intraday-tick-pr1.yml"
   push:
     branches:
@@ -28,4 +29,4 @@ jobs:
       - name: Compile changed Python files
         run: python -m compileall -q src/market_data/intraday_tick.py src/market_data/intraday_collector.py src/cli/intraday.py src/cli/main.py tests/unit/test_intraday_tick_collector.py
       - name: Isolated offline tests (no broker login, no keys)
-        run: python -m pytest tests/unit/test_intraday_tick_collector.py -q
+        run: python -m pytest tests/unit/test_intraday_tick_collector.py tests/unit/test_intraday_reliability.py -q
