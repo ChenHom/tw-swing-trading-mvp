@@ -11,6 +11,7 @@ import time
 from datetime import date, datetime, time as clock_time
 from pathlib import Path
 
+from src.market_data.intraday_storage import archive_closed_sessions, disk_status, retention_audit
 from src.market_data.intraday_collector import (
     ShioajiTickCollector, build_subscriptions, write_health,
 )
@@ -155,3 +156,29 @@ def cmd_intraday_collect(args) -> None:
             api.logout()
     result = {"mode": "ONE_OFF_READ_ONLY_SMOKE", "scope": sources, "health": collector.health()}
     print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+def cmd_intraday_maintain(args) -> None:
+    """Explicit offline post-close maintenance. No purge and no broker login."""
+    from src.calendar.calendar import ExchangeCalendarsTradingCalendar
+    before = date.fromisoformat(args.before_date)
+    now = datetime.now(TAIPEI)
+    if before > now.date():
+        raise ValueError("cannot rotate before a future trading date")
+    if before == now.date() and now.time() < clock_time(14, 0):
+        raise RuntimeError("refuse to archive intraday file before market close")
+    root = Path(args.cache_dir)
+    calendar = ExchangeCalendarsTradingCalendar()
+    status = disk_status(root, warn_pct=args.warn_pct, stop_pct=args.stop_pct)
+    archival = archive_closed_sessions(root, before_date=before,
+                                       is_trading_day=calendar.is_trading_day)
+    policy = retention_audit(root, as_of=before,
+                             is_trading_day=calendar.is_trading_day,
+                             minimum_sessions=180)
+    print(json.dumps({
+        "mode": "OFFLINE_MAINTENANCE_NO_PURGE", "disk": status,
+        "archive": archival, "retention": policy,
+        "service_scheduled": False, "broker_login": False,
+    }, ensure_ascii=False, indent=2))
+    if archival["blocked"] or status["stop"]:
+        raise RuntimeError("raw maintenance requires review or disk cleanup; no data deleted")
