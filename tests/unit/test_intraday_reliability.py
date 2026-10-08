@@ -159,3 +159,46 @@ def test_raw_archiving_strict_before_date_preserves_today(tmp_path):
     out = archive_closed_sessions(tmp_path, before_date=date(2026, 10, 8),
                                   is_trading_day=lambda d: True)
     assert out["archived"] == [] and path.exists()
+
+
+def test_reconnect_retries_only_failed_subscription_and_does_not_login(tmp_path):
+    class FlakyAPI(FakeQuoteAPI):
+        def __init__(self):
+            super().__init__()
+            self.fail_remaining = 1
+            self.initial = True
+
+        def subscribe(self, contract, *, quote_type, intraday_odd):
+            if not self.initial and self.fail_remaining:
+                self.fail_remaining -= 1
+                raise RuntimeError("temporary quote subscription issue")
+            super().subscribe(contract, quote_type=quote_type, intraday_odd=intraday_odd)
+
+    api = FlakyAPI()
+    c = make_collector(tmp_path, api)
+    c.start()
+    api.initial = False
+    api.event_handler(200, 1, "secret-free", "down")
+    api.event_handler(200, 13, "secret-free", "restored")
+    c.queue.join()
+    h = c.health()
+    assert h["counters"]["resubscribe_error"] == 1
+    assert h["counters"]["resubscribe_success"] == 1
+    assert h["gap_unresolved"] is True
+    assert c.session_id == "test-session-e1"
+    assert not hasattr(api, "login")
+    assert not hasattr(api, "place_order")
+    c.stop()
+
+
+def test_unsupported_quote_event_sdk_never_claims_transport_verified(tmp_path):
+    api = FakeQuoteAPI()
+    api.quote = None
+    c = make_collector(tmp_path, api)
+    c.start()
+    h = c.health()
+    assert not h["quote_event_callback_registered"]
+    assert h["transport_state"] == "UNVERIFIED"
+    assert h["connection_verified"] is False
+    assert h["trading_session_verified"] is False
+    c.stop()
