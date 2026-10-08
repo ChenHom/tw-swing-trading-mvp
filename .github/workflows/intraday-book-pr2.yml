@@ -8,6 +8,7 @@ on:
       - "src/cli/main.py"
       - "tests/unit/test_intraday_book.py"
       - "tests/unit/test_intraday_tick_collector.py"
+      - "tests/unit/test_intraday_reliability.py"
       - ".github/workflows/intraday-book-pr2.yml"
   push:
     branches:
@@ -29,4 +30,4 @@ jobs:
       - name: Compile Python modules
         run: python -m compileall -q src/market_data/intraday_tick.py src/market_data/intraday_book.py src/market_data/intraday_collector.py src/market_data/intraday_observations.py src/cli/intraday.py src/cli/intraday_book.py src/cli/main.py
       - name: Run PR-1 regression and PR-2 offline tests
-        run: python -m pytest tests/unit/test_intraday_tick_collector.py tests/unit/test_intraday_book.py -q
+        run: python -m pytest tests/unit/test_intraday_tick_collector.py tests/unit/test_intraday_book.py tests/unit/test_intraday_reliability.py -q
