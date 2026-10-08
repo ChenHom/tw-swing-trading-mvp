@@ -1,6 +1,6 @@
 # PR-1 — Tick 即時行情 Collector / Raw / Replay
 
-狀態：DRAFT（D1 / D2 / D3 已確認；其餘全域決策仍待完成）
+狀態：DRAFT（D1 / D2 / D3 / D6 已確認；D8–D10 待決）
 依賴：僅依賴既有 repo；PR-2 / PR-3 / PR-4 的前置資料契約
 成功意義：**確實知道盤中成交了什麼、什麼時候知道，以及哪段資料不可靠**；不是增加獲利能力的宣稱。
 
@@ -40,6 +40,14 @@ Raw 不得省略原始 volume、simtrade、suspend、intraday_odd、provider dat
 - 階段失敗：auth 失敗、訂閱被拒、無 heartbeat、queue overflow、raw 寫入失敗、未知 timestamp/volume、行情時段之外、日界/輪盤中重連。
 - 交易時間內 stale 判斷須基於 heartbeat/連線狀態與個股成交特性，不可將低流動性股票「未成交」直接認成 feed 斷線。沒有成交不製造零量 1m bar；盤後正常無行情不是 DEGRADED。
 - fake event replay 要保留是否錯亂、缺洞與 replay cursor，否則無法證明資料品質。
+
+## 已確認：原始資料保存（D6；2026-10-08）
+
+- 交易日 raw Tick 與 BidAsk 寫 append-only JSONL，盤後 gzip 壓縮；壓縮前後記錄事件數、checksum 和資料品質摘要。Replay 須支援 .jsonl / .jsonl.gz。
+- 原始行情至少保留 180 個交易日；未完成裁決的研究來源不得自動刪除。
+- 首週實測每日資料大小、尖峰、壓縮比與磁碟餘裕，據此決定專用磁碟配額。
+- 若使用專用分割區，使用率達 80% 告警、90% 停止收集並標 DEGRADED；與交易 DB 共用時必須使用更保守閘門，不得讓 Collector 耗盡交易用空間。
+- 磁碟不足時安全停止 Collector、保留稽核資料；不得阻斷既有盤後 cron / 資料庫。
 
 ## 測試 / DoD
 
