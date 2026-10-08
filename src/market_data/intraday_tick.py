@@ -108,7 +108,10 @@ def normalize_raw_tick(record: Mapping[str, Any]) -> tuple[MarketTick | None, st
         if not event_time and raw.get("date") and raw.get("time"):
             event_time = f"{raw['date']}T{raw['time']}"
         event_time = _iso_timestamp(event_time)
-        received_at = _iso_timestamp(record["received_at"])
+        received_dt = datetime.fromisoformat(str(record["received_at"]).replace("Z", "+00:00"))
+        if received_dt.tzinfo is None:
+            return None, "received_at_missing_timezone"
+        received_at = received_dt.astimezone(timezone.utc).isoformat()
         if datetime.fromisoformat(event_time).date().isoformat() != record["trading_date"]:
             return None, "date_mismatch"
         price = _price(raw.get("close"))
@@ -148,15 +151,19 @@ def raw_event(
     if stamp.tzinfo is None:
         raise ValueError("received_at must be timezone aware")
     odd = fields["intraday_odd"] is True
-    when = _iso_timestamp(fields.get("datetime") or (
-        f"{fields['date']}T{fields['time']}" if fields.get("date") and fields.get("time") else None
-    ))
+    try:
+        when = _iso_timestamp(fields.get("datetime") or (
+            f"{fields['date']}T{fields['time']}" if fields.get("date") and fields.get("time") else None
+        ))
+    except (ValueError, TypeError):
+        # Broken provider timestamps must remain audit-visible as raw events.
+        when = None
     return {
         "schema_version": VERSION,
         "source": "shioaji",
         "quote_type": "Tick",
         "exchange": str(getattr(exchange, "value", exchange)),
-        "trading_date": datetime.fromisoformat(when).date().isoformat(),
+        "trading_date": (datetime.fromisoformat(when) if when else stamp.astimezone(TAIPEI)).date().isoformat(),
         "lot_type": "ODD" if odd else "BOARD",
         "collector_session_id": session_id,
         "collection_seq": seq,
@@ -169,7 +176,9 @@ def raw_event(
 def tick_path(root: Path, trading_date: str, lot_type: str, symbol: str) -> Path:
     """Ensure paths never escape the configured storage root."""
     date.fromisoformat(trading_date)
-    if lot_type not in LOT_TYPES or not symbol.isascii() or not symbol.isalnum() or len(symbol) > 12:
+    if lot_type not in LOT_TYPES or (symbol != "_invalid" and (
+        not symbol or not symbol.isascii() or not symbol.isalnum() or len(symbol) > 12
+    )):
         raise ValueError("invalid tick path")
     return root / "shioaji" / "ticks" / trading_date / lot_type / f"{symbol}.jsonl"
 
@@ -186,7 +195,7 @@ class RawTickStore:
     def append(self, record: Mapping[str, Any]) -> Path:
         path = tick_path(
             self.root, str(record["trading_date"]), str(record["lot_type"]),
-            str(record["payload"]["code"]),
+            str(record["payload"].get("code") or "_invalid"),
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         usage = shutil.disk_usage(path.parent)
