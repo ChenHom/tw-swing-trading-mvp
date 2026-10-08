@@ -1,6 +1,6 @@
 # PR-1 — Tick 即時行情 Collector / Raw / Replay
 
-狀態：DRAFT（D1 / D2 / D3 / D6 已確認；D8–D10 待決）
+狀態：**SPEC_CONFIRMED / IMPLEMENTATION_PENDING**（D1 / D2 / D3 / D6 / D8 / D9 / D10 均已確認；真實行情 smoke 與日常啟用仍須個別授權）
 依賴：僅依賴既有 repo；PR-2 / PR-3 / PR-4 的前置資料契約
 成功意義：**確實知道盤中成交了什麼、什麼時候知道，以及哪段資料不可靠**；不是增加獲利能力的宣稱。
 
@@ -62,3 +62,12 @@ Raw 不得省略原始 volume、simtrade、suspend、intraday_odd、provider dat
 ## Rollback
 
 預設 feature flag OFF；停 collector / 移除獨立排程即可回復，raw 可留存供分析。不得因資料不可用阻擋原本盤後資料匯入與每日影子流程。
+
+
+## 已確認：部署、訂閱與明確授權（D8–D10；2026-10-08）
+
+- **D8：**以獨立最小權限 `trading-quote-collector.service`（或等效獨立常駐行程）部署，安裝預設 disabled；不得更動 `trading-web.service` 或 15:10 / 15:12 盤後 cron。失敗可隔離、停止、回復。
+- **D9：**交易日曆驅動開盤前啟動與收盤後停止；每日從已知持倉、明確 watchlist、simulation-main 前一盤後候選建立去重、可稽核清單。盤中增減僅經明確 reload；不掃 top-150。訂閱數配額不得預先猜測：須驗證整股/零股、Tick/BidAsk 與 SDK 實際配額後配置。
+- **D10 第一道閘門：**先完成 fake SDK / replay / 安全測試；短時間真實唯讀行情 smoke 需**後續獨立、明確的使用者授權**，記錄環境版本、範圍、開始與結束、資料品質及失敗原因；不載交易 CA、不得呼叫券商交易 API。
+- **D10 第二道閘門：**smoke、磁碟保護、回退、重連驗證合格後，日常 systemd 啟用與交易日收集仍需**再次明確授權**；本次 D8–D10 設計同意不得用來跳過閘門。
+- 安裝說明必須提供 `status` / `stop` / `disable` / 檢查 raw 及 health 的唯讀操作，並測試 Collector 停止不會影響盤後程序。
