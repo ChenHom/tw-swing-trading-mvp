@@ -192,6 +192,10 @@ class ShioajiTickCollector:
                     self.last_error = f"resubscribe: {type(exc).__name__}"
                     break
             self.transport.recovered(ok)
+            if ok:
+                # A new quote epoch must not be matched to pre-disconnect facts
+                # by PR-2 observations or PR-3 research.
+                self.session_id = f"{self.transport.session_id}-e{self.transport.gaps}"
             self.counters["resubscribe_success" if ok else "resubscribe_failed"] += 1
             # Reconnected data still has an unfillable gap until separately reviewed.
             self.state = "DEGRADED"
