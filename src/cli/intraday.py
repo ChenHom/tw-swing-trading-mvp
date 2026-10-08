@@ -18,6 +18,7 @@ from src.market_data.intraday_collector import (
 from src.market_data.intraday_tick import (
     RawTickStore, TAIPEI, build_minute_bars, compress_raw, replay_ticks,
 )
+from src.market_data.intraday_book import RawBookStore
 
 
 def _symbols_from_file(path: str | None) -> list[str]:
@@ -139,6 +140,9 @@ def cmd_intraday_collect(args) -> None:
     collector = ShioajiTickCollector(
         api, subscriptions=specs, quote_type=sj.QuoteType.Tick,
         store=RawTickStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct),
+        book_quote_type=sj.QuoteType.BidAsk if args.with_bidask else None,
+        book_store=RawBookStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct)
+        if args.with_bidask else None,
     )
     status_path = Path(args.cache_dir) / "shioaji" / "collector_health.json"
     try:

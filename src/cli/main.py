@@ -34,6 +34,7 @@ from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
 from src.cli.intraday import cmd_intraday_scope, cmd_intraday_replay, cmd_intraday_compress, cmd_intraday_collect, cmd_intraday_maintain
+from src.cli.intraday_book import cmd_intraday_book_replay
 from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_sync_sector_flow, cmd_market_sync_sector_taxonomy, cmd_market_backfill_tdcc_holdings, cmd_market_validate, cmd_market_build_universe, cmd_market_build_adj
 from src.cli.strategy import cmd_strategy_inspect
 from src.cli.approval import cmd_approval_create, cmd_approval_validate, cmd_approval_activate, cmd_approval_deactivate, cmd_approval_list, cmd_approval_status
@@ -100,6 +101,13 @@ def main():
     parser_tick_replay.add_argument("--input", required=True, help="原始 Tick JSONL/.gz 路徑")
     parser_tick_replay.add_argument("--output", help="JSON 結果檔；省略則輸出 stdout")
 
+    parser_book_replay = market_subs.add_parser("intraday-book-replay", help="離線重播五檔及事前觀察計畫，不連券商")
+    parser_book_replay.add_argument("--books", required=True, help="BidAsk .jsonl 或 .jsonl.gz")
+    parser_book_replay.add_argument("--ticks", help="搭配觀察的 Tick .jsonl 或 .jsonl.gz")
+    parser_book_replay.add_argument("--plan", help="事先固定的 ObservationPlan JSON")
+    parser_book_replay.add_argument("--data-health", default="UNKNOWN", choices=("UNKNOWN", "HEALTHY", "DEGRADED", "FAILED"), help="預設 UNKNOWN、只輸出無結論觀察；HEALTHY 必須有人工確認的 session 品質證據")
+    parser_book_replay.add_argument("--output", help="離線報告輸出 JSON")
+
     parser_tick_compress = market_subs.add_parser("intraday-compress", help="收盤後安全壓縮單一 raw JSONL")
     parser_tick_compress.add_argument("--input", required=True, help="原始 Tick JSONL 路徑")
 
@@ -125,6 +133,7 @@ def main():
     parser_tick_collect.add_argument("--duration-seconds", type=_positive_int, default=15)
     parser_tick_collect.add_argument("--cache-dir", default="data/raw")
     parser_tick_collect.add_argument("--stop-at-disk-pct", type=float, default=75.0)
+    parser_tick_collect.add_argument("--with-bidask", action="store_true", help="需原有雙閘門：同一連線增加五檔行情唯讀訂閱")
 
     parser_validate = market_subs.add_parser("validate", help="驗證資料庫中的日 K 線行情")
     parser_validate.add_argument("--last-sessions", type=int, default=60, help="驗證最近幾筆交易日的行情數據")
@@ -407,6 +416,7 @@ def main():
         ("market", "validate"): cmd_market_validate,
         ("market", "intraday-plan"): cmd_intraday_scope,
         ("market", "intraday-replay"): cmd_intraday_replay,
+        ("market", "intraday-book-replay"): cmd_intraday_book_replay,
         ("market", "intraday-compress"): cmd_intraday_compress,
         ("market", "intraday-maintain"): cmd_intraday_maintain,
         ("market", "intraday-smoke"): cmd_intraday_collect,
