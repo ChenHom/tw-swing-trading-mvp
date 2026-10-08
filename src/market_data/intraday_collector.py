@@ -18,7 +18,7 @@ from typing import Any, Callable, Iterable, Sequence
 from uuid import uuid4
 
 from .intraday_connection import QuoteTransportAudit, register_quote_events
-from .intraday_storage import collector_lease
+from .intraday_storage import ArchiveBusyError, collector_lease
 
 from .intraday_book import (
     BOOK_FIELDS, MarketBook, RawBookStore, normalize_raw_book, raw_book_event,
@@ -330,6 +330,11 @@ class ShioajiTickCollector:
             self.counters["raw_write_error"] += 1
             self.last_error = f"raw: {type(exc).__name__}"
             self.state = "DEGRADED"
+            if isinstance(exc, (OSError, ArchiveBusyError)):
+                # Disk/full/locked archive cannot safely continue consuming
+                # without losing the audit trail. Unsubscribe and exit worker.
+                self.stop_requested.set()
+                self._unsubscribe_all()
             return None
         self.seq += 1
         self.counters["raw_written"] += 1
@@ -367,6 +372,9 @@ class ShioajiTickCollector:
             self.counters["book_raw_write_error"] += 1
             self.last_error = f"book_raw: {type(exc).__name__}"
             self.state = "DEGRADED"
+            if isinstance(exc, (OSError, ArchiveBusyError)):
+                self.stop_requested.set()
+                self._unsubscribe_all()
             return None
         self.seq += 1
         self.counters["book_raw_written"] += 1
