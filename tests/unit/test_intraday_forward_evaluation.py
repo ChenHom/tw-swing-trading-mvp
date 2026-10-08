@@ -205,3 +205,19 @@ def test_renaming_same_economic_opportunity_cannot_inflate_sample():
     b = opportunity(opportunity_id="different-name")
     with pytest.raises(ValueError, match="duplicate economic opportunity"):
         evaluate(manifest(), [a, b], [book()], [], data_health="HEALTHY")
+
+
+def test_bundle_contains_all_audit_artifacts(tmp_path):
+    r = evaluate(manifest(), [opportunity()], [book()], [], data_health="HEALTHY")
+    p = write_report(r, tmp_path)
+    names = {f.name for f in p.parent.iterdir()}
+    assert names == {
+        "comparison.json", "comparison.md", "cohort.csv", "exclusions.jsonl",
+        "manifest.json", "lineage.json",
+    }
+    assert "opp-1" in (p.parent/"cohort.csv").read_text()
+    assert "MISSED" in (p.parent/"exclusions.jsonl").read_text()
+    assert r["input_sha256"] in (p.parent/"lineage.json").read_text()
+    assert r["manifest_sha256"] == __import__("json").loads(
+        (p.parent/"lineage.json").read_text()
+    )["manifest_sha256"]
