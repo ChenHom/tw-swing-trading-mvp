@@ -380,3 +380,21 @@ def test_offline_book_cli_writes_report_without_broker_or_account_db(tmp_path):
             books=str(books), ticks=None, plan=str(planfile),
             data_health="HEALTHY", output=str(output),
         ))
+
+
+def test_observation_identity_changes_when_plan_threshold_changes():
+    tick = canonical_tick(at=BASE + timedelta(seconds=2), close=635.5)
+    plan = ObservationPlan(
+        "same-name", "2327", "TSE", "BOARD", (BASE - timedelta(days=1)).isoformat(),
+        support_low_x10000=6350000, support_high_x10000=6360000,
+    )
+    other = replace(plan, support_low_x10000=6340000)
+    first = [e for e in replay_observations(
+        ticks=[tick], books=[canonical_book()], plan=plan,
+    ) if e.kind == "SUPPORT_TESTED"][0]
+    second = [e for e in replay_observations(
+        ticks=[tick], books=[canonical_book()], plan=other,
+    ) if e.kind == "SUPPORT_TESTED"][0]
+    assert first.plan_id == second.plan_id == "same-name"
+    assert first.plan_digest != second.plan_digest
+    assert first.event_id != second.event_id
