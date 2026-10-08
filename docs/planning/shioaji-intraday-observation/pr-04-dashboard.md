@@ -1,6 +1,6 @@
 # PR-4 — /trading/ 即時觀察唯讀 Dashboard
 
-狀態：DRAFT（D5 尚未確認；PR-1 / PR-2 事件契約為必要前提）
+狀態：DRAFT（D5 已確認；PR-1 / PR-2 事件契約為必要前提）
 目的：讓波段交易者看到盤中價格與五檔依據、資料時間和缺口，**不建立另一個下單入口**。
 
 ## 既有架構與改動範圍
@@ -8,6 +8,10 @@
 repo 已有 src/web/server.py（FastAPI / Jinja，/trading/ 根路徑）、src/application/services/dashboard.py（read side），前端模板在 src/web/templates/，static 在 src/web/static/。依現行主站延伸「盤中觀察」頁或頁籤，無須新的 SPA、broker 連線或額外資料庫服務。
 
 建議新增 src/application/services/intraday_dashboard.py（讀取唯讀資料快照與 observations）、對應的 server 路由、templates/intraday.html、static/intraday.js/css，並在導航顯示連結。頁面資料透過 server 取得；不得從瀏覽器直接拿 API Key 或 Shioaji stream。URL 與 API 契約先寫測試，維持 root_path=/trading 的所有連結正常。
+
+## 已確認：提醒與展示邊界（D5；2026-10-08）
+
+V1 僅在既有 /trading/ Web 顯示 Tick、五檔、觀察事件與 Collector 資料品質；**不新增 Discord / Telegram 盤中逐筆通知**。原有 cron 故障告警保持不變。畫面不得把觀察事件當成經核准的正式買進訊號。
 
 ## 第一版介面內容
 
