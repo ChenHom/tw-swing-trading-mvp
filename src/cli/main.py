@@ -33,6 +33,7 @@ from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
+from src.cli.intraday import cmd_intraday_scope, cmd_intraday_replay, cmd_intraday_compress, cmd_intraday_collect, cmd_intraday_maintain
 from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_sync_sector_flow, cmd_market_sync_sector_taxonomy, cmd_market_backfill_tdcc_holdings, cmd_market_validate, cmd_market_build_universe, cmd_market_build_adj
 from src.cli.strategy import cmd_strategy_inspect
 from src.cli.approval import cmd_approval_create, cmd_approval_validate, cmd_approval_activate, cmd_approval_deactivate, cmd_approval_list, cmd_approval_status
@@ -85,6 +86,45 @@ def main():
     parser_tdcc = market_subs.add_parser("backfill-tdcc-holdings", help="用 TDCC 個股查詢頁回補過去的大戶週快照（只補沒有的日期，一檔一週一次請求）")
     parser_tdcc.add_argument("--dates", required=True, help="TDCC 週資料日，逗號分隔，例如 2026-08-28,2026-09-04")
     parser_tdcc.add_argument("--cache-dir", default="data/raw", help="raw cache 目錄")
+
+    # PR-1: read-only Tick capture; never part of the daily trading loop.
+    parser_tick_scope = market_subs.add_parser("intraday-plan", help="預覽候選訂閱清單，不連 Shioaji")
+    parser_tick_scope.add_argument("--db", default="data/app.db")
+    parser_tick_scope.add_argument("--positions-account", action="append", dest="positions_accounts")
+    parser_tick_scope.add_argument("--watchlist-file", help="JSON 清單或 {symbols: [...]}；手動觀察")
+    parser_tick_scope.add_argument("--candidates-file", help="已知盤後候選的 JSON 檔")
+    parser_tick_scope.add_argument("--symbols", default="", help="逗號分隔的臨時手動觀察股票")
+    parser_tick_scope.add_argument("--max-symbols", type=_positive_int, default=20)
+
+    parser_tick_replay = market_subs.add_parser("intraday-replay", help="離線 replay Tick JSONL 或 JSONL.gz")
+    parser_tick_replay.add_argument("--input", required=True, help="原始 Tick JSONL/.gz 路徑")
+    parser_tick_replay.add_argument("--output", help="JSON 結果檔；省略則輸出 stdout")
+
+    parser_tick_compress = market_subs.add_parser("intraday-compress", help="收盤後安全壓縮單一 raw JSONL")
+    parser_tick_compress.add_argument("--input", required=True, help="原始 Tick JSONL 路徑")
+
+    parser_tick_maintain = market_subs.add_parser(
+        "intraday-maintain", help="手動收盤後 raw 壓縮、容量與 180 個交易日保存稽核；不刪資料"
+    )
+    parser_tick_maintain.add_argument("--cache-dir", default="data/raw")
+    parser_tick_maintain.add_argument("--before-date", required=True, help="YYYY-MM-DD；只壓縮嚴格早於此日的 raw")
+    parser_tick_maintain.add_argument("--warn-pct", type=float, default=80.0)
+    parser_tick_maintain.add_argument("--stop-pct", type=float, default=90.0)
+
+    parser_tick_collect = market_subs.add_parser("intraday-smoke", help="一次性唯讀行情測試，預設封鎖；禁止自動排程")
+    for action in parser_tick_scope._actions:
+        if action.dest in ("db", "positions_accounts", "watchlist_file", "candidates_file", "symbols", "max_symbols"):
+            opts = action.option_strings
+            kwargs = dict(dest=action.dest, default=action.default)
+            if action.dest == "positions_accounts":
+                kwargs["action"] = "append"
+            elif action.dest == "max_symbols":
+                kwargs["type"] = _positive_int
+            parser_tick_collect.add_argument(*opts, **kwargs)
+    parser_tick_collect.add_argument("--enable-live-smoke", action="store_true", help="需另有 INTRADAY_LIVE_SMOKE_APPROVED=yes；未獲人工授權不可用")
+    parser_tick_collect.add_argument("--duration-seconds", type=_positive_int, default=15)
+    parser_tick_collect.add_argument("--cache-dir", default="data/raw")
+    parser_tick_collect.add_argument("--stop-at-disk-pct", type=float, default=75.0)
 
     parser_validate = market_subs.add_parser("validate", help="驗證資料庫中的日 K 線行情")
     parser_validate.add_argument("--last-sessions", type=int, default=60, help="驗證最近幾筆交易日的行情數據")
@@ -365,6 +405,11 @@ def main():
         ("market", "sync-sector-taxonomy"): cmd_market_sync_sector_taxonomy,
         ("market", "backfill-tdcc-holdings"): cmd_market_backfill_tdcc_holdings,
         ("market", "validate"): cmd_market_validate,
+        ("market", "intraday-plan"): cmd_intraday_scope,
+        ("market", "intraday-replay"): cmd_intraday_replay,
+        ("market", "intraday-compress"): cmd_intraday_compress,
+        ("market", "intraday-maintain"): cmd_intraday_maintain,
+        ("market", "intraday-smoke"): cmd_intraday_collect,
         ("strategy", "inspect"): cmd_strategy_inspect,
         ("approval", "create"): cmd_approval_create,
         ("approval", "validate"): cmd_approval_validate,

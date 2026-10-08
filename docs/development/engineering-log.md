@@ -1,3 +1,20 @@
+## 2026-10-08 — PR-1 / PR-2 reliability hardening (offline only)
+
+- 根據 Code Review R1/R2 阻擋項，新增 intraday_connection.py：依 Shioaji 官方 Quote Event code 0/1/2/4/5/12/13/17/19 紀錄連線失敗與資料缺口；SDK 原生處理網路重連，worker 在重連事件後有限次重新訂閱 Tick/可選 BidAsk，同一 session 不再登入。
+- 斷線前後 canonical collector_session_id 加 epoch 後綴，成功重新訂閱仍保留 gap_unresolved 並降級；沒有官方心跳的情況維持 UNVERIFIED，不宣稱資料完整。
+- 新增 intraday_storage.py：Tick/BidAsk 共用 O_APPEND、跨程序 flock、每筆 fsync 的 raw journal；Collector 整段生命週期持有鎖；維護程式不可在 Collector 運作時壓縮；每檔 gzip 驗證 raw JSONL / SHA256 manifest，錯誤不刪除原檔。
+- 新增手動 market intraday-maintain：依 XTAI 交易日壓縮已結束資料、輸出容量 80/90% 檢查與至少 180 交易日 retention audit（永不自動刪研究來源）；真實服務/cron 仍未啟用。
+- 新增 tests/unit/test_intraday_reliability.py，PR-2 補上同一 Collector Tick + BidAsk 重訂及五檔 archive 互斥測試。詳細限制 docs/operations/shioaji-intraday-reliability.md。
+- 仍待使用者額外授權的一次性唯讀 live SDK smoke、長時間負載與實機部署驗證，REJECTED 策略不變。
+## 2026-10-08 — Shioaji Tick Collector PR-1（開發分支；未合併、未上線）
+
+- 依 docs PR #1 的 D1–D10 已確認規格，新增獨立唯讀 Tick collector：`src/market_data/intraday_tick.py`、`intraday_collector.py`、`src/cli/intraday.py`。不取代既有 `ShioajiMarketDataProvider.fetch_kbars`。
+- Quote callback bounded queue、整股/零股分流、append-only raw JSONL、canonical price x10000 / 成交量股、離線 JSONL/.gz replay、1m K、不補零量缺口，並提供一次性 smoke **雙閘門（預設封鎖）**。
+- 原始資料磁碟保護預設更保守 75%， gzip 手動壓縮，最少 180 交易日與前向研究 60/100/20 為已確認規格。此 PR 不設每日服務與排程；後續日常收集仍需獨立授權。
+- 單元測試：`tests/unit/test_intraday_tick_collector.py`；運作文件：`docs/operations/shioaji-intraday-tick-pr1.md`。
+- 離線 GitHub Actions 驗證：2026-10-08 [run #37739061093](https://github.com/ChenHom/tw-swing-trading-mvp/actions/runs/37739061093) 的 Python 3.10 compileall 與單檔 pytest 19 passed；**尚未在實際交易主機執行整套回歸或真實行情 smoke**。
+- 不修改國泰 / simulation-main 策略裁決，不載交易 CA、不下單、不異動 `fills`、`cash_ledger`，亦未修改 systemd 或既有 cron。
+
 # 施工記錄 (Engineering Log)
 
 > 本檔記錄每一次有意義的開發變更：**動哪裡、為什麼要動、會怎麼動、為什麼這樣動、考慮了什麼、優缺點、結果**。
