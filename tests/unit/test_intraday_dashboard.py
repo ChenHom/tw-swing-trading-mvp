@@ -156,3 +156,26 @@ def test_write_snapshot_is_atomic_and_utf8(tmp_path):
     assert p.exists()
     assert not p.with_suffix(".json.tmp").exists()
     assert load_snapshot(p, enabled=True, now=NOW)["schema_version"] == 1
+
+
+def test_untrusted_snapshot_prices_and_arrays_fail_closed(tmp_path):
+    import json
+    p = publish(tmp_path)
+    data = json.loads(p.read_text())
+    data["symbols"][0]["tick"]["price_x10000"] = "not-an-int"
+    data["symbols"][0]["book"]["ask_prices_x10000"] = ["broken"]
+    write_snapshot(p, data)
+    status = load_snapshot(p, enabled=True, now=NOW)
+    assert status["status"] == "OBSERVING"
+    assert status["symbols"][0]["tick"] is None
+    assert status["symbols"][0]["book"] is None
+
+
+def test_future_received_tick_is_never_displayed_as_live(tmp_path):
+    import json
+    p = publish(tmp_path)
+    data = json.loads(p.read_text())
+    data["symbols"][0]["tick"]["received_at"] = (NOW+timedelta(seconds=10)).isoformat()
+    write_snapshot(p, data)
+    status = load_snapshot(p, enabled=True, now=NOW)
+    assert status["symbols"][0]["tick"] is None
