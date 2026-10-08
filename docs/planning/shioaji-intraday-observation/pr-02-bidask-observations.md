@@ -1,6 +1,6 @@
 # PR-2 — BidAsk 五檔與 ObservationEvent
 
-狀態：DRAFT（D3 已確認，整股與零股獨立保存；等待 PR-1 實作資料契約）
+狀態：**SPEC_CONFIRMED / IMPLEMENTATION_PENDING**（D3 / D8 / D9 / D10 設計已確認；等待 PR-1 資料契約及 SDK 實測）
 目的：**觀察價位附近的掛單、成交量與流動性，而非從委買量直接預測價格。**
 
 ## 工程邊界
@@ -41,3 +41,11 @@ event_id（deterministic）、rule_version、symbol、exchange、lot_type、kind
 - replay 相同輸入相同 ObservationEvent；版本改動有差異說明與 fixture 更新。
 - 所有事件只有唯讀副作用；關閉 feature flag 不影響 PR-1 Tick、原 daily run 與既有風控。
 - 盤中真實 smoke 需實際驗證官方 BidAsk 欄位與零股支援；測試不到時列 NOT_VERIFIED，不能假設已可用。
+
+
+## 已確認：與 Collector 共用執行邊界（D8–D10；2026-10-08）
+
+- 使用 PR-1 的獨立、預設 disabled Collector；BidAsk 不另建登入與 systemd service。
+- 按每日候選、持倉、明確 watchlist 去重後訂閱；盤中新增須明確 reload。BOARD/ODD 與 Tick/BidAsk 的實際訂閱上限由 SDK isolated smoke 驗證。
+- 真實五檔 smoke 與每日啟用分別需要額外明確核准；目前僅確認設計，沒有授權任何真實連線。禁止載交易 CA / 下單。
+- 原始 BidAsk 按 D6 每日 gzip 壓縮、至少保留 180 個交易日，磁碟保護與 PR-1 一致。
