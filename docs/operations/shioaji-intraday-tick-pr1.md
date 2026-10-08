@@ -76,4 +76,4 @@ python3 -m compileall -q src/market_data/intraday_tick.py src/market_data/intrad
 \`\`\`
 
 對接 PR-2 前，應特別做：quote 授權拒絕、斷線重訂、緩慢標的無成交 vs 連線中斷、交易日交界、長時間磁碟壓力、同秒多筆真實成交、整股零股混合訂閱、不同 Shioaji 1.7.x 行情欄位、候選清單快照時點。
-目前只建立程式與測試來源，**沒有在使用者真實主機執行測試/行情連線/日常啟用**。
+**離線 CI 已驗證：**[GitHub Actions #37739061093](https://github.com/ChenHom/tw-swing-trading-mvp/actions/runs/37739061093) 的 Python 3.10 compileall 成功、19 項離線 pytest 全數通過。**沒有在使用者真實主機執行全套測試、行情連線或日常啟用**。
