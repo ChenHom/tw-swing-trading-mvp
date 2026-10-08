@@ -152,8 +152,13 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
             # Do not trust a stale Tick or wrong-lot entry just because the snapshot is new.
             if isinstance(tick, dict):
                 try:
-                    if tick.get("symbol") != symbol or tick.get("lot_type") != lot or (
-                        now-_iso(tick["received_at"])).total_seconds() > max_age_seconds:
+                    age_seconds = (now-_iso(tick["received_at"])).total_seconds()
+                    px = tick.get("price_x10000")
+                    vol = tick.get("trade_volume_shares")
+                    if (tick.get("symbol") != symbol or tick.get("lot_type") != lot
+                            or not 0 <= age_seconds <= max_age_seconds
+                            or type(px) is not int or px <= 0
+                            or type(vol) is not int or vol < 0):
                         tick = None
                 except (KeyError, TypeError, ValueError):
                     tick = None
@@ -161,8 +166,17 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
                 tick = None
             if isinstance(book, dict):
                 try:
-                    if book.get("symbol") != symbol or book.get("lot_type") != lot or (
-                        now-_iso(book["received_at"])).total_seconds() > max_age_seconds:
+                    age_seconds = (now-_iso(book["received_at"])).total_seconds()
+                    arrays = [book.get(k) for k in (
+                        "bid_prices_x10000", "ask_prices_x10000",
+                        "bid_volumes_shares", "ask_volumes_shares",
+                    )]
+                    values_ok = all(isinstance(a, list) and len(a) == 5 and all(
+                        v is None or (type(v) is int and v >= 0) for v in a
+                    ) for a in arrays)
+                    if (book.get("symbol") != symbol or book.get("lot_type") != lot
+                            or not 0 <= age_seconds <= max_age_seconds
+                            or not values_ok):
                         book = None
                 except (KeyError, TypeError, ValueError):
                     book = None
