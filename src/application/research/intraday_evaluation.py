@@ -128,7 +128,7 @@ def _row(candidate: Opportunity, books: list[MarketBook], events: list[Observati
     if data_health != "HEALTHY":
         result["reason_codes"].append("SESSION_NOT_VERIFIED")
         return result
-    if _datetime(candidate.known_at) > _datetime(manifest.frozen_at):
+    if _datetime(candidate.known_at) < _datetime(manifest.frozen_at):
         # Manifest must be registered before its first observed opportunity.
         result["status"] = "INVALID"
         result["reason_codes"].append("MANIFEST_NOT_PREREGISTERED")
