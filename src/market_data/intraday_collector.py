@@ -16,6 +16,8 @@ from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Sequence
 from uuid import uuid4
 
+from .intraday_connection import QuoteTransportAudit, register_quote_events
+
 from .intraday_tick import (
     FIELDS, LOT_TYPES, MarketTick, RawTickStore, normalize_raw_tick, raw_event,
 )
@@ -95,6 +97,8 @@ class ShioajiTickCollector:
         self.last_received_at: str | None = None
         self.last_event_at: str | None = None
         self._fatal = False
+        self.transport = QuoteTransportAudit(self.store.root, self.session_id)
+        self.quote_event_callback_registered = False
 
     def _on_tick(self, exchange: Any, tick: Any) -> None:
         """SDK callback: bounded, nonblocking, no disk writes."""
@@ -109,6 +113,62 @@ class ShioajiTickCollector:
             self.queue.put_nowait((exchange, snapshot, received_at))
         except Full:
             self.counters["queue_dropped"] += 1
+
+    def _on_quote_event(self, response_code: int, event_code: int, info: str, event: str) -> None:
+        """SDK event callback does not resubscribe, block or persist on callback thread."""
+        if self.stop_requested.is_set() or self.state in ("FAILED", "CLOSED"):
+            return
+        try:
+            code = int(event_code)
+            response = int(response_code)
+            if code not in (0, 1, 12, 13):
+                return
+            self._enqueue_transport_event(response, code, datetime.now(timezone.utc))
+        except (ValueError, TypeError):
+            self.counters["malformed_transport_event"] += 1
+            self.state = "DEGRADED"
+
+    def _enqueue_transport_event(self, response: int, code: int, received: datetime) -> None:
+        try:
+            self.queue.put_nowait(self._transport_queue_item(response, code, received))
+        except Full:
+            self.counters["transport_event_dropped"] += 1
+            self.state = "DEGRADED"
+
+    def _handle_transport_event(self, response: int, code: int, received: datetime) -> None:
+        try:
+            should_recover = self.transport.apply(response, code, received)
+        except (OSError, ValueError) as exc:
+            self.counters["transport_audit_error"] += 1
+            self.last_error = f"transport_audit: {type(exc).__name__}"
+            self.state = "DEGRADED"
+            return
+        if code in (1, 12):
+            self.state = "DEGRADED"
+            self.counters["transport_gap_events"] += 1
+        if should_recover and not self.stop_requested.is_set():
+            ok = True
+            for contract, sub, quote_type in list(self._active_topics()):
+                try:
+                    # No login/CA/order. SDK already handles transport reconnect;
+                    # we refresh subscriptions ONLY after event 13.
+                    self.api.subscribe(contract, quote_type=quote_type,
+                                       intraday_odd=(sub.lot_type == "ODD"))
+                except Exception as exc:
+                    ok = False
+                    self.counters["resubscribe_error"] += 1
+                    self.last_error = f"resubscribe: {type(exc).__name__}"
+                    break
+            self.transport.recovered(ok)
+            self.counters["resubscribe_success" if ok else "resubscribe_failed"] += 1
+            # Reconnected data still has an unfillable gap until separately reviewed.
+            self.state = "DEGRADED"
+
+    def _active_topics(self):
+        raise NotImplementedError
+
+    def _transport_queue_item(self, response: int, code: int, received: datetime):
+        raise NotImplementedError
 
     def _contract(self, symbol: str) -> Any:
         contracts = getattr(self.api, "contracts", None)
@@ -130,6 +190,7 @@ class ShioajiTickCollector:
             raise TypeError("Tick callback API unavailable")
         self.state = "CONNECTING"
         try:
+            self.quote_event_callback_registered = register_quote_events(self.api, self._on_quote_event)
             self.api.on_tick_stk_v1()(self._on_tick)
             for sub in self.subscriptions:
                 contract = self._contract(sub.symbol)
@@ -146,6 +207,12 @@ class ShioajiTickCollector:
             self._unsubscribe_all()
             self.state = "FAILED"
             raise
+
+    def _active_topics(self):
+        return [(contract, sub, self.quote_type) for contract, sub in self.active]
+
+    def _transport_queue_item(self, response: int, code: int, received: datetime):
+        return ("__transport__", (response, code), received)
 
     def _unsubscribe_all(self) -> None:
         for contract, sub in reversed(self.active):
@@ -167,7 +234,10 @@ class ShioajiTickCollector:
                 except Empty:
                     continue
                 try:
-                    self.process(exchange, tick, received_at=received_at)
+                    if exchange == "__transport__":
+                        self._handle_transport_event(tick[0], tick[1], received_at)
+                    else:
+                        self.process(exchange, tick, received_at=received_at)
                 finally:
                     self.queue.task_done()
         except BaseException as exc:
@@ -223,8 +293,13 @@ class ShioajiTickCollector:
             "queue_dropped", "raw_write_error", "sink_error", "unsubscribe_error"
         )):
             state = "DEGRADED"
+        if self.transport.gap_unresolved or self.counters["transport_event_dropped"]:
+            if state == "HEALTHY":
+                state = "DEGRADED"
         return {
             "state": state,
+            "quote_event_callback_registered": self.quote_event_callback_registered,
+            **self.transport.health(),
             "session_id": self.session_id,
             "subscriptions": len(self.subscriptions),
             "queue_depth": self.queue.qsize(),
@@ -237,8 +312,8 @@ class ShioajiTickCollector:
     def stop(self, *, join_timeout: float = 10.0) -> dict[str, Any]:
         if self.state == "DISABLED":
             return self.health()
-        self._unsubscribe_all()
         self.stop_requested.set()
+        self._unsubscribe_all()
         if self.worker is not None:
             self.worker.join(timeout=join_timeout)
             if self.worker.is_alive():
