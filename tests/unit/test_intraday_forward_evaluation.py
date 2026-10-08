@@ -71,7 +71,7 @@ def test_successful_pair_is_indicative_not_fill():
 
 def test_rejected_and_missed_are_kept_in_denominator():
     m = manifest()
-    items = [opportunity(), opportunity(opportunity_id="opp-2")]
+    items = [opportunity(), opportunity(opportunity_id="opp-2", plan_id="p2")]
     result = evaluate(m, items, [book()], [], data_health="HEALTHY")
     assert result["status_counts"]["MISSED"] == 2
     assert len(result["cohort"]) == 2
