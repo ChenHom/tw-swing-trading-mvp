@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}盤中觀察（唯讀） · 台股波段交易{% endblock %}
+{% block content %}
+<section class="intraday-head">
+  <div>
+    <h1>盤中行情觀察</h1>
+    <p class="hint">僅供研究、資料品質與交易執行觀察；不是買進或賣出訊號，也不代表已成交。</p>
+  </div>
+  <a class="btn" href="{{ base }}/intraday">重新整理</a>
+</section>
+
+<div class="card intraday-status" role="status" aria-live="polite">
+  <strong>Collector：{{ intraday.status }}</strong>
+  <span>市場時段：{{ intraday.market_session }}</span>
+  <span>資料狀態：{{ intraday.freshness }}</span>
+  <span>快照產生：{{ intraday.generated_at or '尚無資料' }}</span>
+  <span>最近連線心跳：{{ intraday.last_heartbeat_at or '尚未驗證' }}</span>
+</div>
+
+{% if intraday.status == "DISABLED" %}
+<p class="alert">盤中觀察目前未啟用。未經獨立核准，不會連接永豐行情或啟用自動收集。</p>
+{% elif intraday.status != "OBSERVING" %}
+<p class="alert">行情未驗證、已過期或 Collector 已停止；已隱藏可誤認為即時報價的價格。資料僅供事後稽核。</p>
+{% endif %}
+
+{% for item in intraday.symbols %}
+<section class="card intraday-symbol">
+  <h2>{{ item.symbol }} <span class="tag-muted">{{ item.exchange }} / {{ item.lot_type }}</span></h2>
+  <p class="hint">狀態：{{ item.freshness }} · 整股與零股分開計算，五檔只代表可見委託。</p>
+  <div class="intraday-layout">
+    <div>
+      <h3>成交 Tick</h3>
+      {% if item.tick %}
+      <p><strong>{{ '%.4f'|format(item.tick.price_x10000 / 10000) }} 元</strong></p>
+      <p>本筆 {{ item.tick.trade_volume_shares }} 股；成交時間 {{ item.tick.event_time }}</p>
+      <p>收到時間 {{ item.tick.received_at }}</p>
+      {% else %}
+      <p>—（無可信的當前成交價）</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>五檔（股）</h3>
+      {% if item.book %}
+      <table class="intraday-book">
+        <thead><tr><th>委買量</th><th>買價</th><th>賣價</th><th>委賣量</th></tr></thead>
+        <tbody>
+        {% for i in range(5) %}
+          <tr>
+            <td>{{ item.book.bid_volumes_shares[i] if item.book.bid_volumes_shares[i] is not none else '—' }}</td>
+            <td>{{ '%.4f'|format(item.book.bid_prices_x10000[i] / 10000) if item.book.bid_prices_x10000[i] is not none else '—' }}</td>
+            <td>{{ '%.4f'|format(item.book.ask_prices_x10000[i] / 10000) if item.book.ask_prices_x10000[i] is not none else '—' }}</td>
+            <td>{{ item.book.ask_volumes_shares[i] if item.book.ask_volumes_shares[i] is not none else '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if item.metrics %}
+      <p class="hint">可見量失衡 {{ '%.1f'|format(item.metrics.imbalance_bps / 100) ~ '%' if item.metrics.imbalance_bps is not none else '無結論' }}，並非市場買超</p>
+      {% endif %}
+      {% else %}
+      <p>—（五檔資料過期或尚未核實）</p>
+      {% endif %}
+    </div>
+  </div>
+  <h3>盤中觀察事件（不是委託）</h3>
+  {% if item.observations %}
+    <ul>
+    {% for ev in item.observations %}
+      <li>{{ ev.event_time }} · {{ ev.kind }} · {{ ev.status }} · {{ ev.rule_version }} · {{ ev.reason_codes|join(', ') }}</li>
+    {% endfor %}
+    </ul>
+  {% else %}
+    <p>無可用觀察事件。</p>
+  {% endif %}
+</section>
+{% else %}
+<div class="card"><p>尚無訂閱的盤中觀察標的，或尚未產生唯讀快照。</p></div>
+{% endfor %}
+
+<p class="hint">本頁每 30 秒讀取一次本機快照；不向券商請求行情。資料更新需由獨立、已核准的 Collector 產生快照；僅開啟此頁不會啟動 Collector。</p>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  // GET-only polling. No credentials, trading buttons or direct Shioaji API access.
+  window.setInterval(function () {
+    if (!document.hidden) window.location.reload();
+  }, 30000);
+})();
+</script>
+{% endblock %}
