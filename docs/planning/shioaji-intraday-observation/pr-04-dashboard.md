@@ -1,6 +1,6 @@
 # PR-4 — /trading/ 即時觀察唯讀 Dashboard
 
-狀態：DRAFT（D5 已確認；PR-1 / PR-2 事件契約為必要前提）
+狀態：**SPEC_CONFIRMED / IMPLEMENTATION_PENDING**（D5 / D8 / D9 / D10 已確認；PR-1 / PR-2 資料契約為必要前提）
 目的：讓波段交易者看到盤中價格與五檔依據、資料時間和缺口，**不建立另一個下單入口**。
 
 ## 既有架構與改動範圍
@@ -48,3 +48,10 @@ GET /api/intraday/status → collector status、last heartbeat、disabled / stal
 ## 回退
 
 功能旗標關閉後回到既有儀表板。保留 PR-1/PR-2 原始資料，無需資料庫 schema rollback；不動既有交易排程。
+
+
+## 已確認：部署隔離與使用方式（D8–D10；2026-10-08）
+
+- 既有 `trading-web.service` 只讀取 PR-1 / PR-2 Collector 產出的快照與事件，不能自行啟動 Collector、登入 Shioaji 或新增/解除訂閱。
+- Collector 獨立且安裝預設 disabled，日常行情未核准或休市時介面顯示 DISABLED / CLOSED / 已收盤，不將上次快照標成即時報價。
+- 第一期只在 Web 顯示，不新增 Discord / Telegram 市場事件通知；Collector 安裝、真實行情 smoke、每日自動蒐集均須遵守 D10 閘門。
