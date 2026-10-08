@@ -23,6 +23,7 @@ from src.portfolio.db import get_db_connection
 from src.portfolio.projection import PortfolioProjection
 from src.market_data.repository import SqliteMarketBarRepository
 from src.application.services import dashboard as dash
+from src.application.services import intraday_dashboard as intraday
 from src.application.services import llm_advisor
 from src.strategy import registry as strategy_registry
 
@@ -32,6 +33,7 @@ BASE_DIR = Path(__file__).resolve().parent
 ROOT_PATH = os.environ.get("TRADING_WEB_ROOT_PATH", "/trading")
 # 族群資金頁籤資料（由 report sector-flow-dashboard 產生）；放常數讓測試可 monkeypatch。
 SECTOR_FLOW_PATH = BASE_DIR.parents[1] / "data" / "sector_flow" / "dashboard.json"
+INTRADAY_SNAPSHOT_PATH = BASE_DIR.parents[1] / "data" / "intraday" / "dashboard.json"
 
 app = FastAPI(title="台股波段交易儀表板", root_path=ROOT_PATH)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -172,6 +174,54 @@ def sector_flow():
         return JSONResponse({"error": "尚無族群資金資料，等平日 22:00 排程產生"}, status_code=404)
     return Response(body, media_type="application/json")
 
+
+
+
+def _intraday_read():
+    """No application trading DB, Shioaji SDK or broker login on read routes."""
+    enabled = os.environ.get("INTRADAY_DASHBOARD_ENABLED", "0") == "1"
+    return intraday.load_snapshot(INTRADAY_SNAPSHOT_PATH, enabled=enabled)
+
+
+@app.get("/intraday", response_class=HTMLResponse)
+def intraday_page(request: Request):
+    data = _intraday_read()
+    return templates.TemplateResponse(request, "intraday.html", {"intraday": data})
+
+
+@app.get("/api/intraday/status")
+def intraday_status():
+    data = _intraday_read()
+    return {
+        "schema_version": 1, "status": data["status"],
+        "market_session": data["market_session"], "freshness": data["freshness"],
+        "generated_at": data["generated_at"], "last_heartbeat_at": data["last_heartbeat_at"],
+        "not_trade_signal": True,
+    }
+
+
+@app.get("/api/intraday/symbols")
+def intraday_symbols():
+    data = _intraday_read()
+    return {"status": data["status"], "symbols": [
+        {"symbol": r["symbol"], "exchange": r["exchange"], "lot_type": r["lot_type"],
+         "freshness": r["freshness"]} for r in data["symbols"]
+    ]}
+
+
+@app.get("/api/intraday/{symbol}/snapshot")
+def intraday_symbol_snapshot(symbol: str, lot_type: str = Query("BOARD")):
+    if lot_type not in intraday.LOT_TYPES:
+        return JSONResponse({"error": "invalid lot_type"}, status_code=422)
+    data = _intraday_read()
+    item = intraday.find_symbol(data, symbol, lot_type)
+    if item is None:
+        return JSONResponse({"error": "symbol not found or disabled"}, status_code=404)
+    return {
+        "schema_version": 1, "status": data["status"], "freshness": item["freshness"],
+        "generated_at": data["generated_at"], "not_trade_signal": True,
+        "symbol": item,
+    }
 
 @app.get("/healthz", response_class=PlainTextResponse)
 def healthz():
