@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from .intraday_storage import append_raw
 
-RECONNECT_CODES = frozenset((1, 12, 13))
+RECONNECT_CODES = frozenset((1, 2, 4, 5, 12, 13, 17, 19))
 
 
 def register_quote_events(api: Any, callback: Callable[[int, int, str, str], None]) -> bool:
@@ -49,7 +49,7 @@ class QuoteTransportAudit:
             raise ValueError("transport timestamp must have timezone")
         when = at.astimezone(timezone.utc).isoformat()
         old = self.transport_state
-        if event_code in (1, 12):
+        if event_code in (1, 2, 4, 5, 12, 17, 19):
             self.transport_state = "RECONNECTING" if event_code == 12 else "DOWN"
             self.connection_verified = False
             self.resubscribe_required = True
