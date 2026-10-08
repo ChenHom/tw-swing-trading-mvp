@@ -172,9 +172,12 @@ class ShioajiTickCollector:
         """Public for deterministic fake-SDK testing. Never called by SDK directly."""
         symbol = str(getattr(tick, "code", "") or "")
         lot = "ODD" if getattr(tick, "intraday_odd", False) is True else "BOARD"
-        if Subscription(symbol, lot) not in self.scope:
-            self.counters["outside_scope"] += 1
-            return None
+        # Unparseable SDK events still go to a raw audit bucket; ignore only
+        # well-formed but unsubscribed symbols (another listener can share the callback).
+        if symbol and symbol.isascii() and symbol.isalnum() and len(symbol) <= 12:
+            if (symbol, lot) not in {(s.symbol, s.lot_type) for s in self.scope}:
+                self.counters["outside_scope"] += 1
+                return None
         try:
             record = raw_event(
                 exchange, tick, session_id=self.session_id,
