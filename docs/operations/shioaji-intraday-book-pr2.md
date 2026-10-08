@@ -49,6 +49,8 @@ python3 -m app market intraday-book-replay \
 
 不能事後看當日最低價才挑支撐，不能讓已落後的 BidAsk 當確認依據。
 
+**研究品質預設 fail-closed：**離線 CLI 的 `--data-health` 預設 `UNKNOWN`，因此未取得資料完整性證據時，只能輸出 `INCONCLUSIVE`，不得做支撐守住／突破確認。經核對收集器 session 品質後才可顯式指定 `--data-health HEALTHY`；這是研究證據標記而不是自動判斷。缺少買方或賣方整側時，五檔 imbalance 為 `null`，不得當成 100% 買賣盤。
+
 ## Live smoke：雙閘門未核准
 
 PR-1 的 \`market intraday-smoke\` 新增可選 \`--with-bidask\`，表示在**同一帳號、同一 Collector** 訂閱 Tick 與 BidAsk；仍須滿足 PR-1 的開關、盤中與 1–60 秒限制。這次**沒有執行**，亦未啟動 CA、任何交易功能、systemd 或 daily cron。
