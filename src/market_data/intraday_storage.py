@@ -140,6 +140,13 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+@contextmanager
+def collector_lease(root: Path) -> Iterator[None]:
+    """Exclusive lease held for the full lifetime of a Collector or maintenance run."""
+    with raw_file_lock(Path(root) / "shioaji" / "collector-active"):
+        yield
+
+
 def archive_closed_sessions(
     root: Path, *, before_date: date,
     is_trading_day: Callable[[date], bool],
@@ -152,15 +159,18 @@ def archive_closed_sessions(
     root = Path(root)
     processed: list[dict[str, Any]] = []
     blocked: list[dict[str, str]] = []
-    for stream in ("ticks", "bidask"):
-        for path in sorted((root / "shioaji" / stream).glob("*/*/*.jsonl")):
-            try:
-                day = date.fromisoformat(path.parent.parent.name)
-                if day >= before_date or not is_trading_day(day):
-                    continue
-                processed.append(compress_raw(path))
-            except (ArchiveBusyError, FileExistsError, ValueError, OSError) as exc:
-                blocked.append({"file": str(path), "error": type(exc).__name__})
+    # No intermittent writer can reopen yesterday's raw file between appends.
+    # A running Collector owns this lease until its worker has joined.
+    with collector_lease(root):
+        for stream in ("ticks", "bidask"):
+            for path in sorted((root / "shioaji" / stream).glob("*/*/*.jsonl")):
+                try:
+                    day = date.fromisoformat(path.parent.parent.name)
+                    if day >= before_date or not is_trading_day(day):
+                        continue
+                    processed.append(compress_raw(path))
+                except (ArchiveBusyError, FileExistsError, ValueError, OSError) as exc:
+                    blocked.append({"file": str(path), "error": type(exc).__name__})
     return {"archived": processed, "blocked": blocked,
             "archives_retained": True, "pruned": 0}
 
@@ -174,10 +184,14 @@ def retention_audit(
         raise ValueError("market raw retention may not be shorter than 180 sessions")
     count = 0
     cursor = as_of
+    days_scanned = 0
     while count < minimum_sessions:
+        if days_scanned > minimum_sessions * 5:
+            raise ValueError("calendar unavailable; refuse retention classification")
         if is_trading_day(cursor):
             count += 1
         cursor = date.fromordinal(cursor.toordinal() - 1)
+        days_scanned += 1
     earliest_kept = date.fromordinal(cursor.toordinal() + 1)
     eligible = []
     for stream in ("ticks", "bidask"):
