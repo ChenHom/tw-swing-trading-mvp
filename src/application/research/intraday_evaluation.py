@@ -270,7 +270,7 @@ def write_report(result: Mapping[str, Any], output_root: Path) -> Path:
         "challenger_ask_x10000", "indicative_delta_bps", "data_health",
         "fills_assumed", "reason_codes",
     ]
-    writer = csv.DictWriter(csv_out, fieldnames=headers, extrasaction="ignore")
+    writer = csv.DictWriter(csv_out, fieldnames=headers, extrasaction="ignore", lineterminator="\n")
     writer.writeheader()
     for row in cohort:
         writer.writerow({**row, "reason_codes": "|".join(row["reason_codes"])})
