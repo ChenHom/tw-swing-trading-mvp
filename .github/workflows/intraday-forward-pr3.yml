@@ -1,0 +1,26 @@
+name: PR-3 Intraday Forward Study (offline)
+on:
+  push:
+    branches: [feat/shioaji-forward-evaluation-pr3]
+  pull_request:
+    paths:
+      - "src/application/research/intraday_evaluation.py"
+      - "scripts/intraday_forward_eval.py"
+      - "tests/unit/test_intraday_forward_evaluation.py"
+      - ".github/workflows/intraday-forward-pr3.yml"
+permissions:
+  contents: read
+jobs:
+  research-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: python -m pip install pytest
+      - name: Compile offline research code
+        run: python -m compileall -q src/application/research/intraday_evaluation.py scripts/intraday_forward_eval.py
+      - name: Offline study and baseline regressions
+        run: python -m pytest tests/unit/test_intraday_forward_evaluation.py tests/unit/test_intraday_book.py tests/unit/test_intraday_tick_collector.py -q
