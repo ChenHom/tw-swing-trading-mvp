@@ -132,8 +132,10 @@ def test_duplicate_opportunity_rejected():
 
 def test_minimum_60_100_20_forward_gate_is_not_strategy_approval():
     cohort = []
-    for day in range(60):
-        trading_day = (datetime(2026, 8, 1, tzinfo=TAIPEI) + timedelta(days=day)).date()
+    sessions = [(datetime(2026, 10, 8, tzinfo=TAIPEI) + timedelta(days=day)).date()
+                for day in range(100)]
+    sessions = [day for day in sessions if day.weekday() < 5][:60]
+    for day, trading_day in enumerate(sessions):
         for n in range(2 if day < 40 else 1):
             cohort.append(opportunity(
                 opportunity_id=f"opp-{day}-{n}", trading_date=trading_day.isoformat(),
