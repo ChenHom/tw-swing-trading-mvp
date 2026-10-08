@@ -149,7 +149,8 @@ def test_minimum_60_100_20_forward_gate_is_not_strategy_approval():
     assert r["gate"]["unique_opportunities"] == 100
     assert r["gate"]["oos_days"] == 20
     assert sum(row["split"] == "OOS" for row in r["cohort"]) == 20
-    assert r["verdict"] == "ELIGIBLE_FOR_MANUAL_REVIEW"
+    assert r["verdict"] == "EVIDENCE_PENDING"  # 100 candidates without data are not 100 valid observations
+    assert r["gate"]["evaluable_opportunities"] == 0
     assert all(row["status"] == "INSUFFICIENT_DATA" for row in r["cohort"])
     assert r["scope_note"].startswith("Quote-level")
 
