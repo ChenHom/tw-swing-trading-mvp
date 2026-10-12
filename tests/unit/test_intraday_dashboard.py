@@ -402,3 +402,34 @@ def test_snapshot_publisher_rejects_invalid_interval_and_non_json_output(tmp_pat
         IntradaySnapshotPublisher(tmp_path / "state.json", interval_seconds=0)
     with pytest.raises(ValueError):
         IntradaySnapshotPublisher(tmp_path / "state.jsonl", interval_seconds=5)
+
+
+def test_offline_builder_combines_four_board_odd_raw_files(tmp_path):
+    import json
+    from scripts.build_intraday_dashboard import run
+    from tests.unit.test_intraday_p0_p1 import four_fixture_files
+
+    root = tmp_path / "raw"
+    four_fixture_files(root)
+    health_path = tmp_path / "health.json"
+    health_path.write_text(json.dumps({
+        "state": "CLOSED", "session_id": "smoke-s1",
+        "transport_verification_status": "UNVERIFIED",
+        "data_quality_status": "UNVERIFIED",
+        "market_completeness_status": "UNVERIFIED",
+    }), encoding="utf-8")
+    date_part = "2026-10-12"
+    ticks = [root / "shioaji" / "ticks" / date_part / lot / "2327.jsonl"
+             for lot in ("BOARD", "ODD")]
+    books = [root / "shioaji" / "bidask" / date_part / lot / "2327.jsonl"
+             for lot in ("BOARD", "ODD")]
+    dest = tmp_path / "preview.json"
+    result = run(ticks_file=ticks, books_file=books,
+                 health_file=health_path, output=dest)
+    assert result["symbols"] == 2
+    rows = load_snapshot(dest, enabled=True, include_history=True,
+                         now=datetime(2026, 10, 13, 10, 0, tzinfo=TZ))
+    assert rows["status"] == "CLOSED"
+    assert {r["lot_type"] for r in rows["symbols"]} == {"BOARD", "ODD"}
+    assert all(r["tick"] is None and r["book"] is None for r in rows["symbols"])
+    assert all(r["reference_tick"] and r["reference_book"] for r in rows["symbols"])
