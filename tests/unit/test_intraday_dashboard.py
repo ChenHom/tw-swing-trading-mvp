@@ -306,3 +306,99 @@ def test_offline_raw_to_publisher_to_web_fails_closed_with_actual_collector_heal
     assert displayed["symbols"][0]["tick"] is None
     assert displayed["symbols"][0]["book"] is None
     assert displayed["symbols"][0]["observations"] == []
+
+
+def test_opt_in_historical_reference_is_not_a_live_quote(tmp_path):
+    path = publish(tmp_path, health_state=health(
+        state="CLOSED", transport_verification_status="UNVERIFIED",
+        connection_verified=False, data_quality_status="UNVERIFIED",
+        market_completeness_status="UNVERIFIED",
+        last_heartbeat_at=None, trading_session_verified=False,
+    ))
+    hidden = load_snapshot(path, enabled=True, now=NOW)
+    assert hidden["status"] == "CLOSED"
+    assert hidden["symbols"][0]["reference_tick"] is None
+    visible = load_snapshot(path, enabled=True, include_history=True,
+                            now=NOW + timedelta(days=2))
+    assert visible["status"] == "CLOSED"
+    assert visible["display_mode"] == "HISTORICAL_REFERENCE"
+    row = visible["symbols"][0]
+    assert row["tick"] is None and row["book"] is None
+    assert row["reference_tick"]["price_x10000"] == 6375000
+    assert row["reference_book"]["bid_volumes_shares"][0] == 3000
+    assert row["reference_label"] == "HISTORICAL_UNVERIFIED_NOT_LIVE"
+    assert visible["not_trade_signal"] is True
+
+
+def test_snapshot_publisher_throttles_atomic_writes_and_final_closed_state(tmp_path):
+    import json
+    from src.application.services.intraday_snapshot_publisher import IntradaySnapshotPublisher
+
+    path = tmp_path / "projected.json"
+    pub = IntradaySnapshotPublisher(path, interval_seconds=5)
+    pub.on_tick(tick())
+    pub.on_book(book())
+    assert pub.publish(health(), at=NOW)
+    before = path.read_bytes()
+    assert pub.publish(health(state="CLOSED"), at=NOW, force=False) is False
+    assert path.read_bytes() == before
+
+    assert pub.publish(health(state="CLOSED"), at=NOW, force=True)
+    doc = json.loads(path.read_text())
+    assert doc["collector_health"]["state"] == "CLOSED"
+    assert doc["capture_verified_for_live_trading"] is False
+    assert doc["snapshot_mode"] == "READ_ONLY_CAPTURE"
+    assert not path.with_suffix(".json.tmp").exists()
+    screen = load_snapshot(path, enabled=True, now=NOW, include_history=True)
+    assert screen["status"] == "CLOSED"
+    assert screen["symbols"][0]["tick"] is None
+    assert screen["symbols"][0]["reference_book"] is not None
+
+
+def test_snapshot_publisher_reconnect_epoch_never_reuses_previous_session(tmp_path):
+    import json
+    from src.application.services.intraday_snapshot_publisher import IntradaySnapshotPublisher
+
+    path = tmp_path / "projected.json"
+    pub = IntradaySnapshotPublisher(path, interval_seconds=1)
+    pub.on_tick(tick())
+    pub.on_book(book())
+    pub.publish(health(session_id="new-epoch", state="DEGRADED"), force=True, at=NOW)
+    document = json.loads(path.read_text())
+    assert document["symbols"] == []
+    assert document["collector_health"]["session_id"] == "new-epoch"
+
+    from dataclasses import replace
+    pub.on_tick(replace(tick(), collector_session_id="new-epoch", collection_seq=22))
+    pub.publish(health(session_id="new-epoch", state="DEGRADED"), force=True, at=NOW)
+    document = json.loads(path.read_text())
+    assert len(document["symbols"]) == 1
+    assert document["symbols"][0]["book"] is None
+    assert document["symbols"][0]["tick"]["collector_session_id"] == "new-epoch"
+
+
+def test_historical_reference_rejects_future_wrong_session_and_crossed_book(tmp_path):
+    import json
+    path = publish(tmp_path, health_state=health(state="CLOSED"))
+    data = json.loads(path.read_text())
+    data["symbols"][0]["tick"]["collector_session_id"] = "wrong-session"
+    data["symbols"][0]["book"]["ask_prices_x10000"][0] = 6000000
+    write_snapshot(path, data)
+    row = load_snapshot(path, enabled=True, now=NOW,
+                        include_history=True)["symbols"][0]
+    assert row["reference_tick"] is None
+    assert row["reference_book"] is None
+    data["symbols"][0]["tick"]["collector_session_id"] = "snapshot-session"
+    data["symbols"][0]["tick"]["received_at"] = (NOW + timedelta(minutes=1)).isoformat()
+    write_snapshot(path, data)
+    row = load_snapshot(path, enabled=True, now=NOW,
+                        include_history=True)["symbols"][0]
+    assert row["reference_tick"] is None
+
+
+def test_snapshot_publisher_rejects_invalid_interval_and_non_json_output(tmp_path):
+    from src.application.services.intraday_snapshot_publisher import IntradaySnapshotPublisher
+    with pytest.raises(ValueError):
+        IntradaySnapshotPublisher(tmp_path / "state.json", interval_seconds=0)
+    with pytest.raises(ValueError):
+        IntradaySnapshotPublisher(tmp_path / "state.jsonl", interval_seconds=5)
