@@ -34,6 +34,32 @@ python3 -m app market intraday-plan --symbols 2327 --max-symbols 1
 
 離線斷言：只產生一檔股票、兩種 lot；假的 SDK 在 **同一 session** 掛 4 個 quote topics；停機退訂 4 topics；不會呼叫 login／交易 API；未授權的 live entry 必須在 SDK import 之前被阻擋。
 
+## Shioaji 模擬環境測試（本輪預設先執行）
+
+本輪先用 CLI 的明確 `--simulation` 開關，讓 SDK 呼叫 `sj.Shioaji(simulation=True)`。
+**不更動 Production 預設**；省略開關時仍是 `simulation=False`。
+這是券商模擬連線，並非 2327 真實市場資料驗收。固定單一標的，
+整股 + 零股與 Tick + BidAsk 仍全數嘗試訂閱；
+模擬環境對盤中零股行情是否供應需以實際回傳和 SDK 文件核對。
+
+保留現有雙重授權閘門與 1–60 秒時間限制。複用原專案已存在的
+`SHIOAJI_API_KEY` / `SHIOAJI_SECRET_KEY`，無須啟動 CA 或交易權限。
+在 detached worktree 更新至包含 `--simulation` 的最新 PR2 後：
+
+```bash
+# 不應修改主專案 master；先確定 worktree 無未儲存的異動
+git status --short
+git fetch origin feat/shioaji-bidask-observations-pr2
+git switch --detach origin/feat/shioaji-bidask-observations-pr2
+python3 -m app market intraday-smoke --help
+```
+
+原本的 `python3 -c ...` + `dotenv_values("../tw-day-trading/.env")` 執行方式
+不須改憑證載入邏輯，只需在原命令尾端加上 `--simulation`。
+`mode` 結果會標為 `ONE_OFF_SIMULATION_QUOTE_SMOKE`，
+`simulation: true` 且 `real_market_verified: false`，
+不能列為正式市場資料合格。
+
 ## 實際盤中測試（**尚未核准，也未執行**）
 
 在確認工作樹、venv、SDK API 版本、行情權限、獨立儲存容量和原本正式排程後，另行核准才使用以下示意指令：
