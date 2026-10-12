@@ -305,3 +305,35 @@ def test_p1_lone_reconnect_event_opens_new_unresolved_gap(tmp_path):
     assert c.health()["gap_unresolved"] is True
     assert c.session_id == "sdk-p1-e1"
     c.stop()
+
+
+def test_p1_failed_unsubscribe_retains_topic_and_lease_until_retry(tmp_path):
+    from src.market_data.intraday_storage import ArchiveBusyError
+
+    class FlakyUnsubscribeSDK(SDK):
+        fail_unsubscribe = True
+
+        def unsubscribe(self, contract, *, quote_type, intraday_odd):
+            if self.fail_unsubscribe:
+                raise OSError("temporary SDK unsubscribe failure")
+            super().unsubscribe(contract, quote_type=quote_type, intraday_odd=intraday_odd)
+
+    api = FlakyUnsubscribeSDK()
+    c = ShioajiTickCollector(
+        api, subscriptions=[Subscription("2327")],
+        quote_type="Tick", store=RawTickStore(tmp_path),
+    )
+    c.start()
+    c.stop()
+    assert c.health()["state"] == "DEGRADED"
+    assert c.health()["counters"]["unsubscribe_error"] == 1
+    assert len(c.active) == 1
+    blocked, _ = collector(tmp_path)
+    with pytest.raises(ArchiveBusyError):
+        blocked.start()
+    api.fail_unsubscribe = False
+    c.stop()  # retries the same pending quote topic; does not rewrite raw
+    assert c.active == []
+    new, _ = collector(tmp_path)
+    new.start()
+    new.stop()
