@@ -1,6 +1,15 @@
 # PR-3：盤中執行品質前向對照 — 離線研究框架
 
-狀態：OFFLINE_IMPLEMENTED / FORWARD_EVIDENCE_PENDING（2026-10-08）
+狀態：OFFLINE_IMPLEMENTED / FORWARD_EVIDENCE_PENDING（更新 2026-10-12；已同步合併後的 master）
+
+## 2026-10-12：與 PR-1／PR-2 合併版本整合
+
+- PR-1 [#2](https://github.com/ChenHom/tw-swing-trading-mvp/pull/2) 和 PR-2 [#3](https://github.com/ChenHom/tw-swing-trading-mvp/pull/3) 已合併至 `master`（`aa6277be`）。
+- PR-3 已以**雙父節點非強制 Merge commit** 同步上述 `master`，並改 PR base 為 `master`。保留原有研究邏輯／測試，以及 P0/P1 的 Collector、安全、資料分流修正；GitHub 比較僅有 7 個 PR-3 檔案。
+- GitHub Actions PR-3 workflow 已擴大為 PR1 + PR2（含 P0/P1）+ PR3 全部離線回歸，未連 SDK、未載憑證。
+- 新增 CLI 端到端驗證：即使輸入為格式正確的 `MarketBook`、`ObservationEvent` 和候選機會，若 `data_health=UNKNOWN`，報告必須保持 `EVIDENCE_PENDING`、`SESSION_NOT_VERIFIED`、`fills_assumed=false`，不可將模擬行情誤寫成可信前向成果。
+- **2026-10-12 的 30 秒 81/81 raw quality PASS** 與 **60 秒 SDK 1.3.2 157 筆 capture PASS** 只證明資料收集／落盤／安全停止；**不能直接當作 60 個交易日、100 個獨立機會、20 日 OOS 的 PR-3 證據**。兩次 Collector 的連續傳輸與全市場完整性仍為 `UNVERIFIED`。
+- PR-3 維持 Draft / 研究證據待收集；合併 PR-3 程式碼與正式啟用前向策略是兩個獨立決策。PR-4 Dashboard 仍相依 PR-3，暫不連動修改。
 
 ## 交付
 - 研究核心：`src/application/research/intraday_evaluation.py`
