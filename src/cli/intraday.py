@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import time
 from datetime import date, datetime, time as clock_time
 from pathlib import Path
@@ -165,12 +166,19 @@ def cmd_intraday_collect(args) -> None:
     api = sj.Shioaji(simulation=True)
     collector = None
     try:
-        api.login(
-            api_key=settings.shioaji_api_key,
-            secret_key=settings.shioaji_secret_key,
-            fetch_contract=True,
-            subscribe_trade=False,
-        )
+        try:
+            api.login(
+                api_key=settings.shioaji_api_key,
+                secret_key=settings.shioaji_secret_key,
+                fetch_contract=True,
+                subscribe_trade=False,
+            )
+        except Exception as exc:
+            # Shioaji SDK login errors can include account/person IDs and IPs.
+            raise RuntimeError(
+                f"Shioaji simulation login failed ({type(exc).__name__}); "
+                "broker error detail suppressed"
+            ) from None
         collector = ShioajiTickCollector(
             api, subscriptions=specs, quote_type=tick_type,
             store=RawTickStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct),
@@ -184,19 +192,31 @@ def cmd_intraday_collect(args) -> None:
             collector.start()
             time.sleep(args.duration_seconds)
         finally:
-            collector.stop()
-            write_health(status_path, collector.health())
+            try:
+                collector.stop()
+            finally:
+                # Persist a FAILED/DEGRADED snapshot even if stop itself raises.
+                write_health(status_path, collector.health())
         result = {
             "mode": "ONE_OFF_SIMULATION_QUOTE_SMOKE",
             "simulation": True,
             "real_market_verified": False,
+            "sdk_version": str(getattr(sj, "__version__", "unknown")),
             "scope": sources,
             "health": collector.health(),
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
     finally:
         # Failed startup or quote-type errors must not leave SDK sessions open.
-        api.logout()
+        # If earlier failure is already propagating, keep the original cause.
+        pending_error = sys.exc_info()[0] is not None
+        try:
+            api.logout()
+        except Exception as exc:
+            if not pending_error:
+                raise RuntimeError(
+                    f"Shioaji simulation logout failed ({type(exc).__name__})"
+                ) from None
 
 
 def cmd_intraday_audit(args) -> None:
