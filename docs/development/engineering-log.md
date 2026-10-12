@@ -1,3 +1,10 @@
+## 2026-10-08 — PR-3：盤中前向執行品質研究（Draft #4）
+
+- 實作 `src/application/research/intraday_evaluation.py`，要求凍結 manifest 與前向候選 lineage，按當下已收到的 quote 估算 baseline/challenger 的 **indicative** ask 差額；不假裝有實單成交。
+- 所有 MISSED / INSUFFICIENT_DATA / INVALID 都保留，60 交易日 / 100 獨立候選 / 後段 20 日 OOS 必須是有可評估報價的研究 cohort；不足為 EVIDENCE_PENDING。
+- 對抗 Code Review：加入跨 SDK session、時間穿越與重複 opportunity 的拒絕；修復 CSV CRLF 破壞 immutable report，再產生完整 `comparison.json`、`manifest.json`、`cohort.csv`、`exclusions.jsonl`、`lineage.json`、`comparison.md`。
+- 以 GitHub Actions offline Python 測試驗證；未接真實行情，尚非完整費用/成交機率/淨期望值研究，不解除國泰禁買或 REJECTED 裁決。
+
 ## 2026-10-08 — PR-1 / PR-2 reliability hardening (offline only)
 
 - 根據 Code Review R1/R2 阻擋項，新增 intraday_connection.py：依 Shioaji 官方 Quote Event code 0/1/2/4/5/12/13/17/19 紀錄連線失敗與資料缺口；SDK 原生處理網路重連，worker 在重連事件後有限次重新訂閱 Tick/可選 BidAsk，同一 session 不再登入。
