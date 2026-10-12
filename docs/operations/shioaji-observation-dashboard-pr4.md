@@ -1,6 +1,15 @@
 # PR-4：唯讀盤中觀察 Web
 
-狀態：OFFLINE_IMPLEMENTED / REALTIME_NOT_INTEGRATED（2026-10-08）
+狀態：OFFLINE_IMPLEMENTED / REALTIME_NOT_INTEGRATED（2026-10-12 更新，已同步 PR-3 最新版本）
+
+## 2026-10-12：PR-3 整合與 Dashboard 安全修正
+
+- 原 PR-4 從舊 PR-3 建立，已用**非強制雙父節點 merge** 納入最新 PR-3 `ab308723`（含 `master` PR-1/2 P0/P1 修正）。保留 PR-4 歷史及 PR-3 新增的研究 CLI 端到端測試。PR-4 仍以 PR-3 為 base；僅有 **12 個 Dashboard 專屬檔案差異**。
+- Web `OBSERVING` 現在必須同時符合：`state=HEALTHY`、真實且新鮮的 `last_heartbeat_at`、`transport_verification_status=EVENT_VERIFIED`、`connection_verified=true`、`gap_unresolved=false`、`trading_session_verified=true`、`data_quality_status=VERIFIED`、`market_completeness_status=VERIFIED` 以及有效 Session ID。只要缺一項，價格與五檔都隱藏。
+- Tick／BidAsk 必須與相同股票／交易市場／BOARD 或 ODD／Collector Session 對應，且各自時間未過期；交叉五檔不呈現。
+- **現在的 Shioaji 1.3.2 Smoke 只有 `simulation=true`、`collection_status=RAW_CAPTURED`，`transport_verification_status=UNVERIFIED`、`data_quality_status=UNVERIFIED`、`market_completeness_status=UNVERIFIED`，不能產生 `OBSERVING` 價格。** 即使手動以最新時間生成快照也不能越過驗證條件。
+- GitHub Actions 已擴充為 Dashboard/API、所有 PR-1～3／P0/P1 離線回歸及原有 Web route 測試。`tests/unit/test_web_server.py` 自 2026-06 已有全模組 **skip**（TestClient runtime hang），CI 的 skipped 不等於 passed；另一組新 `test_intraday_web_routes.py` 使用真正的 TestClient 驗證頁面／JSON API，並另設 Raw JSONL → 離線 Publisher → 讀取器端到端測試。
+- **沒有開啟 `INTRADAY_DASHBOARD_ENABLED`**、沒有服務更新／重啟／新排程／Broker 登入／交易操作，PR-4 仍 Draft。
 
 ## 提供功能
 - 依既有 FastAPI + Jinja 單站 `/trading/` 加一個 `/trading/intraday`，預設 feature flag OFF。JSON API 路徑為 `/api/intraday/status`、`/api/intraday/symbols`、`/api/intraday/{symbol}/snapshot?lot_type=BOARD|ODD`（經 root_path=/trading 映射）。
