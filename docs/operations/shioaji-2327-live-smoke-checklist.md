@@ -100,6 +100,28 @@ main()
 執行時若仍碰 SDK 相容性錯誤，請只回報遮蔽個資的例外類型／訊息，
 避免貼出登入回應中的身分證號、對外 IP 或 API 金鑰。
 
+## 2026-10-12 SDK 訂閱 API 差異（已修程式，待真實主機回測）
+
+在 `8e46779` 版，`simulation=True` 登入成功並出現 `Session up`，
+但 Collector 於 `self.api.subscribe(...)` 中止：
+`AttributeError: 'Shioaji' object has no attribute 'subscribe'`。
+
+這表示主機安裝的 SDK 仍使用舊式的 `api.quote.subscribe`/
+`api.quote.unsubscribe` 介面；該 SDK **不可用** 1.7 新文件的
+`api.subscribe`。新版 Collector 的唯讀 adapter：
+- 若 `api.subscribe`、`api.unsubscribe` 都存在，使用新版路徑。
+- 否則若 `api.quote.subscribe`、`api.quote.unsubscribe` 都存在，使用舊版路徑，
+  **所有 Tick/BidAsk、BOARD/ODD 訂閱與退訂必須明確帶
+  `version=sj.constant.QuoteVersion.v1`**，包括重新連線後的三次有界重訂閱。
+- 若只能找到不完整的訂閱／退訂配對或找不到 `QuoteVersion.v1`，直接拒絕啟動，
+  **絕不默默退回 v0 或沒有退訂能力的模式**。
+- 真實模擬行情仍待主機測試；在零股 Tick / BidAsk 沒有收到資料時，
+  不得將 SDK 訂閱函式不拋例外等同於資料已成功驗證。
+- 保持 `simulation=True`、`subscribe_trade=False`、不載 CA、不呼叫交易 API。
+
+舊版介面及 v1 指定方式參照官方 Shioaji 行情說明：
+https://sinotrade.github.io/zh/upgrade/ 。
+
 ## 測試通過標準／失敗判斷
 
 1. 成功訂閱 2327 的四個 quote topics，且沒有 SDK 權限錯誤或意外其他股票訂閱。
