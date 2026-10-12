@@ -73,11 +73,45 @@ The checked branch graph is a valid stack:
 
 During final review the one-off smoke CLI was further hardened to **exit non-zero** on a worker failure, outstanding SDK subscription, undrained queue, loss detected or missing observed Tick/BidAsk stream; it now prints `smoke_status` and `smoke_checks` after successful logout. Previously, a degraded Collector could return 0, which was a release-blocking false-positive. Synthetic regressions cover all negative cases, including legacy SDK fake behavior.
 
-The user has **not yet supplied** a post-hardening 60-second isolated host run, so the final smoke gate is **NOT VERIFIED**. The exact command and checks are in `docs/operations/shioaji-2327-live-smoke-checklist.md` under 'P1 最終實機驗收'. This is an explicit blocker for marking ready/merging the stacked feature under the user-approved review process; GitHub CI cannot replace real broker-session checks.
+The user supplied the post-hardening 60-second isolated host run and **all six smoke checks passed**. The exact command and checks are in `docs/operations/shioaji-2327-live-smoke-checklist.md` under 'P1 最終實機驗收'. The final healthy start/stop host gate is now satisfied; remaining actual disconnect/soak/live permission gates stay separate from code merge and runtime deployment.
+
+## Final 60-second P1 host smoke acceptance (2026-10-12, operator report)
+
+User executed the latest one-off Shioaji SDK **1.3.2** on `tw-day-trading-smoke`:
+`simulation=True`, symbol 2327, `--with-bidask`, `--duration-seconds 60`, isolated
+`$HOME/shioaji-2327-final-smoke` root. The CLI reported:
+
+- `smoke_status=PASS_CAPTURE_ONLY`, six `smoke_checks` all `true`.
+- Tick 22 accepted / raw written; BidAsk 135 accepted / raw written; **157 total**.
+- `health.state=CLOSED`, `lifecycle_status=STOPPED`,
+  `active_subscription_count=0`, `queue_depth=0`, `last_error=""`.
+- Four topics configured, no per-lot count in this report: **do not claim every lot/topic observed data in this 60-second run**.
+- `transport_verification_status=UNVERIFIED`, `data_quality_status=UNVERIFIED`,
+  `market_completeness_status=UNVERIFIED`: lack of an independently audited
+  transport session or exchange-completeness evidence is intentional.
+- The separate 30-second 81/81 raw audit from earlier remains the P0
+  structure/value evidence; this second 157-line capture has not been individually
+  audited and is not merged with the earlier raw files.
+
+**Acceptance:** P1 isolated SDK healthy start / raw capture / unsubscribe /
+shutdown criterion passed with operator-provided console output. True
+forced disconnect, extended multi-hour reliability, official production market feed
+and long-term cron/systemd remain outside this acceptance.
+
+### PR stacking / integration
+
+- PR #2 Tick base was merged to `master` as merge commit
+  `752d713e59ab9a05507ff0bba88a5751efbde023`.
+- PR #3 was subsequently retargeted from PR #2's former head to `master`.
+  GitHub reports `mergeable_state=clean` and exactly 17 PR-2 delta files;
+  the previous head ancestry remains intact.
+- This review-file update intentionally triggers a new full PR-2 offline CI at
+  the rebased PR target before the second merge. **Never change production
+  Shioaji mode or enable a collector service as part of the code merge.**
 
 ## Merge / deployment gate
 
-- PR-1 and PR-2 stay Draft. CI green + simulation 30s **is not** a true live production-feed smoke or daylong soak.
+- PR-1 (#2) was merged to master after successful offline checks; PR-2 (#3) will pass an additional retargeted CI before code merge. Simulation 60s **is not** a true live production-feed smoke or daylong soak.
 - **P0 host raw-content audit accepted from operator-provided output** (81/81 valid with SHA-256 per file). This is not equivalent to confirming the complete market feed; the original files were not transferred to CI.
 - P1 SDK **real disconnect/reconnect**, unrecoverable subscribe, long-duration capacity, broker permission and runtime versions remain untested on operator's host. Do not forcibly disconnect the service or activate broker trading.
 - No new service/cron enabled; original master working tree / `app.db` untouched. Do not merge dependent PR-3/PR-4 until stack refreshed and revalidated.
