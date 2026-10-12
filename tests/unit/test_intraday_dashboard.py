@@ -45,8 +45,16 @@ def event():
 
 
 def health(**updates):
-    v = {"state": "HEALTHY", "last_heartbeat_at": NOW.isoformat(),
-         "trading_session_verified": True, "session_id": "snapshot-session"}
+    # Only the synthetic verified fixture may expose prices. The actual 2327
+    # collector has no validated heartbeat/session/completeness and stays hidden.
+    v = {
+        "state": "HEALTHY", "last_heartbeat_at": NOW.isoformat(),
+        "trading_session_verified": True, "session_id": "snapshot-session",
+        "transport_verification_status": "EVENT_VERIFIED",
+        "connection_verified": True, "gap_unresolved": False,
+        "data_quality_status": "VERIFIED",
+        "market_completeness_status": "VERIFIED",
+    }
     v.update(updates)
     return v
 
@@ -179,3 +187,66 @@ def test_future_received_tick_is_never_displayed_as_live(tmp_path):
     write_snapshot(p, data)
     status = load_snapshot(p, enabled=True, now=NOW)
     assert status["symbols"][0]["tick"] is None
+
+
+@pytest.mark.parametrize("missing_evidence", [
+    {"state": "UNVERIFIED"},
+    {"state": "UNKNOWN"},
+    {"transport_verification_status": "UNVERIFIED"},
+    {"transport_verification_status": "GAP_UNRESOLVED"},
+    {"connection_verified": False},
+    {"gap_unresolved": True},
+    {"data_quality_status": "UNVERIFIED"},
+    {"market_completeness_status": "UNVERIFIED"},
+    {"trading_session_verified": False},
+    {"session_id": None},
+    {"last_heartbeat_at": None},
+])
+def test_fake_fresh_heartbeat_cannot_bypass_evidence_gates(tmp_path, missing_evidence):
+    p = publish(tmp_path, health_state=health(**missing_evidence))
+    result = load_snapshot(p, enabled=True, now=NOW)
+    assert result["status"] != "OBSERVING"
+    assert result["symbols"][0]["tick"] is None
+    assert result["symbols"][0]["book"] is None
+
+
+def test_real_shioaji_132_capture_health_never_appears_live(tmp_path):
+    """The actual host smoke produced data, not a verified continuous market feed."""
+    real = {
+        "state": "CLOSED", "collection_status": "RAW_CAPTURED",
+        "lifecycle_status": "STOPPED",
+        "transport_verification_status": "UNVERIFIED",
+        "connection_verified": False, "gap_unresolved": False,
+        "data_quality_status": "UNVERIFIED",
+        "market_completeness_status": "UNVERIFIED",
+        "last_heartbeat_at": None, "trading_session_verified": False,
+        "session_id": "actual-session",
+    }
+    path = publish(tmp_path, health_state=real)
+    result = load_snapshot(path, enabled=True, now=NOW)
+    assert result["status"] == "CLOSED"
+    assert all(r["tick"] is None and r["book"] is None for r in result["symbols"])
+
+
+def test_fresh_quote_from_different_session_or_market_not_exposed(tmp_path):
+    import json
+    path = publish(tmp_path)
+    source = json.loads(path.read_text())
+    source["symbols"][0]["tick"]["collector_session_id"] = "other-session"
+    source["symbols"][0]["book"]["exchange"] = "OTC"
+    write_snapshot(path, source)
+    result = load_snapshot(path, enabled=True, now=NOW)
+    assert result["status"] == "OBSERVING"  # verified synthetic session
+    assert result["symbols"][0]["tick"] is None
+    assert result["symbols"][0]["book"] is None
+
+
+def test_crossed_best_bid_ask_is_never_displayed(tmp_path):
+    import json
+    path = publish(tmp_path)
+    source = json.loads(path.read_text())
+    source["symbols"][0]["book"]["ask_prices_x10000"][0] = 6000000
+    write_snapshot(path, source)
+    result = load_snapshot(path, enabled=True, now=NOW)
+    assert result["symbols"][0]["book"] is None
+    assert result["symbols"][0]["tick"] is not None
