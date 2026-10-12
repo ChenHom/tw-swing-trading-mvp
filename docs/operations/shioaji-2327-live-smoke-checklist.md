@@ -84,6 +84,22 @@ main()
 必須另外核對 Tick/BidAsk 是否真的有資料落盤；
 未觀察到零股行情時不得宣稱模擬 SDK 訂閱驗證成功。
 
+## 已知的 SDK 相容性問題（2026-10-12）
+
+真實主機已確認在 `simulation=True` 模擬環境登入階段成功收到
+`Session up`、合約資料訂閱事件 16，但先前入口使用
+`sj.QuoteType.Tick`，使用者安裝的 SDK **沒有頂層 `shioaji.QuoteType`**，
+造成 `AttributeError`，**因此尚未成功訂閱 2327**。
+
+最新入口優先查找 `shioaji.QuoteType`、再查找
+`shioaji.constant.QuoteType`；若 SDK 無這些 enum，則使用官方
+接受的字串 `tick` / `bid_ask`。修正已用 fake SDK
+離線涵蓋舊版 enum、頂層 enum、字串 fallback，及登入失敗時 logout
+清理。真實主機需 fetch 最新 PR-2 再次測試，**不可宣稱已通過 live SDK smoke**。
+
+執行時若仍碰 SDK 相容性錯誤，請只回報遮蔽個資的例外類型／訊息，
+避免貼出登入回應中的身分證號、對外 IP 或 API 金鑰。
+
 ## 測試通過標準／失敗判斷
 
 1. 成功訂閱 2327 的四個 quote topics，且沒有 SDK 權限錯誤或意外其他股票訂閱。
