@@ -108,6 +108,26 @@ def cmd_intraday_compress(args) -> None:
     print(json.dumps(compress_raw(Path(args.input)), ensure_ascii=False))
 
 
+def _quote_types(sj):
+    """Resolve the quote enum across Shioaji SDK layouts, without trading APIs.
+
+    Older Shioaji versions publish QuoteType under shioaji.constant;
+    some newer builds export it at package root. The official SDK also
+    accepts the quote-type strings when neither enum is exported.
+    """
+    types = getattr(sj, "QuoteType", None)
+    if types is None:
+        types = getattr(getattr(sj, "constant", None), "QuoteType", None)
+    if types is None:
+        try:
+            from shioaji.constant import QuoteType as types
+        except ImportError:
+            types = None
+    if types is not None:
+        return types.Tick, types.BidAsk
+    return "tick", "bid_ask"
+
+
 def cmd_intraday_collect(args) -> None:
     """One-off live read-only smoke ONLY; not intended for unattended operation."""
     if not args.enable_live_smoke or os.environ.get("INTRADAY_LIVE_SMOKE_APPROVED") != "yes":
@@ -131,39 +151,43 @@ def cmd_intraday_collect(args) -> None:
         raise RuntimeError("Shioaji quote credentials not configured")
     # TEMPORARY: this smoke entry is pinned to the Shioaji simulation feed.
     # Real-market verification needs a separate reviewed code change.
-    # No trading CA or order API is used.
+    # Resolve the SDK quote types before login: older versions only export
+    # shioaji.constant.QuoteType, not shioaji.QuoteType.
+    tick_type, book_type = _quote_types(sj)
     api = sj.Shioaji(simulation=True)
-    api.login(
-        api_key=settings.shioaji_api_key,
-        secret_key=settings.shioaji_secret_key,
-        fetch_contract=True,
-        subscribe_trade=False,
-    )
-    collector = ShioajiTickCollector(
-        api, subscriptions=specs, quote_type=sj.QuoteType.Tick,
-        store=RawTickStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct),
-        book_quote_type=sj.QuoteType.BidAsk if args.with_bidask else None,
-        book_store=RawBookStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct)
-        if args.with_bidask else None,
-    )
-    status_path = Path(args.cache_dir) / "shioaji" / "collector_health.json"
+    collector = None
     try:
-        collector.start()
-        time.sleep(args.duration_seconds)
-    finally:
+        api.login(
+            api_key=settings.shioaji_api_key,
+            secret_key=settings.shioaji_secret_key,
+            fetch_contract=True,
+            subscribe_trade=False,
+        )
+        collector = ShioajiTickCollector(
+            api, subscriptions=specs, quote_type=tick_type,
+            store=RawTickStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct),
+            book_quote_type=book_type if args.with_bidask else None,
+            book_store=RawBookStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct)
+            if args.with_bidask else None,
+        )
+        status_path = Path(args.cache_dir) / "shioaji" / "collector_health.json"
         try:
+            collector.start()
+            time.sleep(args.duration_seconds)
+        finally:
             collector.stop()
             write_health(status_path, collector.health())
-        finally:
-            api.logout()
-    result = {
-        "mode": "ONE_OFF_SIMULATION_QUOTE_SMOKE",
-        "simulation": True,
-        "real_market_verified": False,
-        "scope": sources,
-        "health": collector.health(),
-    }
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+        result = {
+            "mode": "ONE_OFF_SIMULATION_QUOTE_SMOKE",
+            "simulation": True,
+            "real_market_verified": False,
+            "scope": sources,
+            "health": collector.health(),
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    finally:
+        # Failed startup or quote-type errors must not leave SDK sessions open.
+        api.logout()
 
 
 def cmd_intraday_maintain(args) -> None:
