@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
+from .intraday_storage import append_raw, compress_raw as safe_compress_raw
+
 TAIPEI = ZoneInfo("Asia/Taipei")
 VERSION = 1
 FIELDS = (
@@ -197,16 +199,7 @@ class RawTickStore:
             self.root, str(record["trading_date"]), str(record["lot_type"]),
             str(record["payload"].get("code") or "_invalid"),
         )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        usage = shutil.disk_usage(path.parent)
-        if usage.used / usage.total * 100 >= self.stop_at_disk_pct:
-            raise OSError("collector disk watermark exceeded")
-        # One complete JSON record per append; never overwrite an earlier event.
-        line = json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-            handle.flush()
-        return path
+        return append_raw(path, record, stop_at_disk_pct=self.stop_at_disk_pct)
 
 
 def iter_raw(path: Path) -> Iterable[dict[str, Any]]:
@@ -257,30 +250,5 @@ def build_minute_bars(ticks: Iterable[MarketTick]) -> list[dict[str, Any]]:
     return bars
 
 
-def compress_raw(path: Path) -> dict[str, Any]:
-    """Crash-safe compression; retain original on failure. Never replace an existing archive."""
-    path = Path(path)
-    if path.suffix != ".jsonl":
-        raise ValueError("expected .jsonl file")
-    target = Path(str(path) + ".gz")
-    if target.exists():
-        raise FileExistsError(str(target))
-    temp = Path(str(target) + ".tmp")
-    digest = hashlib.sha256()
-    count = 0
-    try:
-        with path.open("rb") as source, temp.open("xb") as dst:
-            with gzip.GzipFile(fileobj=dst, mode="wb", filename="", mtime=0) as archive:
-                for line in source:
-                    digest.update(line)
-                    count += 1
-                    archive.write(line)
-            dst.flush()
-            os.fsync(dst.fileno())
-        if target.exists():
-            raise FileExistsError(str(target))
-        temp.rename(target)
-        path.unlink()
-    finally:
-        temp.unlink(missing_ok=True)
-    return {"archive": str(target), "raw_sha256": digest.hexdigest(), "lines": count}
+# Retain the PR-1 public import path; implementation is shared with BidAsk.
+compress_raw = safe_compress_raw

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +16,9 @@ from queue import Empty, Full, Queue
 from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Sequence
 from uuid import uuid4
+
+from .intraday_connection import QuoteTransportAudit, register_quote_events
+from .intraday_storage import ArchiveBusyError, collector_lease
 
 from .intraday_book import (
     BOOK_FIELDS, MarketBook, RawBookStore, normalize_raw_book, raw_book_event,
@@ -77,6 +81,7 @@ class ShioajiTickCollector:
         book_quote_type: Any | None = None,
         book_store: RawBookStore | None = None,
         book_sink: Callable[[MarketBook], None] | None = None,
+        legacy_quote_version: Any | None = None,
     ) -> None:
         if queue_capacity < 1:
             raise ValueError("queue_capacity must be positive")
@@ -92,6 +97,9 @@ class ShioajiTickCollector:
         self.book_quote_type = book_quote_type
         self.book_store = book_store
         self.book_sink = book_sink
+        # Legacy Shioaji routes quote subscriptions via api.quote and needs
+        # explicit QuoteVersion.v1 for on_tick_stk_v1/on_bidask_stk_v1.
+        self.legacy_quote_version = legacy_quote_version
         if (book_quote_type is None) != (book_store is None):
             raise ValueError("BidAsk quote type and raw store must both be provided")
         self.session_id = session_id or str(uuid4())
@@ -99,6 +107,8 @@ class ShioajiTickCollector:
         self.stop_requested = threading.Event()
         self.worker: threading.Thread | None = None
         self.active: list[tuple[Any, Subscription, Any]] = []
+        # Serialize quote resubscribe versus stop/unsubscribe on separate threads.
+        self._quote_lock = threading.RLock()
         self.seq = 0
         self.state = "DISABLED"
         self.counters: Counter[str] = Counter()
@@ -106,6 +116,9 @@ class ShioajiTickCollector:
         self.last_received_at: str | None = None
         self.last_event_at: str | None = None
         self._fatal = False
+        self.transport = QuoteTransportAudit(self.store.root, self.session_id)
+        self.quote_event_callback_registered = False
+        self._lease_context = None
 
     def _on_tick(self, exchange: Any, tick: Any) -> None:
         """SDK callback: bounded, nonblocking, no disk writes."""
@@ -115,7 +128,13 @@ class ShioajiTickCollector:
         received_at = datetime.now(timezone.utc)
         # Provider memory can be reused after returning from a callback; snapshot
         # just the fields required for raw audit, then enqueue without blocking.
-        snapshot = SimpleNamespace(**{key: getattr(tick, key, None) for key in FIELDS})
+        try:
+            snapshot = SimpleNamespace(**{key: getattr(tick, key, None) for key in FIELDS})
+        except Exception as exc:
+            self.counters["callback_snapshot_error"] += 1
+            self.last_error = f"callback_snapshot: {type(exc).__name__}"
+            self.state = "DEGRADED"
+            return
         try:
             self.queue.put_nowait(("tick", exchange, snapshot, received_at))
         except Full:
@@ -128,17 +147,129 @@ class ShioajiTickCollector:
             return
         stamp = datetime.now(timezone.utc)
         snapshot = {}
-        for field in BOOK_FIELDS:
-            value = getattr(book, field, None)
-            if field in ("bid_price", "bid_volume", "ask_price", "ask_volume",
-                         "diff_bid_vol", "diff_ask_vol") and value is not None:
-                value = tuple(value)
-            snapshot[field] = value
+        try:
+            for field in BOOK_FIELDS:
+                value = getattr(book, field, None)
+                if field in ("bid_price", "bid_volume", "ask_price", "ask_volume",
+                             "diff_bid_vol", "diff_ask_vol") and value is not None:
+                    value = tuple(value)
+                snapshot[field] = value
+        except Exception as exc:
+            self.counters["book_callback_snapshot_error"] += 1
+            self.last_error = f"book_callback_snapshot: {type(exc).__name__}"
+            self.state = "DEGRADED"
+            return
         try:
             self.queue.put_nowait(("bidask", exchange, SimpleNamespace(**snapshot), stamp))
         except Full:
             self.counters["queue_dropped"] += 1
             self.counters["book_queue_dropped"] += 1
+
+    def _on_quote_event(self, response_code: int, event_code: int, info: str, event: str) -> None:
+        """SDK event callback does not resubscribe, block or persist on callback thread."""
+        if self.stop_requested.is_set() or self.state in ("FAILED", "CLOSED"):
+            return
+        try:
+            code = int(event_code)
+            response = int(response_code)
+            if code not in (0, 1, 2, 4, 5, 12, 13, 17, 19):
+                return
+            self._enqueue_transport_event(response, code, datetime.now(timezone.utc))
+        except (ValueError, TypeError):
+            self.counters["malformed_transport_event"] += 1
+            self.state = "DEGRADED"
+
+    def _enqueue_transport_event(self, response: int, code: int, received: datetime) -> None:
+        try:
+            self.queue.put_nowait(self._transport_queue_item(response, code, received))
+        except Full:
+            self.counters["transport_event_dropped"] += 1
+            self.state = "DEGRADED"
+
+    def _handle_transport_event(self, response: int, code: int, received: datetime) -> None:
+        try:
+            should_recover = self.transport.apply(response, code, received)
+        except (OSError, ValueError) as exc:
+            self.counters["transport_audit_error"] += 1
+            self.last_error = f"transport_audit: {type(exc).__name__}"
+            self.state = "DEGRADED"
+            return
+        if code in (1, 2, 4, 5, 12, 17, 19):
+            self.state = "DEGRADED"
+            self.counters["transport_gap_events"] += 1
+        if should_recover and not self.stop_requested.is_set():
+            # Retry only failed topics with bounded exponential backoff on the
+            # worker thread (never the SDK callback); do not relogin or trade.
+            remaining = list(self._active_topics())
+            for attempt in range(3):
+                failed = []
+                for contract, sub, quote_type in remaining:
+                    try:
+                        self._subscribe(contract, sub, quote_type)
+                    except Exception as exc:
+                        failed.append((contract, sub, quote_type))
+                        self.counters["resubscribe_error"] += 1
+                        self.last_error = f"resubscribe: {type(exc).__name__}"
+                remaining = failed
+                if not remaining or self.stop_requested.is_set():
+                    break
+                if attempt < 2:
+                    time.sleep(0.1 * (2 ** attempt))
+            ok = not remaining and not self.stop_requested.is_set()
+            self.transport.recovered(ok)
+            if ok:
+                # A new quote epoch must not be matched to pre-disconnect facts
+                # by PR-2 observations or PR-3 research.
+                self.session_id = f"{self.transport.session_id}-e{self.transport.gaps}"
+            self.counters["resubscribe_success" if ok else "resubscribe_failed"] += 1
+            # Reconnected data still has an unfillable gap until separately reviewed.
+            if not ok:
+                self.state = "FAILED"
+                self._fatal = True
+                self.stop_requested.set()
+                self._unsubscribe_all()  # fail closed on exhausted retry budget
+            else:
+                self.state = "DEGRADED"
+
+    def _active_topics(self):
+        raise NotImplementedError
+
+    def _transport_queue_item(self, response: int, code: int, received: datetime):
+        raise NotImplementedError
+
+    def _quote_endpoint(self):
+        """Resolve a *paired* subscribe/unsubscribe API; never a trading API.
+
+        Modern SDK: api.subscribe / api.unsubscribe.
+        Legacy SDK: api.quote.subscribe / api.quote.unsubscribe, with v1.
+        """
+        if (callable(getattr(self.api, "subscribe", None)) and
+                callable(getattr(self.api, "unsubscribe", None))):
+            return self.api, False
+        quote = getattr(self.api, "quote", None)
+        if (callable(getattr(quote, "subscribe", None)) and
+                callable(getattr(quote, "unsubscribe", None))):
+            if self.legacy_quote_version is None:
+                raise TypeError("legacy Shioaji quote API requires explicit QuoteVersion.v1")
+            return quote, True
+        raise TypeError("Shioaji quote subscribe/unsubscribe API unavailable")
+
+    def _subscribe(self, contract: Any, sub: Subscription, quote_type: Any) -> None:
+        with self._quote_lock:
+            if self.stop_requested.is_set():
+                raise RuntimeError("quote collector is stopping; refuse new subscription")
+            endpoint, legacy = self._quote_endpoint()
+            kwargs = {"quote_type": quote_type, "intraday_odd": sub.lot_type == "ODD"}
+            if legacy:
+                kwargs["version"] = self.legacy_quote_version
+            endpoint.subscribe(contract, **kwargs)
+
+    def _unsubscribe(self, contract: Any, sub: Subscription, quote_type: Any) -> None:
+        endpoint, legacy = self._quote_endpoint()
+        kwargs = {"quote_type": quote_type, "intraday_odd": sub.lot_type == "ODD"}
+        if legacy:
+            kwargs["version"] = self.legacy_quote_version
+        endpoint.unsubscribe(contract, **kwargs)
 
     def _contract(self, symbol: str) -> Any:
         contracts = getattr(self.api, "contracts", None)
@@ -160,44 +291,62 @@ class ShioajiTickCollector:
             raise TypeError("Tick callback API unavailable")
         if self.book_quote_type is not None and not callable(getattr(self.api, "on_bidask_stk_v1", None)):
             raise TypeError("BidAsk callback API unavailable")
+        self._quote_endpoint()  # Fail before subscriptions if no compatible quote API.
         self.state = "CONNECTING"
         try:
+            self._lease_context = collector_lease(self.store.root)
+            self._lease_context.__enter__()
+            self.quote_event_callback_registered = register_quote_events(self.api, self._on_quote_event)
             self.api.on_tick_stk_v1()(self._on_tick)
             if self.book_quote_type is not None:
                 self.api.on_bidask_stk_v1()(self._on_bidask)
             for sub in self.subscriptions:
                 contract = self._contract(sub.symbol)
-                self.api.subscribe(
-                    contract, quote_type=self.quote_type,
-                    intraday_odd=(sub.lot_type == "ODD"),
-                )
-                self.active.append((contract, sub, self.quote_type))
-                if self.book_quote_type is not None:
-                    self.api.subscribe(
-                        contract, quote_type=self.book_quote_type,
-                        intraday_odd=(sub.lot_type == "ODD"),
-                    )
-                    self.active.append((contract, sub, self.book_quote_type))
+                with self._quote_lock:
+                    self._subscribe(contract, sub, self.quote_type)
+                    self.active.append((contract, sub, self.quote_type))
+                    if self.book_quote_type is not None:
+                        self._subscribe(contract, sub, self.book_quote_type)
+                        self.active.append((contract, sub, self.book_quote_type))
             self.stop_requested.clear()
             self.state = "HEALTHY"
             self.worker = threading.Thread(target=self._worker_loop, name="intraday-tick-collector", daemon=True)
             self.worker.start()
         except Exception:
             self._unsubscribe_all()
+            if not self.active:
+                self._release_lease()
             self.state = "FAILED"
             raise
 
+    def _active_topics(self):
+        with self._quote_lock:
+            return list(self.active)
+
+    def _transport_queue_item(self, response: int, code: int, received: datetime):
+        return ("transport", response, code, received)
+
+    def _release_lease(self) -> None:
+        if self._lease_context is not None:
+            self._lease_context.__exit__(None, None, None)
+            self._lease_context = None
+
     def _unsubscribe_all(self) -> None:
-        for contract, sub, quote_type in reversed(self.active):
-            try:
-                self.api.unsubscribe(
-                    contract, quote_type=quote_type,
-                    intraday_odd=(sub.lot_type == "ODD"),
-                )
-            except Exception as exc:
-                self.counters["unsubscribe_error"] += 1
-                self.last_error = f"unsubscribe: {type(exc).__name__}"
-        self.active.clear()
+        # A failed unsubscribe is an unresolved SDK resource, not a success.
+        # Retain unsuccessful topics to retry at stop(). Never claim CLOSED
+        # or release the collector lease while the broker still may stream.
+        with self._quote_lock:
+            pending = []
+            for contract, sub, quote_type in reversed(self.active):
+                try:
+                    self._unsubscribe(contract, sub, quote_type)
+                except Exception as exc:
+                    pending.append((contract, sub, quote_type))
+                    self.counters["unsubscribe_error"] += 1
+                    self.last_error = f"unsubscribe: {type(exc).__name__}"
+                    if self.state != "FAILED":
+                        self.state = "DEGRADED"
+            self.active = list(reversed(pending))
 
     def _worker_loop(self) -> None:
         try:
@@ -207,7 +356,9 @@ class ShioajiTickCollector:
                 except Empty:
                     continue
                 try:
-                    if stream == "tick":
+                    if stream == "transport":
+                        self._handle_transport_event(exchange, payload, received_at)
+                    elif stream == "tick":
                         self.process(exchange, payload, received_at=received_at)
                     else:
                         self.process_book(exchange, payload, received_at=received_at)
@@ -218,6 +369,10 @@ class ShioajiTickCollector:
             self.state = "FAILED"
             self.counters["worker_crashed"] += 1
             self.last_error = f"worker: {type(exc).__name__}"
+            # Fail closed: callback errors or unexpected worker failures must
+            # not leave SDK subscribed while the raw writer is dead.
+            self.stop_requested.set()
+            self._unsubscribe_all()
 
     def process(self, exchange: Any, tick: Any, *, received_at: datetime) -> MarketTick | None:
         """Public for deterministic fake-SDK testing. Never called by SDK directly."""
@@ -239,6 +394,11 @@ class ShioajiTickCollector:
             self.counters["raw_write_error"] += 1
             self.last_error = f"raw: {type(exc).__name__}"
             self.state = "DEGRADED"
+            if isinstance(exc, (OSError, ArchiveBusyError)):
+                # Disk/full/locked archive cannot safely continue consuming
+                # without losing the audit trail. Unsubscribe and exit worker.
+                self.stop_requested.set()
+                self._unsubscribe_all()
             return None
         self.seq += 1
         self.counters["raw_written"] += 1
@@ -276,6 +436,9 @@ class ShioajiTickCollector:
             self.counters["book_raw_write_error"] += 1
             self.last_error = f"book_raw: {type(exc).__name__}"
             self.state = "DEGRADED"
+            if isinstance(exc, (OSError, ArchiveBusyError)):
+                self.stop_requested.set()
+                self._unsubscribe_all()
             return None
         self.seq += 1
         self.counters["book_raw_written"] += 1
@@ -304,10 +467,52 @@ class ShioajiTickCollector:
             "book_raw_write_error", "book_sink_error", "book_queue_dropped"
         )):
             state = "DEGRADED"
+        if self.transport.gap_unresolved or self.counters["transport_event_dropped"]:
+            if state == "HEALTHY":
+                state = "DEGRADED"
+        elif state == "HEALTHY" and not self.transport.connection_verified:
+            # A successful API subscribe call without a verified quote transport
+            # event is not evidence of a connected market feed.
+            state = "UNVERIFIED"
+        # Independent dimensions; a successful raw write is NOT a verified
+        # continuous quote session or proof of exchange-level completeness.
+        loss_keys = (
+            "queue_dropped", "book_queue_dropped", "transport_event_dropped",
+            "raw_write_error", "book_raw_write_error", "worker_crashed",
+            "worker_stop_timeout", "resubscribe_failed", "transport_audit_error",
+            "callback_snapshot_error", "book_callback_snapshot_error",
+        )
+        lost = any(self.counters[key] for key in loss_keys) or self._fatal
+        captures = self.counters["raw_written"] + self.counters["book_raw_written"]
+        collection_status = (
+            "LOSS_DETECTED" if lost else
+            "RAW_CAPTURED" if captures else "NO_RAW_OBSERVED"
+        )
+        lifecycle_status = (
+            "FAILED" if state == "FAILED" else
+            "STOPPED" if self.state == "CLOSED" else
+            "NOT_STARTED" if self.state == "DISABLED" else
+            "RUNNING" if self.worker is not None and self.worker.is_alive() else
+            "STARTING_OR_STOPPING"
+        )
+        # Transport status is strictly sourced from SDK transport events.
+        # Missing the initial session-up callback is not silently repaired.
+        transport_verification_status = (
+            "GAP_UNRESOLVED" if self.transport.gap_unresolved else
+            "EVENT_VERIFIED" if self.transport.connection_verified else "UNVERIFIED"
+        )
         return {
             "state": state,
+            "collection_status": collection_status,
+            "lifecycle_status": lifecycle_status,
+            "transport_verification_status": transport_verification_status,
+            "data_quality_status": "UNVERIFIED",  # only offline raw audit can assess content
+            "market_completeness_status": "UNVERIFIED",
+            "quote_event_callback_registered": self.quote_event_callback_registered,
+            **self.transport.health(),
             "session_id": self.session_id,
             "subscriptions": len(self.subscriptions) * (2 if self.book_quote_type is not None else 1),
+            "active_subscription_count": len(self.active),
             "bidask_enabled": self.book_quote_type is not None,
             "queue_depth": self.queue.qsize(),
             "counters": dict(self.counters),
@@ -319,8 +524,8 @@ class ShioajiTickCollector:
     def stop(self, *, join_timeout: float = 10.0) -> dict[str, Any]:
         if self.state == "DISABLED":
             return self.health()
-        self._unsubscribe_all()
         self.stop_requested.set()
+        self._unsubscribe_all()
         if self.worker is not None:
             self.worker.join(timeout=join_timeout)
             if self.worker.is_alive():
@@ -329,6 +534,10 @@ class ShioajiTickCollector:
                 self.last_error = "worker_stop_timeout"
             else:
                 self.worker = None
+        # Keep lease held if shutdown timed out: rotating raw while its worker
+        # is still active could silently truncate a tail.
+        if self.worker is None and not self.active:
+            self._release_lease()
         result = self.health()
         if result["state"] not in ("FAILED", "DEGRADED"):
             self.state = "CLOSED"
