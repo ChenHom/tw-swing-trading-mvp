@@ -5,10 +5,19 @@ on:
   pull_request:
     paths:
       - "src/application/services/intraday_dashboard.py"
+      - "src/application/research/intraday_evaluation.py"
+      - "src/market_data/intraday_*.py"
+      - "src/cli/intraday*.py"
+      - "scripts/intraday_forward_eval.py"
+      - "scripts/build_intraday_dashboard.py"
       - "src/web/server.py"
       - "src/web/templates/intraday.html"
+      - "src/web/templates/base.html"
       - "tests/unit/test_intraday_dashboard.py"
       - "tests/unit/test_intraday_web_routes.py"
+      - "tests/unit/test_intraday_forward_evaluation.py"
+      - "tests/unit/test_intraday_*.py"
+      - "tests/unit/test_web_server.py"
       - ".github/workflows/intraday-dashboard-pr4.yml"
 permissions:
   contents: read
@@ -23,13 +32,15 @@ jobs:
           python-version: "3.11"
       - name: Install isolated dependencies
         run: python -m pip install pytest fastapi "httpx>=0.27" jinja2 python-multipart pydantic pyyaml exchange-calendars requests python-dotenv pytz
-      - name: Compile dashboard modules
-        run: python -m compileall -q src/application/services/intraday_dashboard.py scripts/build_intraday_dashboard.py src/web/server.py tests/unit/test_intraday_dashboard.py tests/unit/test_intraday_web_routes.py
+      - name: Compile dashboard and current Collector/forward-study modules
+        run: python -m compileall -q src/application/services/intraday_dashboard.py src/application/research/intraday_evaluation.py scripts/build_intraday_dashboard.py scripts/intraday_forward_eval.py src/market_data/intraday_tick.py src/market_data/intraday_book.py src/market_data/intraday_collector.py src/market_data/intraday_connection.py src/market_data/intraday_storage.py src/market_data/intraday_audit.py src/market_data/intraday_observations.py src/web/server.py tests/unit/test_intraday_dashboard.py tests/unit/test_intraday_web_routes.py
       - name: Offline CLI import smoke
         run: |
           python -m scripts.intraday_forward_eval --help
           python -m scripts.build_intraday_dashboard --help
       - name: Verify offline feed and API routes
         run: python -m pytest tests/unit/test_intraday_dashboard.py tests/unit/test_intraday_web_routes.py -q
-      - name: Recheck PR-1 to PR-3 offline regressions
-        run: python -m pytest tests/unit/test_intraday_tick_collector.py tests/unit/test_intraday_book.py tests/unit/test_intraday_forward_evaluation.py -q
+      - name: Recheck PR-1, PR-2, P0/P1 and PR-3 offline regressions
+        run: python -m pytest tests/unit/test_intraday_tick_collector.py tests/unit/test_intraday_book.py tests/unit/test_intraday_forward_evaluation.py tests/unit/test_intraday_reliability.py tests/unit/test_intraday_2327_preflight.py tests/unit/test_intraday_p0_p1.py -q
+      - name: Existing Web routes regression (no live service)
+        run: python -m pytest tests/unit/test_web_server.py -q
