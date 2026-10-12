@@ -1,3 +1,9 @@
+> **更新註記（2026-10-12）**：本文件保留 10/08 當時的四 PR Code Review 歷史結論；以下表格的「PR-1/PR-2 未合併」已不適用。PR-1 #2、PR-2 #3 已於 10/12 合併進 `master`（`752d713e`、`aa6277be`），且已通過 2327 SDK 1.3.2 模擬環境 P0 81/81 raw 稽核、P1 60 秒 157 筆收集與正常退訂。**仍未驗證**正式行情、真實斷線重連、長時間完整性。
+>
+> PR-3 #4 已同步最新版 `master`，整合離線回歸 **116 passed**，但長期前向研究資料不足，仍為 Draft / `EVIDENCE_PENDING`。PR-4 #5 已安全合併最新版 PR-3（非強制、保留歷史），現只含 Dashboard 增量；新的 `OBSERVING` 顯示閘門要求連線、Heartbeat、Session 及資料品質皆可驗證。現有 Collector 尚不會給出完整 `VERIFIED`，故**新頁面不應顯示看似即時的價格**。PR-4 仍 Draft，無正式 Web 部署、無持續 publisher、無行情排程。原生 `test_web_server.py` 17 項既有 skip 亦不是實際通過。
+>
+> 10/12 的分支整合和回歸結果見 [PR-3 #4](https://github.com/ChenHom/tw-swing-trading-mvp/pull/4)、[PR-4 #5](https://github.com/ChenHom/tw-swing-trading-mvp/pull/5) 與 [最新 Dashboard 操作文件](../operations/shioaji-observation-dashboard-pr4.md)。
+
 # Shioaji 盤中行情四 PR — Cross-PR Code Review
 
 審查日期：2026-10-08；狀態：**OFFLINE CODE REVIEW DONE / NOT READY TO MERGE TO PRODUCTION**。
