@@ -151,6 +151,57 @@ python3 -m app market intraday-audit \
 
 **本次已達成** `status=PASS_RAW_ONLY`、`total_raw_lines=81`、`total_accepted=81` 且四組零錯誤／拒絕／警告，可說**已觀測到的 raw 內容**通過基本完整性／量價規則檢查。這不證明交易所完整資料、模擬行情與正式行情相等，也不代表可以直接合併或啟用日常服務。非 PASS 時 CLI exit code 1，請先檢查 JSON 報告的逐檔原因，不要修改 raw 來強制過關。
 
+## P1 最終實機驗收：60 秒、全新隔離資料夾（尚未執行）
+
+此項需要操作主機上的合法 Shioaji 模擬行情連線，**GitHub Actions 不會登入券商**。
+先核對 `git status --short` 無未保存修改，再 fetch/switch 到
+`origin/feat/shioaji-bidask-observations-pr2`，確認最新版測試。
+**僅在交易日 08:30–13:40（台北時間）**、原本雙重人工授權閘門下執行：
+
+```bash
+cd ~/services/stock/tw-day-trading-smoke
+git status --short
+git fetch origin feat/shioaji-bidask-observations-pr2
+git switch --detach origin/feat/shioaji-bidask-observations-pr2
+git rev-parse --short HEAD
+
+INTRADAY_LIVE_SMOKE_APPROVED=yes python3 -c '
+import os
+from dotenv import dotenv_values
+config = dotenv_values("../tw-day-trading/.env")
+for key in ("SHIOAJI_API_KEY", "SHIOAJI_SECRET_KEY"):
+    if not os.environ.get(key) and config.get(key):
+        os.environ[key] = config[key]
+from src.cli.main import main
+main()
+' market intraday-smoke \
+  --enable-live-smoke \
+  --symbols 2327 \
+  --max-symbols 1 \
+  --with-bidask \
+  --duration-seconds 60 \
+  --cache-dir "$HOME/shioaji-2327-final-smoke" \
+  --stop-at-disk-pct 75
+```
+
+P1 正常啟動／停止驗收需 **同時**滿足：
+
+- 指令 exit code 0、`smoke_status=PASS_CAPTURE_ONLY`（只是本次模擬資料收集成功，非正式市場完整性保證）；
+- `health.state=CLOSED`、`lifecycle_status=STOPPED`、
+  `active_subscription_count=0`、`queue_depth=0`；
+- `collection_status=RAW_CAPTURED`、
+  `counters.raw_written>0`、`counters.book_raw_written>0`；
+- `unsubscribe_error=0`、`queue_dropped=0`、`raw_write_error=0`、
+  `book_raw_write_error=0`、`worker_crashed=0`、`worker_stop_timeout=0`；
+- SDK logout 成功、檔案被隔離保存在 `$HOME/shioaji-2327-final-smoke`。
+  ODD 是否有即時成交要依實際成交量而定，不可偽造筆數。
+
+Smoke 失敗時新 CLI 會印出 `smoke_checks` 各欄判斷並以 **exit code 1**
+結束；若 SDK 在登入／訂閱前發生例外，則產生例外和最後可取得的
+`collector_health.json`。不管如何不得改寫 10/12 已核可的 81 筆 raw。
+本輪**不進行強制斷網、重啟正式服務、掛 systemd 或啟用 cron**。
+真正斷線復原與長時間 soak 仍需要獨立設計與核准。
+
 ## 明確限制
 
 離線測試不連接 Shioaji。現有 live smoke CLI 只允許交易日 08:30–13:40、單次 1–60 秒。真實 SDK 的 QuoteType/contract/回調格式與連線品質尚未由此預演證明。即使 30 秒無錯也只是 smoke，不等於長期蒐集已核准。
