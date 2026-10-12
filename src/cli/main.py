@@ -33,7 +33,7 @@ from src.broker.fake_broker import FakeBroker
 from src.application.execution.engine import TradeExecutionEngine
 from src.application.services import trade_write
 from src.cli import common
-from src.cli.intraday import cmd_intraday_scope, cmd_intraday_replay, cmd_intraday_compress, cmd_intraday_collect, cmd_intraday_maintain
+from src.cli.intraday import cmd_intraday_scope, cmd_intraday_replay, cmd_intraday_compress, cmd_intraday_collect, cmd_intraday_maintain, cmd_intraday_audit
 from src.cli.intraday_book import cmd_intraday_book_replay
 from src.cli.market import cmd_market_backfill, cmd_market_backfill_history, cmd_market_sync, cmd_market_sync_chips, cmd_market_sync_names, cmd_market_sync_sector_flow, cmd_market_sync_sector_taxonomy, cmd_market_backfill_tdcc_holdings, cmd_market_validate, cmd_market_build_universe, cmd_market_build_adj
 from src.cli.strategy import cmd_strategy_inspect
@@ -118,6 +118,17 @@ def main():
     parser_tick_maintain.add_argument("--before-date", required=True, help="YYYY-MM-DD；只壓縮嚴格早於此日的 raw")
     parser_tick_maintain.add_argument("--warn-pct", type=float, default=80.0)
     parser_tick_maintain.add_argument("--stop-pct", type=float, default=90.0)
+
+    parser_tick_audit = market_subs.add_parser(
+        "intraday-audit", help="離線逐筆驗證 Tick + BidAsk 整股/零股 raw；不連券商"
+    )
+    parser_tick_audit.add_argument("--cache-dir", default="data/raw")
+    parser_tick_audit.add_argument("--symbol", required=True)
+    parser_tick_audit.add_argument("--date", required=True, help="YYYY-MM-DD")
+    parser_tick_audit.add_argument("--output", help="將 JSON 品質報告寫至此路徑")
+    for name in ("tick-board", "tick-odd", "bidask-board", "bidask-odd"):
+        parser_tick_audit.add_argument("--expected-" + name, type=int, default=None,
+                                       help="獨立觀察到的 capture 筆數；四項必須同時指定")
 
     parser_tick_collect = market_subs.add_parser("intraday-smoke", help="一次性唯讀行情測試，預設封鎖；禁止自動排程")
     for action in parser_tick_scope._actions:
@@ -419,6 +430,7 @@ def main():
         ("market", "intraday-book-replay"): cmd_intraday_book_replay,
         ("market", "intraday-compress"): cmd_intraday_compress,
         ("market", "intraday-maintain"): cmd_intraday_maintain,
+        ("market", "intraday-audit"): cmd_intraday_audit,
         ("market", "intraday-smoke"): cmd_intraday_collect,
         ("strategy", "inspect"): cmd_strategy_inspect,
         ("approval", "create"): cmd_approval_create,
