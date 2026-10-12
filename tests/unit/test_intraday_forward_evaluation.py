@@ -221,3 +221,34 @@ def test_bundle_contains_all_audit_artifacts(tmp_path):
     assert r["manifest_sha256"] == __import__("json").loads(
         (p.parent/"lineage.json").read_text()
     )["manifest_sha256"]
+
+
+def test_forward_cli_end_to_end_is_pending_without_verified_source(tmp_path):
+    """Prove CLI can generate immutable evidence without a broker or synthetic fill."""
+    import json
+
+    from scripts.intraday_forward_eval import run
+
+    data = {
+        "manifest": manifest().__dict__,
+        "opportunities": [opportunity().__dict__],
+        "books": [book().__dict__],
+        "observations": [event().__dict__],
+        # No auditable continuous-feed health from the actual 30s/60s smokes.
+        "data_health": "UNKNOWN",
+    }
+    input_file = tmp_path / "study.json"
+    input_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    output = run(input_file, tmp_path / "out")
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["verdict"] == "EVIDENCE_PENDING"
+    assert result["mode"] == "SHADOW_RESEARCH_ONLY"
+    assert result["gate"]["met"] is False
+    assert result["cohort"][0]["status"] == "INSUFFICIENT_DATA"
+    assert result["cohort"][0]["fills_assumed"] is False
+    assert "SESSION_NOT_VERIFIED" in result["cohort"][0]["reason_codes"]
+    assert run(input_file, tmp_path / "out") == output
+    assert {path.name for path in output.parent.iterdir()} == {
+        "comparison.json", "comparison.md", "manifest.json", "cohort.csv",
+        "exclusions.jsonl", "lineage.json",
+    }
