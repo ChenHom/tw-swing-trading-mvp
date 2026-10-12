@@ -131,6 +131,27 @@ https://sinotrade.github.io/zh/upgrade/ 。
 5. 停機必須退訂所有 topic、釋放 Collector lease 並 logout；不影響正式 app.db、策略權限與既有 cron。
 6. 結果需要完整 raw event、健康快照、SDK 版本、訂閱清單及錯誤摘要供獨立 code review。重連實測須另外設計，不應故意中斷正在運作的正式連線。
 
+## P0／P1 最新進度與原始資料稽核（2026-10-12）
+
+- 已新增離線 `market intraday-audit`，每次稽核只讀取固定日期及股票的 Tick/BidAsk × BOARD/ODD 四類 raw，**完全不登入券商**。
+- 使用者本次實際 `wc -l` 基準：Tick BOARD 9、ODD 6；BidAsk BOARD 60、ODD 6，總計 81。這只能證明檔案筆數；實際內容由下面指令獨立核對。
+- `collection_status=RAW_CAPTURED` 只表示已寫入 raw；`transport_verification_status=UNVERIFIED` 仍表示 SDK transport 回調未給出足夠證據；`data_quality_status` 與 `market_completeness_status` 不會憑有收到 Tick 就自行升級。
+- P1 假 SDK 已覆蓋：登入失敗且清理、啟動失敗退訂、斷線重訂及不同 epoch、三次重試耗盡 fail-closed、異常 worker 退訂、執行緒停止逾時持有 lock、callback 欄位錯誤、零交易 API。真實 broker 中斷／長時間壓測 **尚未實測**。
+- 詳細 Code Review：`docs/reviews/shioaji-pr1-pr2-p0-p1-review-20261012.md`。
+
+更新到最新 PR-2 後，在**同一個 detached smoke worktree** 執行下列離線稽核。無須 `.env`、不會更改 81 筆原始 JSONL：
+
+```bash
+python3 -m app market intraday-audit \
+  --cache-dir "$HOME/shioaji-2327-smoke" \
+  --symbol 2327 --date 2026-10-12 \
+  --expected-tick-board 9 --expected-tick-odd 6 \
+  --expected-bidask-board 60 --expected-bidask-odd 6 \
+  --output "$HOME/shioaji-2327-20261012-quality.json"
+```
+
+只有 `status=PASS_RAW_ONLY`、`total_raw_lines=81`、`total_accepted=81` 且四組零錯誤／拒絕時，才能說**已觀測到的 raw 內容**通過基本完整性／量價規則檢查。這不證明交易所完整資料、模擬行情與正式行情相等，也不代表可以直接合併或啟用日常服務。非 PASS 時 CLI exit code 1，請先檢查 JSON 報告的逐檔原因，不要修改 raw 來強制過關。
+
 ## 明確限制
 
 離線測試不連接 Shioaji。現有 live smoke CLI 只允許交易日 08:30–13:40、單次 1–60 秒。真實 SDK 的 QuoteType/contract/回調格式與連線品質尚未由此預演證明。即使 30 秒無錯也只是 smoke，不等於長期蒐集已核准。
