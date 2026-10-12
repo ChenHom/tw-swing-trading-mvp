@@ -68,8 +68,11 @@ def test_p0_missing_or_wrong_expected_counts_cannot_be_called_pass(tmp_path):
     four_fixture_files(tmp_path)
     (tmp_path/"shioaji"/"ticks"/"2026-10-12"/"ODD"/"2327.jsonl").unlink()
     assert audit(tmp_path)["status"] == "INCOMPLETE"
-    four_fixture_files(tmp_path)
-    result = audit(tmp_path, expected={
+    # Use a fresh archive root: append-only fixtures must not be restarted
+    # with collection_seq=1 in the same path.
+    independent = tmp_path / "baseline"
+    four_fixture_files(independent)
+    result = audit(independent, expected={
         "ticks_BOARD": 9, "ticks_ODD": 6,
         "bidask_BOARD": 60, "bidask_ODD": 6,
     })
