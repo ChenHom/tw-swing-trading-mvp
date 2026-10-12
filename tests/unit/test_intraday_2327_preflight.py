@@ -97,8 +97,10 @@ def test_real_2327_smoke_entry_remains_blocked_without_explicit_approval(monkeyp
 
 
 @pytest.mark.parametrize("fail_login", [False, True])
+@pytest.mark.parametrize("bad_health", [None, "missing_tick", "missing_book", "unsub",
+                                        "failed_worker", "pending_queue"])
 def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
-    monkeypatch, tmp_path, capsys, fail_login,
+    monkeypatch, tmp_path, capsys, fail_login, bad_health,
 ):
     import sys
     import types
@@ -158,7 +160,24 @@ def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
             observed["stopped"] = True
 
         def health(self):
-            return {"state": "CLOSED"}
+            status = {
+                "state": "CLOSED",
+                "active_subscription_count": 0,
+                "queue_depth": 0,
+                "collection_status": "RAW_CAPTURED",
+                "counters": {"raw_written": 3, "book_raw_written": 7},
+            }
+            if bad_health == "missing_tick":
+                status["counters"]["raw_written"] = 0
+            elif bad_health == "missing_book":
+                status["counters"]["book_raw_written"] = 0
+            elif bad_health == "unsub":
+                status["active_subscription_count"] = 1
+            elif bad_health == "failed_worker":
+                status["state"] = "FAILED"
+            elif bad_health == "pending_queue":
+                status["queue_depth"] = 1
+            return status
 
     class DateStub:
         @staticmethod
@@ -186,8 +205,15 @@ def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
         assert observed["simulation"] is True
         assert "started" not in observed
         return
-    module.cmd_intraday_collect(args)
+    if bad_health:
+        with pytest.raises(SystemExit) as result_exit:
+            module.cmd_intraday_collect(args)
+        assert result_exit.value.code == 1
+    else:
+        module.cmd_intraday_collect(args)
     result = json.loads(capsys.readouterr().out)
+    assert result["smoke_status"] == ("FAIL" if bad_health else "PASS_CAPTURE_ONLY")
+    assert all(result["smoke_checks"].values()) is (bad_health is None)
     assert observed["simulation"] is True
     assert observed["started"] and observed["stopped"] and observed["logout"]
     assert observed["login"]["subscribe_trade"] is False
