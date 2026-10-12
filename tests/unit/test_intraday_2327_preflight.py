@@ -94,3 +94,92 @@ def test_real_2327_smoke_entry_remains_blocked_without_explicit_approval(monkeyp
         module.cmd_intraday_collect(SimpleNamespace(enable_live_smoke=False))
     with pytest.raises(RuntimeError, match="explicit flag and approval"):
         module.cmd_intraday_collect(SimpleNamespace(enable_live_smoke=True))
+
+
+@pytest.mark.parametrize("simulation", [False, True])
+def test_2327_cli_environment_flag_is_explicit_and_never_calls_trading_api(
+    monkeypatch, tmp_path, capsys, simulation,
+):
+    import sys
+    import types
+    from datetime import datetime
+    from src.market_data.intraday_collector import Subscription
+
+    module = _offline_cli()
+    monkeypatch.setenv("INTRADAY_LIVE_SMOKE_APPROVED", "yes")
+
+    # Fake calendar/credentials/SDK: this test has no broker or network access.
+    fake_calendar = types.ModuleType("src.calendar.calendar")
+    fake_calendar.ExchangeCalendarsTradingCalendar = lambda: SimpleNamespace(
+        is_trading_day=lambda _: True
+    )
+    monkeypatch.setitem(sys.modules, "src.calendar.calendar", fake_calendar)
+
+    fake_settings = types.ModuleType("src.config")
+    fake_settings.AppSettings = lambda: SimpleNamespace(
+        shioaji_api_key="fake-key", shioaji_secret_key="fake-secret"
+    )
+    monkeypatch.setitem(sys.modules, "src.config", fake_settings)
+
+    observed = {}
+    class FakeShioaji:
+        def __init__(self, *, simulation):
+            observed["simulation"] = simulation
+
+        def login(self, **kwargs):
+            observed["login"] = kwargs
+
+        def logout(self):
+            observed["logout"] = True
+
+    sdk_module = types.ModuleType("shioaji")
+    sdk_module.Shioaji = FakeShioaji
+    sdk_module.QuoteType = SimpleNamespace(Tick="Tick", BidAsk="BidAsk")
+    monkeypatch.setitem(sys.modules, "shioaji", sdk_module)
+
+    class FakeCollector:
+        def __init__(self, api, *, subscriptions, quote_type, store,
+                     book_quote_type, book_store):
+            observed["subscriptions"] = subscriptions
+            observed["bidask"] = book_quote_type
+
+        def start(self):
+            observed["started"] = True
+
+        def stop(self):
+            observed["stopped"] = True
+
+        def health(self):
+            return {"state": "CLOSED"}
+
+    class DateStub:
+        @staticmethod
+        def now(tz):
+            return datetime(2026, 10, 12, 9, 15, tzinfo=tz)
+
+    monkeypatch.setattr(module, "datetime", DateStub)
+    monkeypatch.setattr(module, "ShioajiTickCollector", FakeCollector)
+    monkeypatch.setattr(module, "write_health", lambda *_: None)
+    monkeypatch.setattr(module.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        module, "scope_for_args",
+        lambda _: ([Subscription("2327", "BOARD"), Subscription("2327", "ODD")],
+                   {"2327": ["watchlist"]}),
+    )
+    module.cmd_intraday_collect(SimpleNamespace(
+        enable_live_smoke=True, duration_seconds=1, simulation=simulation,
+        cache_dir=str(tmp_path), stop_at_disk_pct=75, with_bidask=True,
+    ))
+    result = json.loads(capsys.readouterr().out)
+    assert observed["simulation"] is simulation
+    assert observed["started"] and observed["stopped"] and observed["logout"]
+    assert observed["login"]["subscribe_trade"] is False
+    assert [x.symbol for x in observed["subscriptions"]] == ["2327", "2327"]
+    assert observed["bidask"] == "BidAsk"
+    assert result["simulation"] is simulation
+    assert result["mode"] == (
+        "ONE_OFF_SIMULATION_QUOTE_SMOKE" if simulation else "ONE_OFF_READ_ONLY_SMOKE"
+    )
+    assert result["real_market_verified"] is (False if simulation else None)
+    assert not hasattr(FakeShioaji, "place_order")
+    assert not hasattr(FakeShioaji, "activate_ca")
