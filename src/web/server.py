@@ -180,7 +180,12 @@ def sector_flow():
 def _intraday_read():
     """No application trading DB, Shioaji SDK or broker login on read routes."""
     enabled = os.environ.get("INTRADAY_DASHBOARD_ENABLED", "0") == "1"
-    return intraday.load_snapshot(INTRADAY_SNAPSHOT_PATH, enabled=enabled)
+    # This does not enable broker or live quotes. Historical/unverified prices
+    # stay in separate reference_* fields and are explicitly marked not live.
+    include_history = os.environ.get("INTRADAY_SHOW_HISTORICAL", "0") == "1"
+    return intraday.load_snapshot(
+        INTRADAY_SNAPSHOT_PATH, enabled=enabled, include_history=include_history,
+    )
 
 
 @app.get("/intraday", response_class=HTMLResponse)
@@ -196,6 +201,7 @@ def intraday_status():
         "schema_version": 1, "status": data["status"],
         "market_session": data["market_session"], "freshness": data["freshness"],
         "generated_at": data["generated_at"], "last_heartbeat_at": data["last_heartbeat_at"],
+        "display_mode": data["display_mode"], "historical_reference_only": data["historical_reference_only"],
         "not_trade_signal": True,
     }
 
