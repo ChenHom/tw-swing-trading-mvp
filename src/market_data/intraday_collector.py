@@ -81,6 +81,7 @@ class ShioajiTickCollector:
         book_quote_type: Any | None = None,
         book_store: RawBookStore | None = None,
         book_sink: Callable[[MarketBook], None] | None = None,
+        legacy_quote_version: Any | None = None,
     ) -> None:
         if queue_capacity < 1:
             raise ValueError("queue_capacity must be positive")
@@ -96,6 +97,9 @@ class ShioajiTickCollector:
         self.book_quote_type = book_quote_type
         self.book_store = book_store
         self.book_sink = book_sink
+        # Legacy Shioaji routes quote subscriptions via api.quote and needs
+        # explicit QuoteVersion.v1 for on_tick_stk_v1/on_bidask_stk_v1.
+        self.legacy_quote_version = legacy_quote_version
         if (book_quote_type is None) != (book_store is None):
             raise ValueError("BidAsk quote type and raw store must both be provided")
         self.session_id = session_id or str(uuid4())
@@ -187,8 +191,7 @@ class ShioajiTickCollector:
                 failed = []
                 for contract, sub, quote_type in remaining:
                     try:
-                        self.api.subscribe(contract, quote_type=quote_type,
-                                           intraday_odd=(sub.lot_type == "ODD"))
+                        self._subscribe(contract, sub, quote_type)
                     except Exception as exc:
                         failed.append((contract, sub, quote_type))
                         self.counters["resubscribe_error"] += 1
@@ -214,6 +217,37 @@ class ShioajiTickCollector:
     def _transport_queue_item(self, response: int, code: int, received: datetime):
         raise NotImplementedError
 
+    def _quote_endpoint(self):
+        """Resolve a *paired* subscribe/unsubscribe API; never a trading API.
+
+        Modern SDK: api.subscribe / api.unsubscribe.
+        Legacy SDK: api.quote.subscribe / api.quote.unsubscribe, with v1.
+        """
+        if (callable(getattr(self.api, "subscribe", None)) and
+                callable(getattr(self.api, "unsubscribe", None))):
+            return self.api, False
+        quote = getattr(self.api, "quote", None)
+        if (callable(getattr(quote, "subscribe", None)) and
+                callable(getattr(quote, "unsubscribe", None))):
+            if self.legacy_quote_version is None:
+                raise TypeError("legacy Shioaji quote API requires explicit QuoteVersion.v1")
+            return quote, True
+        raise TypeError("Shioaji quote subscribe/unsubscribe API unavailable")
+
+    def _subscribe(self, contract: Any, sub: Subscription, quote_type: Any) -> None:
+        endpoint, legacy = self._quote_endpoint()
+        kwargs = {"quote_type": quote_type, "intraday_odd": sub.lot_type == "ODD"}
+        if legacy:
+            kwargs["version"] = self.legacy_quote_version
+        endpoint.subscribe(contract, **kwargs)
+
+    def _unsubscribe(self, contract: Any, sub: Subscription, quote_type: Any) -> None:
+        endpoint, legacy = self._quote_endpoint()
+        kwargs = {"quote_type": quote_type, "intraday_odd": sub.lot_type == "ODD"}
+        if legacy:
+            kwargs["version"] = self.legacy_quote_version
+        endpoint.unsubscribe(contract, **kwargs)
+
     def _contract(self, symbol: str) -> Any:
         contracts = getattr(self.api, "contracts", None)
         getter = getattr(contracts, "get", None)
@@ -234,6 +268,7 @@ class ShioajiTickCollector:
             raise TypeError("Tick callback API unavailable")
         if self.book_quote_type is not None and not callable(getattr(self.api, "on_bidask_stk_v1", None)):
             raise TypeError("BidAsk callback API unavailable")
+        self._quote_endpoint()  # Fail before subscriptions if no compatible quote API.
         self.state = "CONNECTING"
         try:
             self._lease_context = collector_lease(self.store.root)
@@ -244,16 +279,10 @@ class ShioajiTickCollector:
                 self.api.on_bidask_stk_v1()(self._on_bidask)
             for sub in self.subscriptions:
                 contract = self._contract(sub.symbol)
-                self.api.subscribe(
-                    contract, quote_type=self.quote_type,
-                    intraday_odd=(sub.lot_type == "ODD"),
-                )
+                self._subscribe(contract, sub, self.quote_type)
                 self.active.append((contract, sub, self.quote_type))
                 if self.book_quote_type is not None:
-                    self.api.subscribe(
-                        contract, quote_type=self.book_quote_type,
-                        intraday_odd=(sub.lot_type == "ODD"),
-                    )
+                    self._subscribe(contract, sub, self.book_quote_type)
                     self.active.append((contract, sub, self.book_quote_type))
             self.stop_requested.clear()
             self.state = "HEALTHY"
@@ -279,10 +308,7 @@ class ShioajiTickCollector:
     def _unsubscribe_all(self) -> None:
         for contract, sub, quote_type in reversed(self.active):
             try:
-                self.api.unsubscribe(
-                    contract, quote_type=quote_type,
-                    intraday_odd=(sub.lot_type == "ODD"),
-                )
+                self._unsubscribe(contract, sub, quote_type)
             except Exception as exc:
                 self.counters["unsubscribe_error"] += 1
                 self.last_error = f"unsubscribe: {type(exc).__name__}"
