@@ -107,6 +107,8 @@ class ShioajiTickCollector:
         self.stop_requested = threading.Event()
         self.worker: threading.Thread | None = None
         self.active: list[tuple[Any, Subscription, Any]] = []
+        # Serialize quote resubscribe versus stop/unsubscribe on separate threads.
+        self._quote_lock = threading.RLock()
         self.seq = 0
         self.state = "DISABLED"
         self.counters: Counter[str] = Counter()
@@ -253,11 +255,14 @@ class ShioajiTickCollector:
         raise TypeError("Shioaji quote subscribe/unsubscribe API unavailable")
 
     def _subscribe(self, contract: Any, sub: Subscription, quote_type: Any) -> None:
-        endpoint, legacy = self._quote_endpoint()
-        kwargs = {"quote_type": quote_type, "intraday_odd": sub.lot_type == "ODD"}
-        if legacy:
-            kwargs["version"] = self.legacy_quote_version
-        endpoint.subscribe(contract, **kwargs)
+        with self._quote_lock:
+            if self.stop_requested.is_set():
+                raise RuntimeError("quote collector is stopping; refuse new subscription")
+            endpoint, legacy = self._quote_endpoint()
+            kwargs = {"quote_type": quote_type, "intraday_odd": sub.lot_type == "ODD"}
+            if legacy:
+                kwargs["version"] = self.legacy_quote_version
+            endpoint.subscribe(contract, **kwargs)
 
     def _unsubscribe(self, contract: Any, sub: Subscription, quote_type: Any) -> None:
         endpoint, legacy = self._quote_endpoint()
@@ -314,7 +319,8 @@ class ShioajiTickCollector:
             raise
 
     def _active_topics(self):
-        return list(self.active)
+        with self._quote_lock:
+            return list(self.active)
 
     def _transport_queue_item(self, response: int, code: int, received: datetime):
         return ("transport", response, code, received)
@@ -328,17 +334,18 @@ class ShioajiTickCollector:
         # A failed unsubscribe is an unresolved SDK resource, not a success.
         # Retain unsuccessful topics to retry at stop(). Never claim CLOSED
         # or release the collector lease while the broker still may stream.
-        pending = []
-        for contract, sub, quote_type in reversed(self.active):
-            try:
-                self._unsubscribe(contract, sub, quote_type)
-            except Exception as exc:
-                pending.append((contract, sub, quote_type))
-                self.counters["unsubscribe_error"] += 1
-                self.last_error = f"unsubscribe: {type(exc).__name__}"
-                if self.state != "FAILED":
-                    self.state = "DEGRADED"
-        self.active = list(reversed(pending))
+        with self._quote_lock:
+            pending = []
+            for contract, sub, quote_type in reversed(self.active):
+                try:
+                    self._unsubscribe(contract, sub, quote_type)
+                except Exception as exc:
+                    pending.append((contract, sub, quote_type))
+                    self.counters["unsubscribe_error"] += 1
+                    self.last_error = f"unsubscribe: {type(exc).__name__}"
+                    if self.state != "FAILED":
+                        self.state = "DEGRADED"
+            self.active = list(reversed(pending))
 
     def _worker_loop(self) -> None:
         try:
