@@ -250,3 +250,59 @@ def test_crossed_best_bid_ask_is_never_displayed(tmp_path):
     result = load_snapshot(path, enabled=True, now=NOW)
     assert result["symbols"][0]["book"] is None
     assert result["symbols"][0]["tick"] is not None
+
+
+def test_offline_raw_to_publisher_to_web_fails_closed_with_actual_collector_health(tmp_path):
+    """End to end: PR1/2 raw journals -> PR4 CLI -> snapshot reader, no broker."""
+    import json
+    from types import SimpleNamespace
+    from src.market_data.intraday_tick import RawTickStore, raw_event
+    from src.market_data.intraday_book import RawBookStore, raw_book_event
+    from scripts.build_intraday_dashboard import run
+
+    ts = datetime(2026, 10, 12, 10, 51, tzinfo=TZ)
+    tick_sdk = SimpleNamespace(
+        code="2327", datetime=ts, date=ts.date(), time=ts.time(),
+        close=635, volume=1, total_volume=1, tick_type=1,
+        intraday_odd=False, simtrade=False, suspend=False,
+    )
+    book_sdk = SimpleNamespace(
+        code="2327", datetime=ts, date=ts.date(), time=ts.time(),
+        bid_price=[634, 633, 632, 631, 630],
+        ask_price=[635, 636, 637, 638, 639],
+        bid_volume=[3, 2, 1, 1, 1], ask_volume=[2, 1, 1, 1, 1],
+        diff_bid_vol=[0] * 5, diff_ask_vol=[0] * 5,
+        intraday_odd=False, simtrade=False, suspend=False,
+    )
+    root = tmp_path / "raw"
+    RawTickStore(root).append(raw_event(
+        "TSE", tick_sdk, session_id="host-unverified", seq=1, received_at=ts,
+    ))
+    RawBookStore(root).append(raw_book_event(
+        "TSE", book_sdk, session_id="host-unverified", seq=2, received_at=ts,
+    ))
+    date_folder = "2026-10-12"
+    raw_tick_path = root / "shioaji" / "ticks" / date_folder / "BOARD" / "2327.jsonl"
+    raw_book_path = root / "shioaji" / "bidask" / date_folder / "BOARD" / "2327.jsonl"
+
+    health_path = tmp_path / "health.json"
+    health_path.write_text(json.dumps({
+        "state": "CLOSED", "collection_status": "RAW_CAPTURED",
+        "lifecycle_status": "STOPPED", "session_id": "host-unverified",
+        "transport_verification_status": "UNVERIFIED",
+        "connection_verified": False, "gap_unresolved": False,
+        "data_quality_status": "UNVERIFIED",
+        "market_completeness_status": "UNVERIFIED",
+        "last_heartbeat_at": None, "trading_session_verified": False,
+    }), encoding="utf-8")
+    output = tmp_path / "dashboard.json"
+    result = run(ticks_file=raw_tick_path, books_file=raw_book_path,
+                 health_file=health_path, output=output)
+    assert result["mode"] == "OFFLINE_PUBLICATION_ONLY"
+    assert result["symbols"] == 1
+    displayed = load_snapshot(output, enabled=True, now=datetime.now(timezone.utc))
+    assert displayed["status"] == "CLOSED"
+    assert displayed["not_trade_signal"] is True
+    assert displayed["symbols"][0]["tick"] is None
+    assert displayed["symbols"][0]["book"] is None
+    assert displayed["symbols"][0]["observations"] == []
