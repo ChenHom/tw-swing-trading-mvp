@@ -49,3 +49,15 @@ def test_snapshot_json_api_does_not_require_broker_or_database(monkeypatch, tmp_
         assert client.get("/api/intraday/status").json()["status"] == "CLOSED"
         assert client.get("/intraday").status_code == 200
         assert client.get("/api/intraday/symbols").json()["symbols"] == []
+
+
+def test_existing_reports_page_and_navigation_still_render_without_broker(monkeypatch):
+    """Unskipped legacy-page smoke: PR4 cannot break the existing base template."""
+    monkeypatch.setattr(server.dash, "list_reports", lambda: [])
+    with TestClient(server.app) as client:
+        page = client.get("/reports")
+        assert page.status_code == 200
+        assert "盤中觀察" in page.text
+        assert "/trading/intraday" in page.text
+        assert "歷史" in page.text
+        assert client.get("/healthz").status_code == 200
