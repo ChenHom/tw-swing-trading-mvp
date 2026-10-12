@@ -137,7 +137,22 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
             status = "DEGRADED"
         elif (now-generated).total_seconds() > max_age_seconds:
             status = "STALE"
-        elif hb_valid and _session_label(now) != "MARKET_CLOSED" and health.get("trading_session_verified") is True:
+        elif (
+            state == "HEALTHY"
+            and hb_valid
+            and _session_label(now) != "MARKET_CLOSED"
+            and health.get("trading_session_verified") is True
+            and health.get("transport_verification_status") == "EVENT_VERIFIED"
+            and health.get("connection_verified") is True
+            and health.get("gap_unresolved") is False
+            and health.get("data_quality_status") == "VERIFIED"
+            and health.get("market_completeness_status") == "VERIFIED"
+            and isinstance(health.get("session_id"), str)
+            and bool(health["session_id"])
+        ):
+            # The present Shioaji smoke collector intentionally emits
+            # data_quality_status=UNVERIFIED and no genuine heartbeat.
+            # Offline snapshot timestamps must NEVER turn this into "live".
             status = "OBSERVING"
         clean = []
         for item in items:
@@ -156,6 +171,8 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
                     px = tick.get("price_x10000")
                     vol = tick.get("trade_volume_shares")
                     if (tick.get("symbol") != symbol or tick.get("lot_type") != lot
+                            or tick.get("exchange") != item.get("exchange")
+                            or tick.get("collector_session_id") != health.get("session_id")
                             or not 0 <= age_seconds <= max_age_seconds
                             or type(px) is not int or px <= 0
                             or type(vol) is not int or vol < 0):
@@ -174,9 +191,17 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
                     values_ok = all(isinstance(a, list) and len(a) == 5 and all(
                         v is None or (type(v) is int and v >= 0) for v in a
                     ) for a in arrays)
+                    bids = book.get("bid_prices_x10000")
+                    asks = book.get("ask_prices_x10000")
+                    crossed = (
+                        values_ok and bids[0] is not None and asks[0] is not None
+                        and bids[0] >= asks[0]
+                    )
                     if (book.get("symbol") != symbol or book.get("lot_type") != lot
+                            or book.get("exchange") != item.get("exchange")
+                            or book.get("collector_session_id") != health.get("session_id")
                             or not 0 <= age_seconds <= max_age_seconds
-                            or not values_ok):
+                            or not values_ok or crossed):
                         book = None
                 except (KeyError, TypeError, ValueError):
                     book = None
