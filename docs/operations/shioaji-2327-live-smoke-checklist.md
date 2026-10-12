@@ -1,6 +1,6 @@
 # Shioaji 2327（國巨）唯讀行情 smoke — 操作計畫
 
-更新：2026-10-12。狀態：**2327 模擬行情 30 秒 Smoke 已收集 81 筆；逐筆主機資料稽核待執行。正式行情未授權／未測。**
+更新：2026-10-12。狀態：**2327 模擬行情 30 秒 Smoke 已收集 81 筆，主機上 81/81 raw 已通過離線稽核（PASS_RAW_ONLY）。正式行情仍未授權／未測。**
 
 ## 固定測試範圍
 
@@ -89,18 +89,18 @@ main()
 真實主機已確認在 `simulation=True` 模擬環境登入階段成功收到
 `Session up`、合約資料訂閱事件 16，但先前入口使用
 `sj.QuoteType.Tick`，使用者安裝的 SDK **沒有頂層 `shioaji.QuoteType`**，
-造成 `AttributeError`，**因此尚未成功訂閱 2327**。
+造成 `AttributeError`，**當時尚未成功訂閱 2327；後續已修正，完成 81 筆模擬行情資料收集與離線稽核**。
 
 最新入口優先查找 `shioaji.QuoteType`、再查找
 `shioaji.constant.QuoteType`；若 SDK 無這些 enum，則使用官方
 接受的字串 `tick` / `bid_ask`。修正已用 fake SDK
 離線涵蓋舊版 enum、頂層 enum、字串 fallback，及登入失敗時 logout
-清理。真實主機需 fetch 最新 PR-2 再次測試，**不可宣稱已通過 live SDK smoke**。
+清理。後續主機實測已成功寫入 81 筆模擬行情，**不可宣稱已通過正式環境 live SDK smoke**。
 
 執行時若仍碰 SDK 相容性錯誤，請只回報遮蔽個資的例外類型／訊息，
 避免貼出登入回應中的身分證號、對外 IP 或 API 金鑰。
 
-## 2026-10-12 SDK 訂閱 API 差異（已修程式，待真實主機回測）
+## 2026-10-12 SDK 訂閱 API 差異（已修正，模擬環境回測通過）
 
 在 `8e46779` 版，`simulation=True` 登入成功並出現 `Session up`，
 但 Collector 於 `self.api.subscribe(...)` 中止：
@@ -115,8 +115,7 @@ main()
   `version=sj.constant.QuoteVersion.v1`**，包括重新連線後的三次有界重訂閱。
 - 若只能找到不完整的訂閱／退訂配對或找不到 `QuoteVersion.v1`，直接拒絕啟動，
   **絕不默默退回 v0 或沒有退訂能力的模式**。
-- 真實模擬行情仍待主機測試；在零股 Tick / BidAsk 沒有收到資料時，
-  不得將 SDK 訂閱函式不拋例外等同於資料已成功驗證。
+- 後續已在主機收到零股 Tick / BidAsk 各 6 筆，整股 Tick 9 筆、BidAsk 60 筆；這驗證本次模擬行情接收，不驗證正式環境完整性。
 - 保持 `simulation=True`、`subscribe_trade=False`、不載 CA、不呼叫交易 API。
 
 舊版介面及 v1 指定方式參照官方 Shioaji 行情說明：
@@ -134,12 +133,12 @@ https://sinotrade.github.io/zh/upgrade/ 。
 ## P0／P1 最新進度與原始資料稽核（2026-10-12）
 
 - 已新增離線 `market intraday-audit`，每次稽核只讀取固定日期及股票的 Tick/BidAsk × BOARD/ODD 四類 raw，**完全不登入券商**。
-- 使用者本次實際 `wc -l` 基準：Tick BOARD 9、ODD 6；BidAsk BOARD 60、ODD 6，總計 81。這只能證明檔案筆數；實際內容由下面指令獨立核對。
+- 主機上的 `wc -l` 基準：Tick BOARD 9、ODD 6；BidAsk BOARD 60、ODD 6，總計 81。**2026-10-12 使用者已在 `8606b090` 執行下面離線稽核，回傳 `PASS_RAW_ONLY`、`total_accepted=81`，四組均 `errors=[]`、`warnings=[]`、`rejected={}`。** 原始檔未傳到 GitHub，指紋已記入 Review 文件。
 - `collection_status=RAW_CAPTURED` 只表示已寫入 raw；`transport_verification_status=UNVERIFIED` 仍表示 SDK transport 回調未給出足夠證據；`data_quality_status` 與 `market_completeness_status` 不會憑有收到 Tick 就自行升級。
 - P1 假 SDK 已覆蓋：登入失敗且清理、啟動失敗退訂、斷線重訂及不同 epoch、三次重試耗盡 fail-closed、異常 worker 退訂、執行緒停止逾時持有 lock、callback 欄位錯誤、零交易 API。真實 broker 中斷／長時間壓測 **尚未實測**。
 - 詳細 Code Review：`docs/reviews/shioaji-pr1-pr2-p0-p1-review-20261012.md`。
 
-更新到最新 PR-2 後，在**同一個 detached smoke worktree** 執行下列離線稽核。無須 `.env`、不會更改 81 筆原始 JSONL：
+已於 **2026-10-12** 在原主機的 detached smoke worktree 執行下列離線稽核；可按需要重跑確認指紋。無須 `.env`，也不會更改原始 JSONL：
 
 ```bash
 python3 -m app market intraday-audit \
@@ -150,7 +149,7 @@ python3 -m app market intraday-audit \
   --output "$HOME/shioaji-2327-20261012-quality.json"
 ```
 
-只有 `status=PASS_RAW_ONLY`、`total_raw_lines=81`、`total_accepted=81` 且四組零錯誤／拒絕時，才能說**已觀測到的 raw 內容**通過基本完整性／量價規則檢查。這不證明交易所完整資料、模擬行情與正式行情相等，也不代表可以直接合併或啟用日常服務。非 PASS 時 CLI exit code 1，請先檢查 JSON 報告的逐檔原因，不要修改 raw 來強制過關。
+**本次已達成** `status=PASS_RAW_ONLY`、`total_raw_lines=81`、`total_accepted=81` 且四組零錯誤／拒絕／警告，可說**已觀測到的 raw 內容**通過基本完整性／量價規則檢查。這不證明交易所完整資料、模擬行情與正式行情相等，也不代表可以直接合併或啟用日常服務。非 PASS 時 CLI exit code 1，請先檢查 JSON 報告的逐檔原因，不要修改 raw 來強制過關。
 
 ## 明確限制
 
