@@ -197,15 +197,26 @@ def cmd_intraday_collect(args) -> None:
             finally:
                 # Persist a FAILED/DEGRADED snapshot even if stop itself raises.
                 write_health(status_path, collector.health())
+        health = collector.health()
+        counters = health.get("counters", {})
+        checks = {
+            "clean_shutdown": health.get("state") == "CLOSED",
+            "subscriptions_released": health.get("active_subscription_count") == 0,
+            "queue_drained": health.get("queue_depth") == 0,
+            "raw_capture_without_loss": health.get("collection_status") == "RAW_CAPTURED",
+            "tick_observed": counters.get("raw_written", 0) > 0,
+            "bidask_observed": (not args.with_bidask) or counters.get("book_raw_written", 0) > 0,
+        }
         result = {
             "mode": "ONE_OFF_SIMULATION_QUOTE_SMOKE",
             "simulation": True,
             "real_market_verified": False,
+            "smoke_status": "PASS_CAPTURE_ONLY" if all(checks.values()) else "FAIL",
+            "smoke_checks": checks,
             "sdk_version": str(getattr(sj, "__version__", "unknown")),
             "scope": sources,
-            "health": collector.health(),
+            "health": health,
         }
-        print(json.dumps(result, indent=2, ensure_ascii=False))
     finally:
         # Failed startup or quote-type errors must not leave SDK sessions open.
         # If earlier failure is already propagating, keep the original cause.
@@ -217,6 +228,11 @@ def cmd_intraday_collect(args) -> None:
                 raise RuntimeError(
                     f"Shioaji simulation logout failed ({type(exc).__name__})"
                 ) from None
+    # Print only after SDK logout has succeeded. Never exit zero on a capture
+    # with unresolved subscriptions, worker loss, or missing raw stream.
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    if result["smoke_status"] != "PASS_CAPTURE_ONLY":
+        raise SystemExit(1)
 
 
 def cmd_intraday_audit(args) -> None:
