@@ -248,3 +248,60 @@ def test_p1_unexpected_worker_exception_unsubscribes_and_stops(tmp_path):
     assert c.stop_requested.is_set()
     assert any(x[0] == "unsubscribe" for x in api.calls)
     c.stop()
+
+
+def test_p1_snapshot_exception_cannot_silently_appear_as_valid_capture(tmp_path):
+    c, api = collector(tmp_path)
+    c.start()
+    class BadSDKTick:
+        @property
+        def code(self):
+            raise ValueError("provider object invalid")
+    api.tick_callback("TSE", BadSDKTick())
+    h = c.health()
+    assert h["state"] == "DEGRADED"
+    assert h["collection_status"] == "LOSS_DETECTED"
+    assert h["counters"]["callback_snapshot_error"] == 1
+    assert h["counters"].get("raw_written", 0) == 0
+    c.stop()
+
+
+def test_p1_stop_timeout_keeps_collector_lease_until_worker_exits(tmp_path):
+    import threading
+    from src.market_data.intraday_storage import ArchiveBusyError
+    c, api = collector(tmp_path)
+    c.start()
+    entered = threading.Event()
+    release = threading.Event()
+    def blocking_processing(*args, **kwargs):
+        entered.set()
+        release.wait(timeout=3)
+        return None
+    c.process = blocking_processing
+    api.tick_callback("TSE", SimpleNamespace(code="2327"))
+    try:
+        assert entered.wait(timeout=2)
+        result = c.stop(join_timeout=0)
+        assert result["state"] == "FAILED"
+        assert result["counters"]["worker_stop_timeout"] == 1
+        rival, _ = collector(tmp_path)
+        with pytest.raises(ArchiveBusyError):
+            rival.start()
+    finally:
+        release.set()
+        c.stop(join_timeout=3)
+    assert c.worker is None
+    rival, _ = collector(tmp_path)
+    rival.start()
+    rival.stop()
+
+
+def test_p1_lone_reconnect_event_opens_new_unresolved_gap(tmp_path):
+    c, api = collector(tmp_path)
+    c.start()
+    api.events(200, 13, "reconnected", "")
+    c.queue.join()
+    assert c.health()["gap_count"] == 1
+    assert c.health()["gap_unresolved"] is True
+    assert c.session_id == "sdk-p1-e1"
+    c.stop()
