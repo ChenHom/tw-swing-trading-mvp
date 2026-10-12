@@ -128,6 +128,14 @@ def _quote_types(sj):
     return "tick", "bid_ask"
 
 
+def _legacy_quote_version(sj):
+    """Select v1 callbacks for the older api.quote.subscribe SDK surface."""
+    versions = getattr(sj, "QuoteVersion", None)
+    if versions is None:
+        versions = getattr(getattr(sj, "constant", None), "QuoteVersion", None)
+    return getattr(versions, "v1", None)
+
+
 def cmd_intraday_collect(args) -> None:
     """One-off live read-only smoke ONLY; not intended for unattended operation."""
     if not args.enable_live_smoke or os.environ.get("INTRADAY_LIVE_SMOKE_APPROVED") != "yes":
@@ -169,6 +177,7 @@ def cmd_intraday_collect(args) -> None:
             book_quote_type=book_type if args.with_bidask else None,
             book_store=RawBookStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct)
             if args.with_bidask else None,
+            legacy_quote_version=_legacy_quote_version(sj),
         )
         status_path = Path(args.cache_dir) / "shioaji" / "collector_health.json"
         try:
