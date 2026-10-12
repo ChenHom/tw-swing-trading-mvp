@@ -302,11 +302,12 @@ class ShioajiTickCollector:
                 self.api.on_bidask_stk_v1()(self._on_bidask)
             for sub in self.subscriptions:
                 contract = self._contract(sub.symbol)
-                self._subscribe(contract, sub, self.quote_type)
-                self.active.append((contract, sub, self.quote_type))
-                if self.book_quote_type is not None:
-                    self._subscribe(contract, sub, self.book_quote_type)
-                    self.active.append((contract, sub, self.book_quote_type))
+                with self._quote_lock:
+                    self._subscribe(contract, sub, self.quote_type)
+                    self.active.append((contract, sub, self.quote_type))
+                    if self.book_quote_type is not None:
+                        self._subscribe(contract, sub, self.book_quote_type)
+                        self.active.append((contract, sub, self.book_quote_type))
             self.stop_requested.clear()
             self.state = "HEALTHY"
             self.worker = threading.Thread(target=self._worker_loop, name="intraday-tick-collector", daemon=True)
