@@ -126,7 +126,13 @@ class ShioajiTickCollector:
         received_at = datetime.now(timezone.utc)
         # Provider memory can be reused after returning from a callback; snapshot
         # just the fields required for raw audit, then enqueue without blocking.
-        snapshot = SimpleNamespace(**{key: getattr(tick, key, None) for key in FIELDS})
+        try:
+            snapshot = SimpleNamespace(**{key: getattr(tick, key, None) for key in FIELDS})
+        except Exception as exc:
+            self.counters["callback_snapshot_error"] += 1
+            self.last_error = f"callback_snapshot: {type(exc).__name__}"
+            self.state = "DEGRADED"
+            return
         try:
             self.queue.put_nowait(("tick", exchange, snapshot, received_at))
         except Full:
@@ -139,12 +145,18 @@ class ShioajiTickCollector:
             return
         stamp = datetime.now(timezone.utc)
         snapshot = {}
-        for field in BOOK_FIELDS:
-            value = getattr(book, field, None)
-            if field in ("bid_price", "bid_volume", "ask_price", "ask_volume",
-                         "diff_bid_vol", "diff_ask_vol") and value is not None:
-                value = tuple(value)
-            snapshot[field] = value
+        try:
+            for field in BOOK_FIELDS:
+                value = getattr(book, field, None)
+                if field in ("bid_price", "bid_volume", "ask_price", "ask_volume",
+                             "diff_bid_vol", "diff_ask_vol") and value is not None:
+                    value = tuple(value)
+                snapshot[field] = value
+        except Exception as exc:
+            self.counters["book_callback_snapshot_error"] += 1
+            self.last_error = f"book_callback_snapshot: {type(exc).__name__}"
+            self.state = "DEGRADED"
+            return
         try:
             self.queue.put_nowait(("bidask", exchange, SimpleNamespace(**snapshot), stamp))
         except Full:
@@ -209,7 +221,13 @@ class ShioajiTickCollector:
                 self.session_id = f"{self.transport.session_id}-e{self.transport.gaps}"
             self.counters["resubscribe_success" if ok else "resubscribe_failed"] += 1
             # Reconnected data still has an unfillable gap until separately reviewed.
-            self.state = "DEGRADED"
+            if not ok:
+                self.state = "FAILED"
+                self._fatal = True
+                self.stop_requested.set()
+                self._unsubscribe_all()  # fail closed on exhausted retry budget
+            else:
+                self.state = "DEGRADED"
 
     def _active_topics(self):
         raise NotImplementedError
@@ -335,6 +353,10 @@ class ShioajiTickCollector:
             self.state = "FAILED"
             self.counters["worker_crashed"] += 1
             self.last_error = f"worker: {type(exc).__name__}"
+            # Fail closed: callback errors or unexpected worker failures must
+            # not leave SDK subscribed while the raw writer is dead.
+            self.stop_requested.set()
+            self._unsubscribe_all()
 
     def process(self, exchange: Any, tick: Any, *, received_at: datetime) -> MarketTick | None:
         """Public for deterministic fake-SDK testing. Never called by SDK directly."""
@@ -436,8 +458,39 @@ class ShioajiTickCollector:
             # A successful API subscribe call without a verified quote transport
             # event is not evidence of a connected market feed.
             state = "UNVERIFIED"
+        # Independent dimensions; a successful raw write is NOT a verified
+        # continuous quote session or proof of exchange-level completeness.
+        loss_keys = (
+            "queue_dropped", "book_queue_dropped", "transport_event_dropped",
+            "raw_write_error", "book_raw_write_error", "worker_crashed",
+            "worker_stop_timeout", "resubscribe_failed", "transport_audit_error",
+        )
+        lost = any(self.counters[key] for key in loss_keys) or self._fatal
+        captures = self.counters["raw_written"] + self.counters["book_raw_written"]
+        collection_status = (
+            "LOSS_DETECTED" if lost else
+            "RAW_CAPTURED" if captures else "NO_RAW_OBSERVED"
+        )
+        lifecycle_status = (
+            "FAILED" if state == "FAILED" else
+            "STOPPED" if self.state == "CLOSED" else
+            "NOT_STARTED" if self.state == "DISABLED" else
+            "RUNNING" if self.worker is not None and self.worker.is_alive() else
+            "STARTING_OR_STOPPING"
+        )
+        # Transport status is strictly sourced from SDK transport events.
+        # Missing the initial session-up callback is not silently repaired.
+        transport_verification_status = (
+            "GAP_UNRESOLVED" if self.transport.gap_unresolved else
+            "EVENT_VERIFIED" if self.transport.connection_verified else "UNVERIFIED"
+        )
         return {
             "state": state,
+            "collection_status": collection_status,
+            "lifecycle_status": lifecycle_status,
+            "transport_verification_status": transport_verification_status,
+            "data_quality_status": "UNVERIFIED",  # only offline raw audit can assess content
+            "market_completeness_status": "UNVERIFIED",
             "quote_event_callback_registered": self.quote_event_callback_registered,
             **self.transport.health(),
             "session_id": self.session_id,
