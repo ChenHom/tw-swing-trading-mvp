@@ -96,8 +96,9 @@ def test_real_2327_smoke_entry_remains_blocked_without_explicit_approval(monkeyp
         module.cmd_intraday_collect(SimpleNamespace(enable_live_smoke=True))
 
 
+@pytest.mark.parametrize("fail_login", [False, True])
 def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
-    monkeypatch, tmp_path, capsys,
+    monkeypatch, tmp_path, capsys, fail_login,
 ):
     import sys
     import types
@@ -127,19 +128,23 @@ def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
 
         def login(self, **kwargs):
             observed["login"] = kwargs
+            if fail_login:
+                raise RuntimeError("simulated broker login failure")
 
         def logout(self):
             observed["logout"] = True
 
     sdk_module = types.ModuleType("shioaji")
     sdk_module.Shioaji = FakeShioaji
-    sdk_module.QuoteType = SimpleNamespace(Tick="Tick", BidAsk="BidAsk")
+    # Match the legacy installed SDK: no shioaji.QuoteType at top level.
+    sdk_module.constant = SimpleNamespace(QuoteType=SimpleNamespace(Tick="enum-tick", BidAsk="enum-book"))
     monkeypatch.setitem(sys.modules, "shioaji", sdk_module)
 
     class FakeCollector:
         def __init__(self, api, *, subscriptions, quote_type, store,
                      book_quote_type, book_store):
             observed["subscriptions"] = subscriptions
+            observed["tick"] = quote_type
             observed["bidask"] = book_quote_type
 
         def start(self):
@@ -165,18 +170,45 @@ def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
         lambda _: ([Subscription("2327", "BOARD"), Subscription("2327", "ODD")],
                    {"2327": ["watchlist"]}),
     )
-    module.cmd_intraday_collect(SimpleNamespace(
+    args = SimpleNamespace(
         enable_live_smoke=True, duration_seconds=1,
         cache_dir=str(tmp_path), stop_at_disk_pct=75, with_bidask=True,
-    ))
+    )
+    if fail_login:
+        with pytest.raises(RuntimeError, match="simulated broker login failure"):
+            module.cmd_intraday_collect(args)
+        assert observed["logout"] is True
+        assert observed["simulation"] is True
+        assert "started" not in observed
+        return
+    module.cmd_intraday_collect(args)
     result = json.loads(capsys.readouterr().out)
     assert observed["simulation"] is True
     assert observed["started"] and observed["stopped"] and observed["logout"]
     assert observed["login"]["subscribe_trade"] is False
     assert [x.symbol for x in observed["subscriptions"]] == ["2327", "2327"]
-    assert observed["bidask"] == "BidAsk"
+    assert observed["tick"] == "enum-tick"
+    assert observed["bidask"] == "enum-book"
     assert result["simulation"] is True
     assert result["mode"] == "ONE_OFF_SIMULATION_QUOTE_SMOKE"
     assert result["real_market_verified"] is False
     assert not hasattr(FakeShioaji, "place_order")
     assert not hasattr(FakeShioaji, "activate_ca")
+
+
+def test_quote_type_resolver_supports_modern_exports_and_documented_strings(monkeypatch):
+    import sys
+    import types
+    module = _offline_cli()
+    enum = SimpleNamespace(Tick="stock-tick", BidAsk="stock-bidask")
+    assert module._quote_types(SimpleNamespace(QuoteType=enum)) == (
+        "stock-tick", "stock-bidask"
+    )
+    assert module._quote_types(SimpleNamespace(constant=SimpleNamespace(QuoteType=enum))) == (
+        "stock-tick", "stock-bidask"
+    )
+    # If this SDK exposes no QuoteType enum, official string quote types
+    # are an explicit compatibility fallback.
+    sdk = types.ModuleType("shioaji")
+    monkeypatch.setitem(sys.modules, "shioaji", sdk)
+    assert module._quote_types(sdk) == ("tick", "bid_ask")
