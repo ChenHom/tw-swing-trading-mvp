@@ -130,7 +130,6 @@ def main():
                 kwargs["type"] = _positive_int
             parser_tick_collect.add_argument(*opts, **kwargs)
     parser_tick_collect.add_argument("--enable-live-smoke", action="store_true", help="需另有 INTRADAY_LIVE_SMOKE_APPROVED=yes；未獲人工授權不可用")
-    parser_tick_collect.add_argument("--simulation", action="store_true", help="使用 Shioaji simulation=True；僅驗證模擬環境，不能算真實行情 smoke")
     parser_tick_collect.add_argument("--duration-seconds", type=_positive_int, default=15)
     parser_tick_collect.add_argument("--cache-dir", default="data/raw")
     parser_tick_collect.add_argument("--stop-at-disk-pct", type=float, default=75.0)
