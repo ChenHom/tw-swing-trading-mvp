@@ -129,7 +129,7 @@ def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
         def login(self, **kwargs):
             observed["login"] = kwargs
             if fail_login:
-                raise RuntimeError("simulated broker login failure")
+                raise RuntimeError("simulated broker login failure: id=N000000000")
 
         def logout(self):
             observed["logout"] = True
@@ -179,8 +179,9 @@ def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
         cache_dir=str(tmp_path), stop_at_disk_pct=75, with_bidask=True,
     )
     if fail_login:
-        with pytest.raises(RuntimeError, match="simulated broker login failure"):
+        with pytest.raises(RuntimeError, match="Shioaji simulation login failed") as caught:
             module.cmd_intraday_collect(args)
+        assert "N000000000" not in str(caught.value)
         assert observed["logout"] is True
         assert observed["simulation"] is True
         assert "started" not in observed
