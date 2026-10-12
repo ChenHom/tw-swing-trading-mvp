@@ -96,9 +96,8 @@ def test_real_2327_smoke_entry_remains_blocked_without_explicit_approval(monkeyp
         module.cmd_intraday_collect(SimpleNamespace(enable_live_smoke=True))
 
 
-@pytest.mark.parametrize("simulation", [False, True])
-def test_2327_cli_environment_flag_is_explicit_and_never_calls_trading_api(
-    monkeypatch, tmp_path, capsys, simulation,
+def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
+    monkeypatch, tmp_path, capsys,
 ):
     import sys
     import types
@@ -167,19 +166,17 @@ def test_2327_cli_environment_flag_is_explicit_and_never_calls_trading_api(
                    {"2327": ["watchlist"]}),
     )
     module.cmd_intraday_collect(SimpleNamespace(
-        enable_live_smoke=True, duration_seconds=1, simulation=simulation,
+        enable_live_smoke=True, duration_seconds=1,
         cache_dir=str(tmp_path), stop_at_disk_pct=75, with_bidask=True,
     ))
     result = json.loads(capsys.readouterr().out)
-    assert observed["simulation"] is simulation
+    assert observed["simulation"] is True
     assert observed["started"] and observed["stopped"] and observed["logout"]
     assert observed["login"]["subscribe_trade"] is False
     assert [x.symbol for x in observed["subscriptions"]] == ["2327", "2327"]
     assert observed["bidask"] == "BidAsk"
-    assert result["simulation"] is simulation
-    assert result["mode"] == (
-        "ONE_OFF_SIMULATION_QUOTE_SMOKE" if simulation else "ONE_OFF_READ_ONLY_SMOKE"
-    )
-    assert result["real_market_verified"] is (False if simulation else None)
+    assert result["simulation"] is True
+    assert result["mode"] == "ONE_OFF_SIMULATION_QUOTE_SMOKE"
+    assert result["real_market_verified"] is False
     assert not hasattr(FakeShioaji, "place_order")
     assert not hasattr(FakeShioaji, "activate_ca")
