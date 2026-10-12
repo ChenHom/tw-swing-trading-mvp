@@ -217,3 +217,92 @@ def test_quote_type_resolver_supports_modern_exports_and_documented_strings(monk
     sdk = types.ModuleType("shioaji")
     monkeypatch.setitem(sys.modules, "shioaji", sdk)
     assert module._quote_types(sdk) == ("tick", "bid_ask")
+
+
+class LegacyQuoteOnlySDK(OfflineSDK):
+    """Old installed Shioaji shape: subscribe/unsubscribe on api.quote."""
+    subscribe = None
+    unsubscribe = None
+
+    def __init__(self, *, fail_topic=None):
+        super().__init__()
+        self.contracts = None
+        self.Contracts = SimpleNamespace(Stocks={"2327": "legacy-contract:2327"})
+        self.fail_topic = fail_topic
+        self.quote = SimpleNamespace(
+            set_event_callback=lambda fn: self.registered.update(event=fn),
+            subscribe=self._subscribe_quote,
+            unsubscribe=self._unsubscribe_quote,
+        )
+
+    def _subscribe_quote(self, contract, *, quote_type, intraday_odd, version):
+        topic = (quote_type, intraday_odd)
+        if topic == self.fail_topic:
+            raise RuntimeError("legacy SDK subscription error")
+        self.calls.append(("subscribe", contract, quote_type, intraday_odd, version))
+
+    def _unsubscribe_quote(self, contract, *, quote_type, intraday_odd, version):
+        self.calls.append(("unsubscribe", contract, quote_type, intraday_odd, version))
+
+
+def _legacy_collector(tmp_path, api, *, version="v1"):
+    specs, _ = build_subscriptions(watchlist=["2327"], max_symbols=1)
+    return ShioajiTickCollector(
+        api, subscriptions=specs, quote_type="Tick", store=RawTickStore(tmp_path),
+        book_quote_type="BidAsk", book_store=RawBookStore(tmp_path),
+        legacy_quote_version=version,
+        session_id="legacy-test",
+    )
+
+
+def test_legacy_sdk_uses_quote_subscribe_v1_and_quote_unsubscribe_v1(tmp_path):
+    api = LegacyQuoteOnlySDK()
+    c = _legacy_collector(tmp_path, api)
+    c.start()
+    topics = {(item[2], item[3]) for item in api.calls if item[0] == "subscribe"}
+    assert topics == {
+        ("Tick", False), ("Tick", True), ("BidAsk", False), ("BidAsk", True),
+    }
+    assert len([x for x in api.calls if x[0] == "subscribe"]) == 4
+    assert all(x[1] == "legacy-contract:2327" and x[4] == "v1" for x in api.calls)
+    assert c.health()["quote_event_callback_registered"] is True
+    c.stop()
+    assert len([x for x in api.calls if x[0] == "unsubscribe"]) == 4
+    assert all(x[4] == "v1" for x in api.calls)
+    assert not hasattr(api, "login") and not hasattr(api, "place_order")
+
+
+def test_legacy_sdk_reconnect_resubscribes_all_four_topics_using_v1(tmp_path):
+    api = LegacyQuoteOnlySDK()
+    c = _legacy_collector(tmp_path, api)
+    c.start()
+    api.registered["event"](200, 0, "connected", "up")
+    c.queue.join()
+    api.registered["event"](200, 1, "disconnect", "down")
+    api.registered["event"](200, 13, "reconnected", "up")
+    c.queue.join()
+    h = c.health()
+    assert h["gap_unresolved"] is True
+    assert h["counters"]["resubscribe_success"] == 1
+    assert len([x for x in api.calls if x[0] == "subscribe"]) == 8
+    assert all(x[4] == "v1" for x in api.calls)
+    c.stop()
+
+
+def test_legacy_sdk_rejects_missing_v1_before_subscribe(tmp_path):
+    api = LegacyQuoteOnlySDK()
+    c = _legacy_collector(tmp_path, api, version=None)
+    with pytest.raises(TypeError, match="explicit QuoteVersion.v1"):
+        c.start()
+    assert api.calls == []
+
+
+def test_legacy_sdk_partial_subscription_failure_rolls_back_with_v1(tmp_path):
+    api = LegacyQuoteOnlySDK(fail_topic=("BidAsk", True))
+    c = _legacy_collector(tmp_path, api)
+    with pytest.raises(RuntimeError, match="legacy SDK subscription error"):
+        c.start()
+    assert c.state == "FAILED"
+    assert len([x for x in api.calls if x[0] == "subscribe"]) == 3
+    assert len([x for x in api.calls if x[0] == "unsubscribe"]) == 3
+    assert all(x[4] == "v1" for x in api.calls)
