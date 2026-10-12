@@ -33,7 +33,7 @@ BASE_DIR = Path(__file__).resolve().parent
 ROOT_PATH = os.environ.get("TRADING_WEB_ROOT_PATH", "/trading")
 # 族群資金頁籤資料（由 report sector-flow-dashboard 產生）；放常數讓測試可 monkeypatch。
 SECTOR_FLOW_PATH = BASE_DIR.parents[1] / "data" / "sector_flow" / "dashboard.json"
-INTRADAY_SNAPSHOT_PATH = BASE_DIR.parents[1] / "data" / "intraday" / "dashboard.json"
+INTRADAY_SNAPSHOT_PATH = Path(os.environ.get("INTRADAY_SNAPSHOT_PATH", str(BASE_DIR.parents[1] / "data" / "intraday" / "dashboard.json")))
 
 app = FastAPI(title="台股波段交易儀表板", root_path=ROOT_PATH)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
