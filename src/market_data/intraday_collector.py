@@ -464,6 +464,7 @@ class ShioajiTickCollector:
             "queue_dropped", "book_queue_dropped", "transport_event_dropped",
             "raw_write_error", "book_raw_write_error", "worker_crashed",
             "worker_stop_timeout", "resubscribe_failed", "transport_audit_error",
+            "callback_snapshot_error", "book_callback_snapshot_error",
         )
         lost = any(self.counters[key] for key in loss_keys) or self._fatal
         captures = self.counters["raw_written"] + self.counters["book_raw_written"]
