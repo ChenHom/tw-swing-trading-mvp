@@ -129,8 +129,9 @@ def cmd_intraday_collect(args) -> None:
     settings = AppSettings()
     if not settings.shioaji_api_key or not settings.shioaji_secret_key:
         raise RuntimeError("Shioaji quote credentials not configured")
-    # Real-time quotes require production market feed; trading CA is NEVER activated.
-    api = sj.Shioaji(simulation=False)
+    # Explicit --simulation uses SDK test feed; default remains production quote-only.
+    # Trading CA is NEVER activated in either mode.
+    api = sj.Shioaji(simulation=args.simulation)
     api.login(
         api_key=settings.shioaji_api_key,
         secret_key=settings.shioaji_secret_key,
@@ -154,7 +155,13 @@ def cmd_intraday_collect(args) -> None:
             write_health(status_path, collector.health())
         finally:
             api.logout()
-    result = {"mode": "ONE_OFF_READ_ONLY_SMOKE", "scope": sources, "health": collector.health()}
+    result = {
+        "mode": "ONE_OFF_SIMULATION_QUOTE_SMOKE" if args.simulation else "ONE_OFF_READ_ONLY_SMOKE",
+        "simulation": args.simulation,
+        "real_market_verified": False if args.simulation else None,
+        "scope": sources,
+        "health": collector.health(),
+    }
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
