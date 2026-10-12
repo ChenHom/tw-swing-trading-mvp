@@ -164,6 +164,15 @@ def cmd_intraday_collect(args) -> None:
     # shioaji.constant.QuoteType, not shioaji.QuoteType.
     tick_type, book_type = _quote_types(sj)
     api = sj.Shioaji(simulation=True)
+    # Explicit opt-in only. Both sinks are called after raw append and
+    # canonical normalization on the same Collector worker.
+    publisher = None
+    if getattr(args, "snapshot_output", None):
+        from src.application.services.intraday_snapshot_publisher import IntradaySnapshotPublisher
+        publisher = IntradaySnapshotPublisher(
+            Path(args.snapshot_output),
+            interval_seconds=getattr(args, "snapshot_interval_seconds", 5.0),
+        )
     collector = None
     try:
         try:
@@ -186,17 +195,36 @@ def cmd_intraday_collect(args) -> None:
             book_store=RawBookStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct)
             if args.with_bidask else None,
             legacy_quote_version=_legacy_quote_version(sj),
+            sink=publisher.on_tick if publisher is not None else None,
+            book_sink=publisher.on_book if publisher is not None and args.with_bidask else None,
         )
         status_path = Path(args.cache_dir) / "shioaji" / "collector_health.json"
         try:
             collector.start()
-            time.sleep(args.duration_seconds)
+            if publisher is None:
+                time.sleep(args.duration_seconds)
+            else:
+                # Only the CLI thread performs snapshot file IO. Callbacks and
+                # raw writer never wait on a Web snapshot write.
+                until = time.monotonic() + args.duration_seconds
+                while time.monotonic() < until:
+                    publisher.publish(collector.health())
+                    if collector.health().get("state") == "FAILED":
+                        break
+                    time.sleep(min(1.0, max(0.0, until - time.monotonic())))
         finally:
             try:
                 collector.stop()
             finally:
-                # Persist a FAILED/DEGRADED snapshot even if stop itself raises.
-                write_health(status_path, collector.health())
+                # Publish CLOSED/FAILED as the last snapshot, not a misleading
+                # perpetual RUNNING view after this short simulation smoke.
+                if publisher is not None:
+                    try:
+                        publisher.publish(collector.health(), force=True)
+                    finally:
+                        write_health(status_path, collector.health())
+                else:
+                    write_health(status_path, collector.health())
         health = collector.health()
         counters = health.get("counters", {})
         checks = {
