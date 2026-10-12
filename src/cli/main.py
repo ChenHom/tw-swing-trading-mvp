@@ -145,6 +145,10 @@ def main():
     parser_tick_collect.add_argument("--cache-dir", default="data/raw")
     parser_tick_collect.add_argument("--stop-at-disk-pct", type=float, default=75.0)
     parser_tick_collect.add_argument("--with-bidask", action="store_true", help="需原有雙閘門：同一連線增加五檔行情唯讀訂閱")
+    parser_tick_collect.add_argument("--snapshot-output", default=None,
+        help="可選：由同一 Collector 週期性輸出唯讀 dashboard.json；預設不啟用")
+    parser_tick_collect.add_argument("--snapshot-interval-seconds", type=float, default=5.0,
+        help="輸出週期 1..30 秒；只在明確指定 --snapshot-output 時生效")
 
     parser_validate = market_subs.add_parser("validate", help="驗證資料庫中的日 K 線行情")
     parser_validate.add_argument("--last-sessions", type=int, default=60, help="驗證最近幾筆交易日的行情數據")
