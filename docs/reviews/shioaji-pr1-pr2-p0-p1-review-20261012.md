@@ -1,7 +1,7 @@
 # PR-1 / PR-2 P0–P1 Review — Shioaji 2327 quote capture
 
 Date: 2026-10-12. Scope: `feat/shioaji-bidask-observations-pr2` (stacked PR-2, incorporates PR-1).
-Status: **P0/P1 code + synthetic regressions completed; 2327 host audit and live reconnect still unverified.** No PR merge, deploy, cron or broker trading API.
+Status: **P0/P1 code + synthetic regressions completed; P0 operator-host offline raw audit PASS_RAW_ONLY (81/81).** Live SDK reconnect / soak / production market permission still unverified. No PR merge, deploy, cron or broker trading API.
 
 ## Observed smoke evidence (from operator's 2026-10-12 console)
 
@@ -10,7 +10,7 @@ Status: **P0/P1 code + synthetic regressions completed; 2327 host audit and live
 - Collector health after stop `CLOSED`, raw_tick accepted/written 15, BidAsk accepted/written 66, queue 0, last_error empty.
 - File line counts captured by operator (not opened by CI): Tick BOARD **9**, ODD **6**; BidAsk BOARD **60**, ODD **6**; **81** total.
 - Transport initial event absent from registered callback (`transport_state=UNVERIFIED`, `connection_verified=false`); early SDK `Session up` is not evidence of an audited quote transport session.
-- **Cannot assert raw values, sha256, latency, or replay are correct until the host runs the new offline audit.** The original 81 raw lines are not in GitHub.
+- **Operator subsequently ran the strict offline audit on the original host (2026-10-12, commit `8606b090`)**: `status=PASS_RAW_ONLY`, `total_raw_lines=81`, `total_accepted=81`, all four streams `errors=[]`, `warnings=[]`, `rejected={}`. SHA-256 file digests recorded below; these raw files remain on the operator's machine and were **not independently read by GitHub CI**. No exchange-level feed completeness claim is made.
 
 ## P0 — implemented
 
@@ -30,9 +30,9 @@ Status: **P0/P1 code + synthetic regressions completed; 2327 host audit and live
 - Broker login failures are sanitized before raising to avoid replaying SDK exception fields such as account identifiers; finally path attempts SDK logout. Failed stop still triggers writing a health snapshot when Collector was constructed.
 - Fake SDK regression tests cover initial quote subscriptions, failure rollback, successful resubscribe, terminal retry exhaustion, two distinct disconnect epochs, worker crashes, quote-only SDK version compatibility, login error redaction, locks/retention and no trading API use.
 
-## P0 host audit of original 81 lines — required next step
+## P0 host audit of original 81 lines — completed (operator evidence)
 
-Execute **in detached smoke worktree** after `git fetch` / `git switch --detach origin/feat/shioaji-bidask-observations-pr2`. The audit is fully offline and does not need `.env`:
+The operator executed the command below in detached smoke worktree at `8606b090` on 2026-10-12. The audit is fully offline and does not need `.env`:
 
 ```bash
 python3 -m app market intraday-audit \
@@ -46,11 +46,25 @@ python3 -m app market intraday-audit \
   --output "$HOME/shioaji-2327-20261012-quality.json"
 ```
 
-Verify JSON status `PASS_RAW_ONLY`, `total_raw_lines=81`, `total_accepted=81`, each four rows have zero errors/warnings/rejections, and raw SHA-256 values. If not, inspect the error per file; do not edit raw to force green. Compare provider's independent market tape if true completeness is required.
+**Observed result:** `PASS_RAW_ONLY`, 81 raw lines / 81 canonical accepted, no errors/warnings/rejections across all four files. This closes P0 *observed raw integrity* acceptance; independent exchange tape and transport continuity are still `UNVERIFIED`. See the per-stream SHA-256 and timing details immediately below.
+
+### Operator-reported per-file quality evidence
+
+| Stream | Raw / accepted | SHA-256 (file bytes) | Reported max event→receipt delay | Errors / warnings / rejects |
+|---|---:|---|---:|---|
+| Tick BOARD | 9 / 9 | `09985b529d75ff738487c1c7f85de0964d8804e325d8f5b97cbb1dd0d72245b8` | -0.002441 s | 0 / 0 / 0 |
+| Tick ODD | 6 / 6 | `624bf29e9d5262dd802d93151bc74b94a4285284ad779149868b90738fdcebe3` | +0.190472 s | 0 / 0 / 0 |
+| BidAsk BOARD | 60 / 60 | `be57117a14a41612fe687e7d93ec5f548e1e99a190ce739a1fb7a32d4ec0fa5f` | +0.163159 s | 0 / 0 / 0 |
+| BidAsk ODD | 6 / 6 | `6fa0c1969e3733471b39da5074163329fa56730ef2100183e5f8967205136b3c` | +0.190694 s | 0 / 0 / 0 |
+
+- All four streams have `errors=[]`, `warnings=[]`, `rejected={}` and timestamps on **2026-10-12** (Asia/Taipei).
+- Tick BOARD reported max delay is **negative**: all observed event timestamps were a few milliseconds ahead of their receipt timestamps. Small permitted skew is not proof of zero transport delay.
+- Reported sample units: Tick BOARD **1,000 shares**, ODD **220 shares**; BidAsk best bid volumes BOARD **27,000 shares**, ODD **4,705 shares**. These represent separate markets and are not pooled.
+- Four digests are stored as operator-provided checkpoints, **not independently recomputed** by GitHub. The per-event stream audit exercises canonical conversion and validation but does not validate broker-vs-exchange end-to-end completeness or full-day coverage.
 
 ## Merge / deployment gate
 
 - PR-1 and PR-2 stay Draft. CI green + simulation 30s **is not** a true live production-feed smoke or daylong soak.
-- Must review **actual** 81-line quality output before claiming P0 host data validation.
+- **P0 host raw-content audit accepted from operator-provided output** (81/81 valid with SHA-256 per file). This is not equivalent to confirming the complete market feed; the original files were not transferred to CI.
 - P1 SDK **real disconnect/reconnect**, unrecoverable subscribe, long-duration capacity, broker permission and runtime versions remain untested on operator's host. Do not forcibly disconnect the service or activate broker trading.
 - No new service/cron enabled; original master working tree / `app.db` untouched. Do not merge dependent PR-3/PR-4 until stack refreshed and revalidated.
