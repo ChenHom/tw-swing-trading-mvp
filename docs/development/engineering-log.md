@@ -6,6 +6,15 @@
 - 新增手動 market intraday-maintain：依 XTAI 交易日壓縮已結束資料、輸出容量 80/90% 檢查與至少 180 交易日 retention audit（永不自動刪研究來源）；真實服務/cron 仍未啟用。
 - 新增 tests/unit/test_intraday_reliability.py，PR-2 補上同一 Collector Tick + BidAsk 重訂及五檔 archive 互斥測試。詳細限制 docs/operations/shioaji-intraday-reliability.md。
 - 仍待使用者額外授權的一次性唯讀 live SDK smoke、長時間負載與實機部署驗證，REJECTED 策略不變。
+## 2026-10-08 — Shioaji PR-2：BidAsk 與 ObservationEvent（stacked PR #3，尚未實盤啟用）
+
+- 以 `feat/shioaji-tick-collector-pr1` 為 base 建立 `feat/shioaji-bidask-observations-pr2`；[PR #3](https://github.com/ChenHom/tw-swing-trading-mvp/pull/3) 僅顯示相對 PR-1 的新增內容。
+- `src/market_data/intraday_book.py` 建立原始 BidAsk snapshot、BOARD / ODD 分離、價格與成交量按現有 x10000/股換算、五檔非連續/交叉/時效驗證、獨立 JSONL 與 gzip replay。差分掛單量只保留稽核資料，不能推斷撤單、買盤意圖或成交。
+- `src/market_data/intraday_observations.py` 新增 deterministic、無券商寫入權限的觀察事件（SPREAD / BOOK_IMBALANCE / SUPPORT / BREAKOUT），缺損與 stale 只給 INCONCLUSIVE，所有支撐阻力須事前固定 plan。
+- `intraday_collector.py` 延伸為可選同一 SDK 登入/queue 的 Tick+BidAsk 訂閱，退訂按各 quote_type 分別回退。預設仍 Tick-only。
+- CLI 新增 `market intraday-book-replay`（離線），真行情仍只存在原有雙閘門的 `intraday-smoke --with-bidask`，此次未登入、未載交易 CA、未部署服務或排程。
+- 新測試 `tests/unit/test_intraday_book.py` 與 `.github/workflows/intraday-book-pr2.yml`，操作文件 `docs/operations/shioaji-intraday-book-pr2.md`。離線 CI [#37742795824](https://github.com/ChenHom/tw-swing-trading-mvp/actions/runs/37742795824)：**47 passed + Python 3.10 compileall 成功**。資料品質 UNKNOWN 預設 INCONCLUSIVE；事件 ID 綁 plan digest，避免更改門檻卻重用同證據識別碼。保留 D1–D10 決策，未解除任何 REJECTED 策略。
+
 ## 2026-10-08 — Shioaji Tick Collector PR-1（開發分支；未合併、未上線）
 
 - 依 docs PR #1 的 D1–D10 已確認規格，新增獨立唯讀 Tick collector：`src/market_data/intraday_tick.py`、`intraday_collector.py`、`src/cli/intraday.py`。不取代既有 `ShioajiMarketDataProvider.fetch_kbars`。

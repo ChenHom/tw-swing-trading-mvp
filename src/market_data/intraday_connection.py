@@ -52,11 +52,18 @@ class QuoteTransportAudit:
         if event_code in (1, 2, 4, 5, 12, 17, 19):
             self.transport_state = "RECONNECTING" if event_code == 12 else "DOWN"
             self.connection_verified = False
+            # Count each *new* disconnect epoch even while old historical
+            # gaps remain unresolved; this is used in collector_session_id.
+            new_gap = (not self.resubscribe_required and old not in ("DOWN", "RECONNECTING"))
             self.resubscribe_required = True
-            if not self.gap_unresolved:
+            if new_gap:
                 self.gaps += 1
             self.gap_unresolved = True
         elif event_code == 13:
+            # SDK may emit a lone reconnected event after a lost down event.
+            # It still denotes an unverifiable interval that needs its own epoch.
+            if not self.resubscribe_required:
+                self.gaps += 1
             self.transport_state = "RECOVERING"
             self.connection_verified = False
             self.resubscribe_required = True
