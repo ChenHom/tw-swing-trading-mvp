@@ -1,3 +1,9 @@
+## 2026-10-12 — PR-4 與 PR-3 最新主線整合
+
+- PR-3 更新為 `ab308723`，已納入 PR-1/2 P0/P1 安全修正及 116 項離線回歸。PR-4 以非強制雙父節點 merge 更新，不覆蓋 PR-3 最新研究核心與 CLI 端到端測試。
+- 只移入 Web 唯讀 Dashboard / snapshot publisher 的增量，預設關閉，不加入交易 API、任何 Shioaji 登入、systemd 或 cron。
+- PR-4 預設 Draft；未驗證連線 heartbeat、研究資料完整性、持續即時 Publisher、正式 Web 服務，不稱已上線。
+
 ## 2026-10-08 — PR-4：既有 Web 盤中唯讀觀察（Draft #5）與跨 PR Review
 
 - `src/application/services/intraday_dashboard.py` + `src/web/server.py`：從版本化本機快照唯讀取資料，掛 `/trading/intraday`、status/symbol/snapshot API，feature flag 預設 OFF。
@@ -5,6 +11,21 @@
 - 專項 CI：Web/service/API 18 passed（1 warning）、PR-1～3 研究回歸 63 passed。未操作正式主機，不宣稱實時服務已運作。
 - 跨 PR Review：`docs/reviews/shioaji-pr1-pr4-code-review-20261008.md` 區分已修與 BLOCKER，並留言於實作 PR #2～5；目前 NO-GO 正式合併／上線，仍需可靠 SDK reconnect、180 日儲存生命週期、研究統計及持續 heartbeat/snapshot publisher。
 
+## 2026-10-08 — PR-3：盤中前向執行品質研究（Draft #4）
+
+- 實作 `src/application/research/intraday_evaluation.py`，要求凍結 manifest 與前向候選 lineage，按當下已收到的 quote 估算 baseline/challenger 的 **indicative** ask 差額；不假裝有實單成交。
+- 所有 MISSED / INSUFFICIENT_DATA / INVALID 都保留，60 交易日 / 100 獨立候選 / 後段 20 日 OOS 必須是有可評估報價的研究 cohort；不足為 EVIDENCE_PENDING。
+- 對抗 Code Review：加入跨 SDK session、時間穿越與重複 opportunity 的拒絕；修復 CSV CRLF 破壞 immutable report，再產生完整 `comparison.json`、`manifest.json`、`cohort.csv`、`exclusions.jsonl`、`lineage.json`、`comparison.md`。
+- 以 GitHub Actions offline Python 測試驗證；未接真實行情，尚非完整費用/成交機率/淨期望值研究，不解除國泰禁買或 REJECTED 裁決。
+
+## 2026-10-08 — PR-1 / PR-2 reliability hardening (offline only)
+
+- 根據 Code Review R1/R2 阻擋項，新增 intraday_connection.py：依 Shioaji 官方 Quote Event code 0/1/2/4/5/12/13/17/19 紀錄連線失敗與資料缺口；SDK 原生處理網路重連，worker 在重連事件後有限次重新訂閱 Tick/可選 BidAsk，同一 session 不再登入。
+- 斷線前後 canonical collector_session_id 加 epoch 後綴，成功重新訂閱仍保留 gap_unresolved 並降級；沒有官方心跳的情況維持 UNVERIFIED，不宣稱資料完整。
+- 新增 intraday_storage.py：Tick/BidAsk 共用 O_APPEND、跨程序 flock、每筆 fsync 的 raw journal；Collector 整段生命週期持有鎖；維護程式不可在 Collector 運作時壓縮；每檔 gzip 驗證 raw JSONL / SHA256 manifest，錯誤不刪除原檔。
+- 新增手動 market intraday-maintain：依 XTAI 交易日壓縮已結束資料、輸出容量 80/90% 檢查與至少 180 交易日 retention audit（永不自動刪研究來源）；真實服務/cron 仍未啟用。
+- 新增 tests/unit/test_intraday_reliability.py，PR-2 補上同一 Collector Tick + BidAsk 重訂及五檔 archive 互斥測試。詳細限制 docs/operations/shioaji-intraday-reliability.md。
+- 仍待使用者額外授權的一次性唯讀 live SDK smoke、長時間負載與實機部署驗證，REJECTED 策略不變。
 ## 2026-10-08 — Shioaji PR-2：BidAsk 與 ObservationEvent（stacked PR #3，尚未實盤啟用）
 
 - 以 `feat/shioaji-tick-collector-pr1` 為 base 建立 `feat/shioaji-bidask-observations-pr2`；[PR #3](https://github.com/ChenHom/tw-swing-trading-mvp/pull/3) 僅顯示相對 PR-1 的新增內容。
