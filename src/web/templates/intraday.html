@@ -13,6 +13,7 @@
   <strong>Collector：{{ intraday.status }}</strong>
   <span>市場時段：{{ intraday.market_session }}</span>
   <span>資料狀態：{{ intraday.freshness }}</span>
+  <span>顯示模式：{{ intraday.display_mode }}</span>
   <span>快照產生：{{ intraday.generated_at or '尚無資料' }}</span>
   <span>最近連線心跳：{{ intraday.last_heartbeat_at or '尚未驗證' }}</span>
 </div>
@@ -20,7 +21,7 @@
 {% if intraday.status == "DISABLED" %}
 <p class="alert">盤中觀察目前未啟用。未經獨立核准，不會連接永豐行情或啟用自動收集。</p>
 {% elif intraday.status != "OBSERVING" %}
-<p class="alert">行情未驗證、已過期或 Collector 已停止；已隱藏可誤認為即時報價的價格。資料僅供事後稽核。</p>
+<p class="alert">行情未驗證、已過期或 Collector 已停止，並非可交易的即時報價。僅在獨立開啟歷史參考模式時顯示過去的觀測值，請以事件時間為準。</p>
 {% endif %}
 
 {% for item in intraday.symbols %}
@@ -34,29 +35,36 @@
       <p><strong>{{ '%.4f'|format(item.tick.price_x10000 / 10000) }} 元</strong></p>
       <p>本筆 {{ item.tick.trade_volume_shares }} 股；成交時間 {{ item.tick.event_time }}</p>
       <p>收到時間 {{ item.tick.received_at }}</p>
+      {% elif item.reference_tick %}
+      <p class="alert"><strong>歷史參考價（未驗證／非即時）：{{ '%.4f'|format(item.reference_tick.price_x10000 / 10000) }} 元</strong></p>
+      <p>當時本筆 {{ item.reference_tick.trade_volume_shares }} 股；成交時間 {{ item.reference_tick.event_time }}</p>
+      <p>原始接收時間 {{ item.reference_tick.received_at }}；不得作為現在買賣依據。</p>
       {% else %}
       <p>—（無可信的當前成交價）</p>
       {% endif %}
     </div>
     <div>
       <h3>五檔（股）</h3>
-      {% if item.book %}
+      {% if item.book or item.reference_book %}
+      {% set shown_book = item.book if item.book else item.reference_book %}
+      {% if item.reference_book %}<p class="alert">歷史五檔（未驗證／非即時），接收於 {{ item.reference_book.received_at }}；不是目前委託量。</p>{% endif %}
       <table class="intraday-book">
         <thead><tr><th>委買量</th><th>買價</th><th>賣價</th><th>委賣量</th></tr></thead>
         <tbody>
         {% for i in range(5) %}
           <tr>
-            <td>{{ item.book.bid_volumes_shares[i] if item.book.bid_volumes_shares[i] is not none else '—' }}</td>
-            <td>{{ '%.4f'|format(item.book.bid_prices_x10000[i] / 10000) if item.book.bid_prices_x10000[i] is not none else '—' }}</td>
-            <td>{{ '%.4f'|format(item.book.ask_prices_x10000[i] / 10000) if item.book.ask_prices_x10000[i] is not none else '—' }}</td>
-            <td>{{ item.book.ask_volumes_shares[i] if item.book.ask_volumes_shares[i] is not none else '—' }}</td>
+            <td>{{ shown_book.bid_volumes_shares[i] if shown_book.bid_volumes_shares[i] is not none else '—' }}</td>
+            <td>{{ '%.4f'|format(shown_book.bid_prices_x10000[i] / 10000) if shown_book.bid_prices_x10000[i] is not none else '—' }}</td>
+            <td>{{ '%.4f'|format(shown_book.ask_prices_x10000[i] / 10000) if shown_book.ask_prices_x10000[i] is not none else '—' }}</td>
+            <td>{{ shown_book.ask_volumes_shares[i] if shown_book.ask_volumes_shares[i] is not none else '—' }}</td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
-      {% if item.metrics %}
-      <p class="hint">可見量失衡 {{ '%.1f'|format(item.metrics.imbalance_bps / 100) ~ '%' if item.metrics.imbalance_bps is not none else '無結論' }}，並非市場買超</p>
-      {% endif %}
+      {% set shown_metrics = item.metrics if item.metrics else item.reference_metrics %}
+      {% if shown_metrics %}
+      <p class="hint">掛單可見量失衡 {{ '%.1f'|format(shown_metrics.imbalance_bps / 100) ~ '%' if shown_metrics.imbalance_bps is not none else '無結論' }}，並非市場買超；歷史值不代表當前狀態。</p>
+      {% endif %>
       {% else %}
       <p>—（五檔資料過期或尚未核實）</p>
       {% endif %}
@@ -77,7 +85,7 @@
 <div class="card"><p>尚無訂閱的盤中觀察標的，或尚未產生唯讀快照。</p></div>
 {% endfor %}
 
-<p class="hint">本頁每 30 秒讀取一次本機快照；不向券商請求行情。資料更新需由獨立、已核准的 Collector 產生快照；僅開啟此頁不會啟動 Collector。</p>
+<p class="hint">本頁每 30 秒重新讀取本機快照，不向券商請求行情。歷史參考值需額外開啟 INTRADAY_SHOW_HISTORICAL=1，且不是即時交易報價。僅開啟此頁不會啟動 Collector。</p>
 {% endblock %}
 {% block scripts %}
 <script>
