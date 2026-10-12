@@ -504,6 +504,7 @@ class ShioajiTickCollector:
             **self.transport.health(),
             "session_id": self.session_id,
             "subscriptions": len(self.subscriptions) * (2 if self.book_quote_type is not None else 1),
+            "active_subscription_count": len(self.active),
             "bidask_enabled": self.book_quote_type is not None,
             "queue_depth": self.queue.qsize(),
             "counters": dict(self.counters),
