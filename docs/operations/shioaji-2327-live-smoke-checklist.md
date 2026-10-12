@@ -34,49 +34,55 @@ python3 -m app market intraday-plan --symbols 2327 --max-symbols 1
 
 離線斷言：只產生一檔股票、兩種 lot；假的 SDK 在 **同一 session** 掛 4 個 quote topics；停機退訂 4 topics；不會呼叫 login／交易 API；未授權的 live entry 必須在 SDK import 之前被阻擋。
 
-## Shioaji 模擬環境測試（本輪預設先執行）
+## Shioaji 模擬環境測試（2026-10-12，暫時固定）
 
-本輪先用 CLI 的明確 `--simulation` 開關，讓 SDK 呼叫 `sj.Shioaji(simulation=True)`。
-**不更動 Production 預設**；省略開關時仍是 `simulation=False`。
-這是券商模擬連線，並非 2327 真實市場資料驗收。固定單一標的，
-整股 + 零股與 Tick + BidAsk 仍全數嘗試訂閱；
-模擬環境對盤中零股行情是否供應需以實際回傳和 SDK 文件核對。
+`src/cli/intraday.py` 的 **`intraday-smoke` 唯一入口**暫時直接使用
+`sj.Shioaji(simulation=True)`。目前指令**沒有 `--simulation` 參數**，
+不會嘗試正式環境登入；要恢復真正行情測試，必須在未來另行審查修改。
+這是券商**模擬連線**，不能視為 2327 真實市場資料驗收。
 
 保留現有雙重授權閘門與 1–60 秒時間限制。複用原專案已存在的
-`SHIOAJI_API_KEY` / `SHIOAJI_SECRET_KEY`，無須啟動 CA 或交易權限。
-在 detached worktree 更新至包含 `--simulation` 的最新 PR2 後：
+`SHIOAJI_API_KEY` / `SHIOAJI_SECRET_KEY`，不啟動 CA、交易權限或下單。
+
+在 detached worktree 更新 PR-2 最新程式，先確認沒有未保存修改：
 
 ```bash
-# 不應修改主專案 master；先確定 worktree 無未儲存的異動
+cd ~/services/stock/tw-day-trading-smoke
 git status --short
 git fetch origin feat/shioaji-bidask-observations-pr2
 git switch --detach origin/feat/shioaji-bidask-observations-pr2
 python3 -m app market intraday-smoke --help
 ```
 
-原本的 `python3 -c ...` + `dotenv_values("../tw-day-trading/.env")` 執行方式
-不須改憑證載入邏輯，只需在原命令尾端加上 `--simulation`。
-`mode` 結果會標為 `ONE_OFF_SIMULATION_QUOTE_SMOKE`，
-`simulation: true` 且 `real_market_verified: false`，
-不能列為正式市場資料合格。
-
-## 實際盤中測試（**尚未核准，也未執行**）
-
-在確認工作樹、venv、SDK API 版本、行情權限、獨立儲存容量和原本正式排程後，另行核准才使用以下示意指令：
+原本 `python3 -c ...` + `dotenv_values("../tw-day-trading/.env")` 的憑證載入
+方式維持不變，執行 `market intraday-smoke` **不加 `--simulation`**：
 
 ```bash
-INTRADAY_LIVE_SMOKE_APPROVED=yes \
-python3 -m app market intraday-smoke \
+INTRADAY_LIVE_SMOKE_APPROVED=yes python3 -c '
+import os
+from dotenv import dotenv_values
+
+config = dotenv_values("../tw-day-trading/.env")
+for key in ("SHIOAJI_API_KEY", "SHIOAJI_SECRET_KEY"):
+    if not os.environ.get(key) and config.get(key):
+        os.environ[key] = config[key]
+
+from src.cli.main import main
+main()
+' market intraday-smoke \
   --enable-live-smoke \
-  --duration-seconds 30 \
   --symbols 2327 \
   --max-symbols 1 \
   --with-bidask \
-  --cache-dir /path/to/isolated/shioaji-2327-smoke \
+  --duration-seconds 30 \
+  --cache-dir "$HOME/shioaji-2327-smoke" \
   --stop-at-disk-pct 75
 ```
 
-**不要在現在執行這段實盤指令。** 不能把 PR-1/2 的 65+ 離線綠燈當作一次已授權實盤煙霧測試。此步驟必須在擁有 Shioaji 合法行情憑證的主機上完成；不載入 CA、不呼叫下單或刪單，不重啟 Web、不安裝 systemd、也不建立 cron。
+此模式輸出 `mode: ONE_OFF_SIMULATION_QUOTE_SMOKE`、
+`simulation: true`、`real_market_verified: false`。
+必須另外核對 Tick/BidAsk 是否真的有資料落盤；
+未觀察到零股行情時不得宣稱模擬 SDK 訂閱驗證成功。
 
 ## 測試通過標準／失敗判斷
 
