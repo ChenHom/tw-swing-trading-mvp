@@ -93,7 +93,8 @@ def _session_label(now: datetime) -> str:
 
 
 def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
-                  now: datetime | None = None, max_age_seconds: int = 30) -> dict[str, Any]:
+                  now: datetime | None = None, max_age_seconds: int = 30,
+                  include_history: bool = False) -> dict[str, Any]:
     """Never present cached/unverified/stale quote as a live actionable price."""
     now = now or _now()
     if now.tzinfo is None:
@@ -103,6 +104,7 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
         "freshness": "UNAVAILABLE", "market_session": _session_label(now),
         "generated_at": None, "last_heartbeat_at": None,
         "symbols": [], "not_trade_signal": True,
+        "display_mode": "NO_CURRENT_PRICE", "historical_reference_only": True,
     }
     if not enabled:
         return skeleton
@@ -164,16 +166,20 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
             lot = item["lot_type"]
             tick = item.get("tick")
             book = item.get("book")
+            tick_age = None
+            book_age = None
             # Do not trust a stale Tick or wrong-lot entry just because the snapshot is new.
             if isinstance(tick, dict):
                 try:
                     age_seconds = (now-_iso(tick["received_at"])).total_seconds()
+                    tick_age = age_seconds
                     px = tick.get("price_x10000")
                     vol = tick.get("trade_volume_shares")
                     if (tick.get("symbol") != symbol or tick.get("lot_type") != lot
                             or tick.get("exchange") != item.get("exchange")
                             or tick.get("collector_session_id") != health.get("session_id")
-                            or not 0 <= age_seconds <= max_age_seconds
+                            or age_seconds < 0
+                            or (age_seconds > max_age_seconds and not include_history)
                             or type(px) is not int or px <= 0
                             or type(vol) is not int or vol < 0):
                         tick = None
@@ -184,6 +190,7 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
             if isinstance(book, dict):
                 try:
                     age_seconds = (now-_iso(book["received_at"])).total_seconds()
+                    book_age = age_seconds
                     arrays = [book.get(k) for k in (
                         "bid_prices_x10000", "ask_prices_x10000",
                         "bid_volumes_shares", "ask_volumes_shares",
@@ -200,17 +207,34 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
                     if (book.get("symbol") != symbol or book.get("lot_type") != lot
                             or book.get("exchange") != item.get("exchange")
                             or book.get("collector_session_id") != health.get("session_id")
-                            or not 0 <= age_seconds <= max_age_seconds
+                            or age_seconds < 0
+                            or (age_seconds > max_age_seconds and not include_history)
                             or not values_ok or crossed):
                         book = None
                 except (KeyError, TypeError, ValueError):
                     book = None
             else:
                 book = None
-            # Even apparently fresh values cannot be labeled live unless session verified.
+            # Separate historical/unverified *reference* values from current
+            # live quote fields. A stopped or unverified Collector can never
+            # fabricate a verified live price by rewriting generated_at.
+            reference_tick = None
+            reference_book = None
+            reference_metrics = None
             if status != "OBSERVING":
+                if include_history:
+                    reference_tick = tick
+                    reference_book = book
+                    reference_metrics = item.get("metrics") if book else None
                 tick = None
                 book = None
+            else:
+                # A fresh global snapshot is not proof an individual symbol
+                # traded recently. Exclude stale single-symbol quotes.
+                if tick_age is None or tick_age > max_age_seconds:
+                    tick = None
+                if book_age is None or book_age > max_age_seconds:
+                    book = None
             events = item.get("observations", [])
             if not isinstance(events, list):
                 events = []
@@ -218,14 +242,26 @@ def load_snapshot(path: Path = DEFAULT_PATH, *, enabled: bool = False,
             clean.append({
                 "symbol": symbol, "exchange": item.get("exchange"), "lot_type": lot,
                 "tick": tick, "book": book, "metrics": item.get("metrics") if book else None,
+                "reference_tick": reference_tick,
+                "reference_book": reference_book,
+                "reference_metrics": reference_metrics,
+                "reference_label": "HISTORICAL_UNVERIFIED_NOT_LIVE" if reference_tick or reference_book else None,
                 "observations": events[-20:], "freshness": (
-                    "OBSERVING" if tick or book else "WAITING_FOR_TICK_OR_BOOK"
+                    "OBSERVING" if tick or book else
+                    "HISTORICAL_REFERENCE" if reference_tick or reference_book else
+                    "WAITING_FOR_TICK_OR_BOOK"
                 ),
             })
         return {
             **skeleton, "status": status, "generated_at": data["generated_at"],
             "last_heartbeat_at": heartbeat, "symbols": clean,
             "freshness": "VERIFIED" if status == "OBSERVING" else "NOT_CURRENT",
+            "display_mode": (
+                "LIVE_VERIFIED" if status == "OBSERVING" else
+                "HISTORICAL_REFERENCE" if include_history and any(
+                    x["reference_tick"] or x["reference_book"] for x in clean
+                ) else "NO_CURRENT_PRICE"
+            ),
         }
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         skeleton["status"] = "NO_DATA"
