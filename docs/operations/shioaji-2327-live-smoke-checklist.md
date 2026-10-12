@@ -1,13 +1,13 @@
 # Shioaji 2327（國巨）唯讀行情 smoke — 操作計畫
 
-更新：2026-10-08。狀態：**OFFLINE_PREFLIGHT_ONLY；LIVE_SMOKE_NOT_AUTHORIZED / NOT_EXECUTED**。
+更新：2026-10-12。狀態：**2327 模擬行情 30 秒 Smoke 已收集 81 筆；逐筆主機資料稽核待執行。正式行情未授權／未測。**
 
 ## 固定測試範圍
 
 - 股票：**2327**，只測單一股票，不從持倉或候選資料額外選股。
 - 四個 SDK quote topics：`BOARD Tick`、`ODD Tick`、`BOARD BidAsk`、`ODD BidAsk`；整股與零股絕不相加。
-- 下一正常交易日：**2026-10-12（一）**。10/09 國慶日補假，10/10–11 週末。建議 09:05–09:30 測試；正式單次 smoke 30 秒。
-- **D10 雙閘門**：目前只有規格核准，真正唯讀行情登入／訂閱必須再明確核准；之後日常自動收集還需第二次獨立核准。
+- 已於 **2026-10-12（一）10:51** 在測試 Worktree 執行單次 30 秒模擬行情收集；需另外核准真實市場資料及自動常駐收集。
+- **D10 雙閘門**：使用者已授權本次模擬環境唯讀登入測試；真實行情 `simulation=False` 與日常自動收集依然都未獲授權，須各自核准。
 
 ## 今天離線檢查（完全不需券商 API）
 
@@ -34,7 +34,7 @@ python3 -m app market intraday-plan --symbols 2327 --max-symbols 1
 
 離線斷言：只產生一檔股票、兩種 lot；假的 SDK 在 **同一 session** 掛 4 個 quote topics；停機退訂 4 topics；不會呼叫 login／交易 API；未授權的 live entry 必須在 SDK import 之前被阻擋。
 
-## Shioaji 模擬環境測試（2026-10-12，暫時固定）
+## Shioaji 模擬環境測試（2026-10-12 已執行；暫時固定）
 
 `src/cli/intraday.py` 的 **`intraday-smoke` 唯一入口**暫時直接使用
 `sj.Shioaji(simulation=True)`。目前指令**沒有 `--simulation` 參數**，
