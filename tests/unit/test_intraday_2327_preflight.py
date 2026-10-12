@@ -137,12 +137,16 @@ def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
     sdk_module = types.ModuleType("shioaji")
     sdk_module.Shioaji = FakeShioaji
     # Match the legacy installed SDK: no shioaji.QuoteType at top level.
-    sdk_module.constant = SimpleNamespace(QuoteType=SimpleNamespace(Tick="enum-tick", BidAsk="enum-book"))
+    sdk_module.constant = SimpleNamespace(
+        QuoteType=SimpleNamespace(Tick="enum-tick", BidAsk="enum-book"),
+        QuoteVersion=SimpleNamespace(v1="enum-v1"),
+    )
     monkeypatch.setitem(sys.modules, "shioaji", sdk_module)
 
     class FakeCollector:
         def __init__(self, api, *, subscriptions, quote_type, store,
-                     book_quote_type, book_store):
+                     book_quote_type, book_store, legacy_quote_version):
+            observed["legacy_quote_version"] = legacy_quote_version
             observed["subscriptions"] = subscriptions
             observed["tick"] = quote_type
             observed["bidask"] = book_quote_type
@@ -189,6 +193,7 @@ def test_2327_smoke_is_always_sdk_simulation_and_never_calls_trading_api(
     assert [x.symbol for x in observed["subscriptions"]] == ["2327", "2327"]
     assert observed["tick"] == "enum-tick"
     assert observed["bidask"] == "enum-book"
+    assert observed["legacy_quote_version"] == "enum-v1"
     assert result["simulation"] is True
     assert result["mode"] == "ONE_OFF_SIMULATION_QUOTE_SMOKE"
     assert result["real_market_verified"] is False
