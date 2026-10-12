@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}盤中觀察（唯讀） · 台股波段交易{% endblock %}
+{% block content %}
+<section class="intraday-head">
+  <div>
+    <h1>盤中行情觀察</h1>
+    <p class="hint">唯讀研究資料，不是買進或賣出訊號，也不代表實際成交。</p>
+  </div>
+  <a class="btn" href="{{ base }}/intraday">重新整理</a>
+</section>
+
+<div class="card intraday-status" role="status" aria-live="polite">
+  <strong>Collector：{{ intraday.status }}</strong>
+  <span>市場時段：{{ intraday.market_session }}</span>
+  <span>資料狀態：{{ intraday.freshness }}</span>
+  <span>顯示模式：{{ intraday.display_mode }}</span>
+  <span>快照產生：{{ intraday.generated_at or '尚無資料' }}</span>
+  <span>最後連線心跳：{{ intraday.last_heartbeat_at or '尚未驗證' }}</span>
+</div>
+
+{% if intraday.status == "DISABLED" %}
+<p class="alert">盤中觀察目前未啟用，不會連接券商或啟動自動收集。</p>
+{% elif intraday.status != "OBSERVING" %}
+<p class="alert">未核實即時行情。只有在另行開啟歷史參考模式後，才顯示明確標註非即時的觀測值。</p>
+{% endif %}
+
+{% for item in intraday.symbols %}
+<section class="card intraday-symbol">
+  <h2>{{ item.symbol }} <span class="tag-muted">{{ item.exchange }} / {{ item.lot_type }}</span></h2>
+  <p class="hint">狀態：{{ item.freshness }}。整股與零股獨立處理，五檔僅為可見委託。</p>
+  <div class="intraday-layout">
+    <div>
+      <h3>成交 Tick</h3>
+      {% set shown_tick = item.tick if item.tick else item.reference_tick %}
+      {% if shown_tick %}
+      {% if item.reference_tick %}
+      <p class="alert">歷史參考價（未驗證／非即時，不可作為當前買賣依據）</p>
+      {% endif %}
+      <p><strong>{{ '%.4f'|format(shown_tick.price_x10000 / 10000) }} 元</strong></p>
+      <p>本筆 {{ shown_tick.trade_volume_shares }} 股，成交時間 {{ shown_tick.event_time }}</p>
+      <p>收到時間 {{ shown_tick.received_at }}</p>
+      {% else %}
+      <p>—（無可信的當前成交價）</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>五檔（股）</h3>
+      {% set shown_book = item.book if item.book else item.reference_book %}
+      {% if shown_book %}
+      {% if item.reference_book %}
+      <p class="alert">歷史五檔（未驗證／非即時），接收於 {{ shown_book.received_at }}；不是目前委託量。</p>
+      {% endif %}
+      <table class="intraday-book">
+        <thead><tr><th>委買量</th><th>買價</th><th>賣價</th><th>委賣量</th></tr></thead>
+        <tbody>
+        {% for i in range(5) %}
+        <tr>
+          <td>{{ shown_book.bid_volumes_shares[i] if shown_book.bid_volumes_shares[i] is not none else '—' }}</td>
+          <td>{{ '%.4f'|format(shown_book.bid_prices_x10000[i] / 10000) if shown_book.bid_prices_x10000[i] is not none else '—' }}</td>
+          <td>{{ '%.4f'|format(shown_book.ask_prices_x10000[i] / 10000) if shown_book.ask_prices_x10000[i] is not none else '—' }}</td>
+          <td>{{ shown_book.ask_volumes_shares[i] if shown_book.ask_volumes_shares[i] is not none else '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% set shown_metrics = item.metrics if item.metrics else item.reference_metrics %}
+      {% if shown_metrics and shown_metrics.imbalance_bps is not none %}
+      <p class="hint">可見量失衡 {{ (shown_metrics.imbalance_bps / 100)|round(1) }}%，並非市場買超。</p>
+      {% endif %}
+      {% else %}
+      <p>—（五檔資料過期或尚未核實）</p>
+      {% endif %}
+    </div>
+  </div>
+  <h3>盤中觀察事件（不是委託）</h3>
+  {% if item.observations %}
+    <ul>
+    {% for ev in item.observations %}
+      <li>{{ ev.event_time }} · {{ ev.kind }} · {{ ev.status }} · {{ ev.rule_version }} · {{ ev.reason_codes|join(', ') }}</li>
+    {% endfor %}
+    </ul>
+  {% else %}
+    <p>無可用觀察事件。</p>
+  {% endif %}
+</section>
+{% else %}
+<div class="card"><p>尚無訂閱的盤中觀察標的，或尚未產生唯讀快照。</p></div>
+{% endfor %}
+
+<p class="hint">本頁每 30 秒重新讀取本機快照；不向券商查詢。歷史參考值必須另行設定 INTRADAY_SHOW_HISTORICAL=1，並非即時交易報價。</p>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  window.setInterval(function () {
+    if (!document.hidden) window.location.reload();
+  }, 30000);
+})();
+</script>
+{% endblock %}

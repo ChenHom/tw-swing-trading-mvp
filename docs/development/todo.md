@@ -12,7 +12,7 @@
 - ✅ **H1 / PR-1 — Tick Collector + Raw + Replay**（[PR #2](https://github.com/ChenHom/tw-swing-trading-mvp/pull/2)，2026-10-12 merged）：唯讀 Tick Collector、JSONL/Replay 已合入 master；P0 原始資料四路共 81/81 PASS_RAW_ONLY（含 BidAsk），仍未啟用常駐收集與正式行情。
 - ✅ **H2 / PR-2 — BidAsk 五檔 + ObservationEvent**（[PR #3](https://github.com/ChenHom/tw-swing-trading-mvp/pull/3)，2026-10-12 merged）：整股／零股五檔、同 Session Replay、P0/P1 安全補強已合入 master；Shioaji SDK 1.3.2 模擬環境 60 秒收集 22 Tick + 135 BidAsk、退訂清零。正式行情、真實斷線與長時間 soak 仍待獨立驗證。
 - 🔄 **H3 / PR-3 — 前向執行品質驗證**（[PR #4](https://github.com/ChenHom/tw-swing-trading-mvp/pull/4)）：離線 preregistered manifest、PIT 配對、錯失/缺資料分母、60/100/20 有效樣本門檻及完整 manifest/cohort/exclusions/lineage 報告已實作並通過專項 CI；研究實際樣本尚未收集，維持 `EVIDENCE_PENDING`，待前向資料與統計檢定。
-- 🔄 **H4 / PR-4 — Web 唯讀盤中觀察**（[PR #5](https://github.com/ChenHom/tw-swing-trading-mvp/pull/5)，Draft）：FastAPI/Jinja 離線快照仍在相依 PR，尚未部署、未開新行情服務。
+- 🔄 **H4 / PR-4 — Web 唯讀盤中觀察**（[PR #5](https://github.com/ChenHom/tw-swing-trading-mvp/pull/5)，Draft）：已整合最新 PR-3 的 FastAPI/Jinja GET-only 頁面、JSON API、預設 OFF 與離線快照產生工具；仍待可靠 heartbeat、持續 publisher、Web 正式站台/服務驗收，未上線。
 - 不變邊界：國泰全手動；策略 REJECTED 不解禁；真實唯讀 smoke 與每日蒐集各自另需明確核准。
 
 ## A. 立即（本週）

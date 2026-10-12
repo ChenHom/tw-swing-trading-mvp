@@ -1,3 +1,16 @@
+## 2026-10-12 — PR-4 與 PR-3 最新主線整合
+
+- PR-3 更新為 `ab308723`，已納入 PR-1/2 P0/P1 安全修正及 116 項離線回歸。PR-4 以非強制雙父節點 merge 更新，不覆蓋 PR-3 最新研究核心與 CLI 端到端測試。
+- 只移入 Web 唯讀 Dashboard / snapshot publisher 的增量，預設關閉，不加入交易 API、任何 Shioaji 登入、systemd 或 cron。
+- PR-4 預設 Draft；未驗證連線 heartbeat、研究資料完整性、持續即時 Publisher、正式 Web 服務，不稱已上線。
+
+## 2026-10-08 — PR-4：既有 Web 盤中唯讀觀察（Draft #5）與跨 PR Review
+
+- `src/application/services/intraday_dashboard.py` + `src/web/server.py`：從版本化本機快照唯讀取資料，掛 `/trading/intraday`、status/symbol/snapshot API，feature flag 預設 OFF。
+- Jinja `intraday.html` 顯示 Tick、五檔、整股/零股、觀察事件及健康；預設假日、快照過期、資料健康未知、未驗證連線皆**隱藏即時價**，不產生下單入口；離線手動 publisher 不能替代正式 session。
+- 專項 CI：Web/service/API 18 passed（1 warning）、PR-1～3 研究回歸 63 passed。未操作正式主機，不宣稱實時服務已運作。
+- 跨 PR Review：`docs/reviews/shioaji-pr1-pr4-code-review-20261008.md` 區分已修與 BLOCKER，並留言於實作 PR #2～5；目前 NO-GO 正式合併／上線，仍需可靠 SDK reconnect、180 日儲存生命週期、研究統計及持續 heartbeat/snapshot publisher。
+
 ## 2026-10-08 — PR-3：盤中前向執行品質研究（Draft #4）
 
 - 實作 `src/application/research/intraday_evaluation.py`，要求凍結 manifest 與前向候選 lineage，按當下已收到的 quote 估算 baseline/challenger 的 **indicative** ask 差額；不假裝有實單成交。
