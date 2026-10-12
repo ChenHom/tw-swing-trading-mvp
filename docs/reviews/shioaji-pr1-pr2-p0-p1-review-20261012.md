@@ -62,6 +62,19 @@ python3 -m app market intraday-audit \
 - Reported sample units: Tick BOARD **1,000 shares**, ODD **220 shares**; BidAsk best bid volumes BOARD **27,000 shares**, ODD **4,705 shares**. These represent separate markets and are not pooled.
 - Four digests are stored as operator-provided checkpoints, **not independently recomputed** by GitHub. The per-event stream audit exercises canonical conversion and validation but does not validate broker-vs-exchange end-to-end completeness or full-day coverage.
 
+## Final PR boundary and P1 release-gate check (2026-10-12)
+
+The checked branch graph is a valid stack:
+
+- PR #2: `master` <- `feat/shioaji-tick-collector-pr1`; stand-alone Tick baseline (35 isolated offline tests).
+- PR #3: `feat/shioaji-tick-collector-pr1` <- `feat/shioaji-bidask-observations-pr2`; BidAsk + P0/P1 hardening and SDK adaptation. PR #3 includes PR #2 by ancestry; no need for an additional PR.
+- **Important:** the newest shared Collector hardening is currently in PR #3; PR #2 by itself does **not** contain all P0/P1 fixes. Do not claim PR #2 alone is equivalent to the validated stacked build.
+- PR #2 and PR #3 remain Draft, not merged. Recommended merge order once release gate is satisfied: **#2 into master first, then retarget #3 to master and run full CI again, then #3**. A commit/diff audit must ensure neither the shared Collector code nor the BidAsk files are accidentally dropped. No force pushing / branch deletion.
+
+During final review the one-off smoke CLI was further hardened to **exit non-zero** on a worker failure, outstanding SDK subscription, undrained queue, loss detected or missing observed Tick/BidAsk stream; it now prints `smoke_status` and `smoke_checks` after successful logout. Previously, a degraded Collector could return 0, which was a release-blocking false-positive. Synthetic regressions cover all negative cases, including legacy SDK fake behavior.
+
+The user has **not yet supplied** a post-hardening 60-second isolated host run, so the final smoke gate is **NOT VERIFIED**. The exact command and checks are in `docs/operations/shioaji-2327-live-smoke-checklist.md` under 'P1 最終實機驗收'. This is an explicit blocker for marking ready/merging the stacked feature under the user-approved review process; GitHub CI cannot replace real broker-session checks.
+
 ## Merge / deployment gate
 
 - PR-1 and PR-2 stay Draft. CI green + simulation 30s **is not** a true live production-feed smoke or daylong soak.
