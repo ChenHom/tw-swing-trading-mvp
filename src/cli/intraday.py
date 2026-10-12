@@ -199,6 +199,36 @@ def cmd_intraday_collect(args) -> None:
         api.logout()
 
 
+def cmd_intraday_audit(args) -> None:
+    """Strict offline raw quality audit: does not access credentials or the broker."""
+    from src.market_data.intraday_audit import audit_intraday_raw
+
+    required = ("tick_board", "tick_odd", "bidask_board", "bidask_odd")
+    counts = [getattr(args, "expected_" + field) for field in required]
+    if any(value is not None for value in counts) and not all(value is not None for value in counts):
+        raise ValueError("provide all four --expected-* counts or none")
+    expected = None
+    if all(value is not None for value in counts):
+        expected = {
+            "ticks_BOARD": args.expected_tick_board,
+            "ticks_ODD": args.expected_tick_odd,
+            "bidask_BOARD": args.expected_bidask_board,
+            "bidask_ODD": args.expected_bidask_odd,
+        }
+    result = audit_intraday_raw(
+        Path(args.cache_dir), symbol=args.symbol, trading_date=args.date,
+        expected=expected,
+    )
+    report = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        destination = Path(args.output)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(report, encoding="utf-8")
+    print(report, end="")
+    if result["status"] != "PASS_RAW_ONLY":
+        raise SystemExit(1)
+
+
 def cmd_intraday_maintain(args) -> None:
     """Explicit offline post-close maintenance. No purge and no broker login."""
     from src.calendar.calendar import ExchangeCalendarsTradingCalendar
