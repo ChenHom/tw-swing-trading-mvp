@@ -188,16 +188,19 @@ def cmd_intraday_collect(args) -> None:
                 f"Shioaji simulation login failed ({type(exc).__name__}); "
                 "broker error detail suppressed"
             ) from None
-        collector = ShioajiTickCollector(
-            api, subscriptions=specs, quote_type=tick_type,
+        collector_kwargs = dict(
+            subscriptions=specs, quote_type=tick_type,
             store=RawTickStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct),
             book_quote_type=book_type if args.with_bidask else None,
             book_store=RawBookStore(Path(args.cache_dir), stop_at_disk_pct=args.stop_at_disk_pct)
             if args.with_bidask else None,
             legacy_quote_version=_legacy_quote_version(sj),
-            sink=publisher.on_tick if publisher is not None else None,
-            book_sink=publisher.on_book if publisher is not None and args.with_bidask else None,
         )
+        if publisher is not None:
+            collector_kwargs["sink"] = publisher.on_tick
+            if args.with_bidask:
+                collector_kwargs["book_sink"] = publisher.on_book
+        collector = ShioajiTickCollector(api, **collector_kwargs)
         status_path = Path(args.cache_dir) / "shioaji" / "collector_health.json"
         try:
             collector.start()
