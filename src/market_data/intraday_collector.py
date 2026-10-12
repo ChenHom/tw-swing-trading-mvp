@@ -308,7 +308,8 @@ class ShioajiTickCollector:
             self.worker.start()
         except Exception:
             self._unsubscribe_all()
-            self._release_lease()
+            if not self.active:
+                self._release_lease()
             self.state = "FAILED"
             raise
 
@@ -324,13 +325,20 @@ class ShioajiTickCollector:
             self._lease_context = None
 
     def _unsubscribe_all(self) -> None:
+        # A failed unsubscribe is an unresolved SDK resource, not a success.
+        # Retain unsuccessful topics to retry at stop(). Never claim CLOSED
+        # or release the collector lease while the broker still may stream.
+        pending = []
         for contract, sub, quote_type in reversed(self.active):
             try:
                 self._unsubscribe(contract, sub, quote_type)
             except Exception as exc:
+                pending.append((contract, sub, quote_type))
                 self.counters["unsubscribe_error"] += 1
                 self.last_error = f"unsubscribe: {type(exc).__name__}"
-        self.active.clear()
+                if self.state != "FAILED":
+                    self.state = "DEGRADED"
+        self.active = list(reversed(pending))
 
     def _worker_loop(self) -> None:
         try:
@@ -519,7 +527,7 @@ class ShioajiTickCollector:
                 self.worker = None
         # Keep lease held if shutdown timed out: rotating raw while its worker
         # is still active could silently truncate a tail.
-        if self.worker is None:
+        if self.worker is None and not self.active:
             self._release_lease()
         result = self.health()
         if result["state"] not in ("FAILED", "DEGRADED"):
